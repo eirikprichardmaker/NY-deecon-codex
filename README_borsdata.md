@@ -1,19 +1,19 @@
-# Børsdata – Nordic Single-Stock Model
+﻿# Borsdata - Nordic Single-Stock Model
 
-Nordic single-stock pipeline med **maks 1 aksje eller CASH** per kjøring.
-Målet er forklarbar beslutning basert på fundamentals + tekniske risikofiltre.
+Nordic single-stock pipeline med maks 1 aksje eller CASH per kjoring.
+Malet er forklarbar beslutning basert pa fundamentals + tekniske risikofiltre.
 
 ## Oppsett (Windows / PowerShell)
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
-## Kjøring
+## Kjoring
 
-### Full ukentlig/månedlig kjøring
+### Full ukentlig/manedlig kjoring
 ```powershell
 python -m src.run_weekly --asof 2026-02-16 --config .\config\config.yaml
 ```
@@ -28,24 +28,60 @@ python -m src.run_weekly --asof 2026-02-16 --config .\config\config.yaml --steps
 python -m src.run_weekly --list-steps
 ```
 
+### Optional IR step (Task B)
+`ir_reports` er optional og kjores kun hvis steget velges eksplisitt.
+
+```powershell
+python -m src.run_weekly --asof 2026-02-16 --config .\config\config.yaml --steps ir_reports
+```
+
+## IR-konfigurasjon (ticker -> IR URL)
+
+1. Kopier eksempel:
+```powershell
+Copy-Item .\config\ir_sources.example.csv .\config\ir_sources.csv
+```
+2. Oppdater `config\ir_sources.csv` med egne IR-kilder.
+3. `config\config.yaml` kan bruke standard:
+```yaml
+ir_reports:
+  mapping_csv: config/ir_sources.csv
+  rate_limit_sec: 1.0
+  timeout_sec: 20
+```
+
+CSV-format:
+- `ticker`: intern ticker (f.eks. `EQNR`)
+- `url`: IR-side eller rapport-URL
+- `source`: valgfri kilde-tag
+- `period`: valgfri periode-tag (`Q1`, `Q2`, `Q3`, `Q4`, `FY`)
+- `report_date`: valgfri rapportdato (`YYYY-MM-DD`)
+
 ## Artefakter
 
-Kjøringer skrives til `runs/<run_id>/`:
+Kjoringer skrives til `runs/<run_id>/`:
 
-- `manifest.json` – run metadata
-- `quality.md` – data quality og merge-status (ticker/yahoo_ticker/prisdekning)
-- `screen_basic.csv` – screening med `fundamental_ok`, `technical_ok`, reason-kolonner
-- `shortlist.csv` – kandidater som passer filter
-- `valuation.csv` – intrinsic beregninger
-- `decision.csv` / `decision.md` – endelig anbefaling (ticker eller CASH)
+- `manifest.json` - run metadata
+- `quality.md` - data quality og merge-status (ticker/yahoo_ticker/prisdekning)
+- `screen_basic.csv` - screening med `fundamental_ok`, `technical_ok`, reason-kolonner
+- `shortlist.csv` - kandidater som passer filter
+- `valuation.csv` - intrinsic beregninger
+- `decision.csv` / `decision.md` - endelig anbefaling (ticker eller CASH)
 
 I tillegg brukes mellomfiler i `data/raw/`, `data/processed/` og `data/golden/`.
 
+IR-artefakter:
+- `data/raw/ir/<ticker>/<date>/...` (raw filer / cache)
+- `data/raw/ir/index.parquet`
+  - kolonner: `ticker, url, report_date, period, source, status, error_code`
+- `data/golden/ir_facts.parquet`
+  - kolonner: `ticker, url, report_date, period, source, status, error_code, fact_revenue, fact_ebit, fact_eps, text_len`
+
 ## Data-kontrakt (viktig)
 
-- Portefølje-prinsipp: alltid maks 1 aksje, ellers CASH.
-- `yahoo_ticker` håndteres robust:
-  1. infereres fra ticker når mulig,
+- Portefolje-prinsipp: alltid maks 1 aksje, ellers CASH.
+- `yahoo_ticker` handteres robust:
+  1. infereres fra ticker nar mulig,
   2. mapes fra `config/tickers*.csv`,
   3. ellers markeres raden eksplisitt med `missing_price` + reason (ingen stille drop).
 - Screening-output skal inkludere forklaringskolonner (`reason_fundamental_fail`, `reason_technical_fail`).
@@ -53,13 +89,35 @@ I tillegg brukes mellomfiler i `data/raw/`, `data/processed/` og `data/golden/`.
 ## Tester
 
 ```powershell
-pytest -q
+python -m pytest -q
 ```
 
-## Feilsøking
+## PowerShell-kommandoer (Task B)
+
+Deps:
+```powershell
+python -m pip install -r requirements.txt
+```
+
+Kun IR-step:
+```powershell
+python -m src.run_weekly --asof 2026-02-16 --config .\config\config.yaml --steps ir_reports --run-dir .\runs\ir_only_20260216
+```
+
+Full run (uten IR):
+```powershell
+python -m src.run_weekly --asof 2026-02-16 --config .\config\config.yaml
+```
+
+Tester:
+```powershell
+python -m pytest -q
+```
+
+## Feilsoking
 
 ### `prices.parquet` mangler `yahoo_ticker`
-- Pipeline forsøker infer + mapping automatisk.
+- Pipeline forsoker infer + mapping automatisk.
 - Se `runs/<run_id>/quality.md` for antall rader uten mapping.
 
 ### Ingen kandidater i decision
@@ -68,4 +126,4 @@ pytest -q
 
 ### Google Drive path (`G:\Min disk\...`)
 - Bruk absolutte stier i `config/config.yaml` / `configs/sources.yaml`.
-- Pipeline bruker `Path(...)` og støtter Windows-stier direkte.
+- Pipeline bruker `Path(...)` og stotter Windows-stier direkte.

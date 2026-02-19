@@ -26,6 +26,10 @@ DEFAULT_STEPS: List[Step] = [
     ("decision", "src.decision"),
 ]
 
+OPTIONAL_STEPS: List[Step] = [
+    ("ir_reports", "src.ir_reports"),
+]
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
@@ -79,6 +83,8 @@ def main() -> int:
     if args.list_steps:
         for name, module in DEFAULT_STEPS:
             print(f"{name}: {module}")
+        for name, module in OPTIONAL_STEPS:
+            print(f"{name}: {module} (optional)")
         return 0
 
     try:
@@ -95,7 +101,7 @@ def main() -> int:
             return 0
 
         requested = resolve_steps_arg(args.steps)
-        available = {name: module for name, module in DEFAULT_STEPS}
+        available = {name: module for name, module in (DEFAULT_STEPS + OPTIONAL_STEPS)}
 
         # validate requested steps
         unknown = [s for s in requested if s not in available]
