@@ -1,0 +1,16 @@
+﻿paths:
+  runs_dir: runs
+  data_dir: data
+  raw_dir: data/raw
+  processed_dir: data/processed
+
+includes:
+  sources: configs/sources.yaml
+  thresholds: configs/thresholds.yaml
+
+market_index_ticker: "^OSEAX"
+
+ir_reports:
+  mapping_csv: config/ir_sources.csv
+  rate_limit_sec: 1.0
+  timeout_sec: 20

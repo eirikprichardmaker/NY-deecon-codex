@@ -16,3 +16,8 @@ data/raw/
 data/freeze/
 *.parquet
 *.feather
+
+# Generated runs
+runs/
+logs/
+
