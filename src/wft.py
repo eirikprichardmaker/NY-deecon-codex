@@ -3,6 +3,7 @@
 import argparse
 import json
 import math
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -760,6 +761,32 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
+def _parse_float_grid_env(var_name: str, default_values: list[float]) -> list[float]:
+    raw = os.environ.get(var_name, "").strip()
+    if not raw:
+        return list(default_values)
+    out: list[float] = []
+    for part in raw.split(","):
+        token = part.strip()
+        if not token:
+            continue
+        out.append(float(token))
+    return out if out else list(default_values)
+
+
+def _parse_str_grid_env(var_name: str, default_values: list[str]) -> list[str]:
+    raw = os.environ.get(var_name, "").strip()
+    if not raw:
+        return list(default_values)
+    out: list[str] = []
+    for part in raw.split(","):
+        token = part.strip()
+        if not token:
+            continue
+        out.append(token)
+    return out if out else list(default_values)
+
+
 def main() -> int:
     args = parse_args()
     if int(args.start) > int(args.end):
@@ -778,9 +805,9 @@ def main() -> int:
     if not run_dir.is_absolute():
         run_dir = (root / run_dir).resolve()
 
-    mos_grid = [0.30, 0.35, 0.40, 0.45]
-    mad_grid = [-0.05, -0.02, 0.00, 0.02]
-    weakness_variants = ["baseline", "stricter"]
+    mos_grid = _parse_float_grid_env("WFT_MOS_GRID", [0.30, 0.35, 0.40, 0.45])
+    mad_grid = _parse_float_grid_env("WFT_MAD_GRID", [-0.05, -0.02, 0.00, 0.02])
+    weakness_variants = _parse_str_grid_env("WFT_WEAKNESS_VARIANTS", ["baseline", "stricter"])
 
     master_path = Path(args.master_path).resolve() if args.master_path else None
     prices_path = Path(args.prices_path).resolve() if args.prices_path else None
