@@ -1,0 +1,143 @@
+﻿from __future__ import annotations
+
+import pandas as pd
+import numpy as np
+
+from src.common.config import resolve_paths
+from src.common.errors import SchemaError
+from src.common.io import read_parquet, write_parquet
+from src.common.utils import safe_div
+
+
+def _std_cols(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df.columns = [c.strip().lower().replace(' ', '_') for c in df.columns]
+    return df
+
+def _pick(df: pd.DataFrame, aliases: list[str]) -> str | None:
+    for a in aliases:
+        if a in df.columns:
+            return a
+    return None
+
+def _need(df: pd.DataFrame, col: str, where: str):
+    if col not in df.columns:
+        raise SchemaError(f"{where}: missing required column '{col}'. available={list(df.columns)[:40]}...")
+
+def _compute_weekly_returns(px: pd.DataFrame, date_col: str, price_col: str) -> pd.DataFrame:
+    px = px.copy()
+    px[date_col] = pd.to_datetime(px[date_col], errors="coerce")
+    px = px.dropna(subset=[date_col, "ticker", price_col])
+    px = px.sort_values(["ticker", date_col])
+
+    out = []
+    for t, g in px.groupby("ticker", sort=True):
+        s = g.set_index(date_col)[price_col].resample("W-FRI").last().dropna()
+        r = s.pct_change().dropna()
+        if not r.empty:
+            out.append(pd.DataFrame({"ticker": t, "date": r.index, "ret": r.values}))
+    return pd.concat(out, ignore_index=True) if out else pd.DataFrame(columns=["ticker","date","ret"])
+
+def run(ctx, log) -> int:
+    paths = resolve_paths(ctx.cfg, ctx.project_root)
+    processed = paths["processed_dir"]
+
+    master_path = processed / "master_factors.parquet"
+    if not master_path.exists():
+        master_path = processed / "master.parquet"
+    if not master_path.exists():
+        raise SchemaError(f"cost_of_capital: missing master input ({processed}/master*.parquet)")
+
+    prices_path = processed / "prices.parquet"
+    if not prices_path.exists():
+        raise SchemaError(f"cost_of_capital: missing {prices_path}")
+
+    m = _std_cols(read_parquet(master_path))
+    _need(m, "ticker", "cost_of_capital")
+
+    px = _std_cols(read_parquet(prices_path))
+    _need(px, "ticker", "cost_of_capital(prices)")
+
+    date_col = _pick(px, ["date", "dato", "time", "timestamp"])
+    price_col = _pick(px, ["close", "adj_close", "price", "last"])
+    if not date_col or not price_col:
+        raise SchemaError(f"prices.parquet must have date+price columns. cols={list(px.columns)[:50]}")
+
+    rets = _compute_weekly_returns(px, date_col, price_col)
+    if rets.empty:
+        raise SchemaError("No returns computed from prices.parquet")
+
+    # index-ticker: config -> autodetect -> None
+    idx_cfg = (ctx.cfg.get("market_index_ticker") or ctx.cfg.get("market_index_tickers") or {})
+    if isinstance(idx_cfg, str):
+        index_ticker = idx_cfg
+    else:
+        index_ticker = idx_cfg.get("NO") or next(iter(idx_cfg.values()), None)
+
+    if not index_ticker:
+        candidates = [t for t in rets["ticker"].unique()
+                      if any(x in str(t).upper() for x in ["OBX","OMXS30","OMXC25","OMXH25"])]
+        index_ticker = candidates[0] if candidates else None
+
+    rf = float((ctx.cfg.get("risk_free") or {}).get("rate", 0.04))
+    rf_label = (ctx.cfg.get("risk_free") or {}).get("label", "rf_proxy")
+    erp = float(ctx.cfg.get("equity_risk_premium", 0.05))
+    min_obs = int(ctx.cfg.get("beta_min_obs", 52))
+
+    beta_map = {}
+    if index_ticker and index_ticker in set(rets["ticker"]):
+        mkt = rets.loc[rets["ticker"] == index_ticker, ["date","ret"]].rename(columns={"ret":"mkt_ret"})
+        var_m = mkt["mkt_ret"].var()
+        for t, g in rets.groupby("ticker", sort=True):
+            if t == index_ticker:
+                continue
+            j = g.merge(mkt, on="date", how="inner")
+            if len(j) < min_obs:
+                beta_map[t] = np.nan
+                continue
+            cov = np.cov(j["ret"].values, j["mkt_ret"].values)[0, 1]
+            beta_map[t] = cov / var_m if var_m and np.isfinite(var_m) else np.nan
+        log.info(f"cost_of_capital: beta computed vs index_ticker={index_ticker} ({rf_label})")
+    else:
+        log.info("cost_of_capital: index ticker not found in prices -> beta set NaN")
+
+    out = m.copy()
+    out["rf"] = rf
+    out["erp"] = erp
+    out["beta"] = out["ticker"].map(beta_map).astype(float)
+
+    beta_fallback = float(ctx.cfg.get("beta_fallback", 1.0))
+    beta_for_coe = out["beta"].fillna(beta_fallback)
+    out["coe"] = out["rf"] + beta_for_coe * out["erp"]
+
+    # WACC: best-effort, ellers fallback
+    wacc_fallback = float(ctx.cfg.get("wacc_fallback", 0.09))
+    tax_default = float(ctx.cfg.get("tax_rate_default", 0.22))
+
+    col_mcap = _pick(out, ["market_cap", "marketcap", "equity_value"])
+    col_debt = _pick(out, ["interest_bearing_debt", "total_debt", "debt"])
+    col_int  = _pick(out, ["interest_expense_ttm", "interest_expense"])
+    col_tax  = _pick(out, ["tax_rate", "effective_tax_rate"])
+
+    tax = pd.to_numeric(out[col_tax], errors="coerce").fillna(tax_default).clip(0, 0.5) if col_tax else tax_default
+
+    if col_mcap and col_debt:
+        E = pd.to_numeric(out[col_mcap], errors="coerce")
+        D = pd.to_numeric(out[col_debt], errors="coerce")
+        V = E + D
+
+        if col_int:
+            interest = pd.to_numeric(out[col_int], errors="coerce")
+            cod = pd.Series(safe_div(interest, D), index=out.index).fillna(rf + 0.02).clip(0, 0.25)
+        else:
+            cod = pd.Series(rf + 0.02, index=out.index)
+
+        out["wacc"] = safe_div(E, V) * out["coe"] + safe_div(D, V) * cod * (1 - tax)
+        out.loc[(~np.isfinite(out["wacc"])) | (V <= 0), "wacc"] = wacc_fallback
+    else:
+        out["wacc"] = wacc_fallback
+
+    out_path = processed / "master_cost.parquet"
+    write_parquet(out_path, out)
+    log.info(f"cost_of_capital: wrote {out_path}")
+    return 0

@@ -1,0 +1,9 @@
+borsdata:
+  fundamentals_input: G:\Min disk\Nordic-Model\data\derived\fundamentals_mapped.csv
+  fundamentals_clean_input: G:\Min disk\Nordic-Model\data\derived\fundamentals_clean.csv
+  fundamentals_latest_input: G:\Min disk\Nordic-Model\data\derived\fundamentals_latest.csv
+prices:
+  prices_panel_input: G:\Min disk\Nordic-Model\data\derived\prices_panel.parquet
+  prices_latest_input: G:\Min disk\Nordic-Model\data\derived\prices_latest.csv
+sync:
+  enabled: true

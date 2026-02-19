@@ -1,0 +1,276 @@
+﻿from __future__ import annotations
+
+import re
+from pathlib import Path
+from typing import Optional
+
+import numpy as np
+import pandas as pd
+
+from src.common.config import resolve_paths
+from src.common.errors import SchemaError
+from src.common.io import read_parquet
+from src.common.utils import safe_div, zscore
+
+
+def _canon_cols(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+
+    def canon(s: str) -> str:
+        s = s.strip().lower()
+        s = re.sub(r"[^a-z0-9]+", "_", s)
+        return s.strip("_")
+
+    df.columns = [canon(c) for c in df.columns]
+    return df
+
+
+def _pick(df: pd.DataFrame, aliases: list[str]) -> Optional[str]:
+    for a in aliases:
+        if a in df.columns:
+            return a
+    return None
+
+
+def _find_latest_valuation_csv(project_root: Path) -> Optional[Path]:
+    runs_dir = project_root / "runs"
+    if not runs_dir.exists():
+        return None
+    hits = list(runs_dir.rglob("valuation.csv"))
+    if not hits:
+        return None
+    hits.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return hits[0]
+
+
+def _norm_ticker(x) -> str:
+    if x is None or (isinstance(x, float) and np.isnan(x)):
+        return ""
+    s = str(x).strip().upper()
+    s = s.lstrip("^")
+    if "." in s:
+        s = s.split(".", 1)[0]
+    return s.strip()
+
+
+def _md_table(df: pd.DataFrame, max_rows: int = 10) -> str:
+    if df is None or df.empty:
+        return "_(ingen)_"
+    d = df.head(max_rows).copy().fillna("")
+    for c in d.columns:
+        if pd.api.types.is_numeric_dtype(d[c]):
+            d[c] = d[c].map(
+                lambda x: "" if x == "" else (f"{x:.3g}" if isinstance(x, (float, np.floating)) else str(x))
+            )
+        else:
+            d[c] = d[c].astype(str)
+
+    cols = list(d.columns)
+    header = "| " + " | ".join(cols) + " |"
+    sep = "| " + " | ".join(["---"] * len(cols)) + " |"
+    rows = ["| " + " | ".join(d.iloc[i].tolist()) + " |" for i in range(len(d))]
+    return "\n".join([header, sep] + rows)
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(path)
+
+
+def _atomic_write_csv(path: Path, df: pd.DataFrame) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    df.to_csv(tmp, index=False, encoding="utf-8")
+    tmp.replace(path)
+
+
+def run(ctx, log) -> int:
+    paths = resolve_paths(ctx.cfg, ctx.project_root)
+    processed = paths["processed_dir"]
+
+    in_path = processed / "master_valued.parquet"
+    if not in_path.exists():
+        raise SchemaError(f"decision: missing {in_path} (run valuation first)")
+
+    df = _canon_cols(read_parquet(in_path))
+    if "ticker" not in df.columns:
+        raise SchemaError("decision: missing 'ticker' in master_valued.parquet")
+
+    # --- valuation.csv: prefer same run_dir, else latest in runs/ ---
+    vcsv = ctx.run_dir / "valuation.csv"
+    if not vcsv.exists():
+        vcsv = _find_latest_valuation_csv(ctx.project_root)
+    if not vcsv or not vcsv.exists():
+        raise SchemaError("decision: no valuation.csv found (run valuation first)")
+
+    v = _canon_cols(pd.read_csv(vcsv))
+    if "ticker" not in v.columns:
+        raise SchemaError(f"decision: valuation.csv missing 'ticker': {vcsv}")
+
+    keep = [c for c in ["ticker", "model", "intrinsic_equity", "intrinsic_ev", "net_debt_used", "wacc_used", "coe_used", "reason"] if c in v.columns]
+    if ("intrinsic_equity" not in keep) and ("intrinsic_ev" not in keep):
+        raise SchemaError(f"decision: valuation.csv has no intrinsic_equity/intrinsic_ev: {vcsv}")
+
+    v = v[keep].copy()
+    v["k"] = v["ticker"].map(_norm_ticker)
+    v = v[v["k"] != ""].drop_duplicates(subset=["k"], keep="last").set_index("k")
+
+    # normalized keys in master
+    df["k_ticker"] = df["ticker"].map(_norm_ticker)
+    df["k_base"] = df["base_ticker"].map(_norm_ticker) if "base_ticker" in df.columns else ""
+    df["k_yahoo"] = df["yahoo_ticker"].map(_norm_ticker) if "yahoo_ticker" in df.columns else ""
+
+    # map valuation fields in priority: ticker -> base -> yahoo
+    map_cols = [c for c in ["intrinsic_equity", "intrinsic_ev", "net_debt_used", "wacc_used", "coe_used", "model", "reason"] if c in v.columns]
+    for col in map_cols:
+        if col not in df.columns:
+            df[col] = pd.NA
+
+        df[col] = df[col].where(df[col].notna(), df["k_ticker"].map(v[col]))
+        df[col] = df[col].where(df[col].notna(), df["k_base"].map(v[col]))
+        df[col] = df[col].where(df[col].notna(), df["k_yahoo"].map(v[col]))
+
+    ie = pd.to_numeric(df.get("intrinsic_equity"), errors="coerce")
+    iev = pd.to_numeric(df.get("intrinsic_ev"), errors="coerce")
+    log.info(f"decision: valuation source={vcsv}")
+    log.info(f"decision: intrinsic_equity coverage={float(ie.notna().mean()):.3f} intrinsic_ev coverage={float(iev.notna().mean()):.3f}")
+
+    # --- market cap (fix units) ---
+    col_mcap = _pick(df, ["market_cap_current", "market_cap"])
+    if not col_mcap:
+        raise SchemaError("decision: missing market cap column (market_cap_current/market_cap)")
+
+    df["market_cap"] = pd.to_numeric(df[col_mcap], errors="coerce")
+
+    # market cap ser ut til å være i millioner -> skaler til valutaenheter hvis median er "liten"
+    try:
+        med = float(pd.to_numeric(df["market_cap"], errors="coerce").median())
+    except Exception:
+        med = None
+    if med is not None and med < 1e6:
+        df["market_cap"] = df["market_cap"] * 1_000_000.0
+        log.info("decision: scaled market_cap by 1e6 (input looked like millions)")
+
+    # EV
+    col_net_debt = _pick(df, ["net_debt_current", "net_debt", "net_debt_used"])
+    df["net_debt"] = pd.to_numeric(df[col_net_debt], errors="coerce") if col_net_debt else np.nan
+    df["ev"] = df["market_cap"] + df["net_debt"].fillna(0)
+
+    # --- MOS basis ---
+    if ie.notna().any():
+        df["intrinsic_value"] = ie
+        df["mos_basis"] = "equity_vs_mcap"
+        df["mos"] = safe_div(df["intrinsic_value"], df["market_cap"]) - 1.0
+    elif iev.notna().any():
+        df["intrinsic_value"] = iev
+        df["mos_basis"] = "ev_vs_ev"
+        df["mos"] = safe_div(df["intrinsic_value"], df["ev"]) - 1.0
+    else:
+        raise SchemaError("decision: intrinsic_equity/intrinsic_ev are empty after merge")
+
+    # --- thresholds ---
+    dec_cfg = (ctx.cfg.get("decision") or {})
+    mos_min = float(dec_cfg.get("mos_min", 0.30))
+    mos_high = float(dec_cfg.get("mos_high_uncertainty", 0.40))
+    require_above_ma200 = bool(dec_cfg.get("require_above_ma200", True))
+    mad_min = float(dec_cfg.get("mad_min", -0.05))
+    top_n = int(dec_cfg.get("top_n", 25))
+
+    # --- risk flags ---
+    df["beta"] = pd.to_numeric(df.get("beta", pd.NA), errors="coerce")
+    df["nd_ebitda"] = pd.to_numeric(df.get("nd_ebitda", df.get("n_debt_ebitda_current", pd.NA)), errors="coerce")
+
+    df["high_risk_flag"] = (
+        (df["beta"].fillna(0) >= float(dec_cfg.get("beta_high", 1.5))) |
+        (df["nd_ebitda"].fillna(0) >= float(dec_cfg.get("nd_ebitda_high", 3.5)))
+    ).astype(int)
+    df["mos_req"] = np.where(df["high_risk_flag"] == 1, mos_high, mos_min)
+
+    # --- technical filter (missing -> False) ---
+    if require_above_ma200 and "above_ma200" in df.columns:
+        tech_ok = df["above_ma200"].fillna(False).astype(bool)
+    else:
+        tech_ok = pd.Series(True, index=df.index)
+
+    if "mad" in df.columns:
+        mad_s = pd.to_numeric(df["mad"], errors="coerce")
+        mad_ok = mad_s.notna() & (mad_s >= mad_min)
+    else:
+        mad_ok = pd.Series(True, index=df.index)
+
+    df["tech_ok"] = tech_ok & mad_ok
+
+    # --- quality score (lightweight) ---
+    comps, wts = [], []
+    if "roic" in df.columns and pd.to_numeric(df["roic"], errors="coerce").notna().any():
+        comps.append(zscore(pd.to_numeric(df["roic"], errors="coerce"))); wts.append(0.60)
+    elif "roic_current" in df.columns and pd.to_numeric(df["roic_current"], errors="coerce").notna().any():
+        comps.append(zscore(pd.to_numeric(df["roic_current"], errors="coerce"))); wts.append(0.60)
+
+    if "fcf_yield" in df.columns and pd.to_numeric(df["fcf_yield"], errors="coerce").notna().any():
+        comps.append(zscore(pd.to_numeric(df["fcf_yield"], errors="coerce"))); wts.append(0.40)
+
+    if comps:
+        w = np.array(wts, dtype=float); w = w / w.sum()
+        df["quality_score"] = sum(w[i] * comps[i] for i in range(len(comps)))
+    else:
+        df["quality_score"] = 0.0
+
+    df["fund_ok"] = df["mos"].notna() & (df["mos"] >= df["mos_req"])
+    df["eligible"] = df["tech_ok"] & df["fund_ok"]
+
+    eligible = df[df["eligible"]].copy()
+    eligible = eligible.sort_values(by=["quality_score", "mos", "market_cap"], ascending=[False, False, False], na_position="last")
+
+    out_cols = [c for c in [
+        "ticker", "company",
+        "market_cap", "intrinsic_value", "mos", "mos_req", "mos_basis",
+        "quality_score", "beta", "coe_used", "wacc_used",
+        "above_ma200", "mad", "high_risk_flag",
+        "model", "reason",
+    ] if c in df.columns]
+
+    out_csv = ctx.run_dir / "decision.csv"
+    out_md = ctx.run_dir / "decision.md"
+
+    if eligible.empty:
+        diag = df.sort_values(by=["quality_score", "mos"], ascending=[False, False], na_position="last")
+        _atomic_write_csv(out_csv, diag[out_cols].head(top_n))
+        md = [
+            f"# Decision ({ctx.asof})",
+            "",
+            "**Anbefaling:** Hold kontanter (ingen kandidater bestod filter).",
+            "",
+            "## Topp (diagnostikk – før filter)",
+            _md_table(diag[out_cols], max_rows=10),
+        ]
+        _atomic_write_text(out_md, "\n".join(md))
+        log.info(f"decision: wrote {out_csv}")
+        log.info(f"decision: wrote {out_md}")
+        return 0
+
+    pick = eligible.iloc[0]
+    _atomic_write_csv(out_csv, eligible[out_cols].head(top_n))
+
+    md = []
+    md.append(f"# Decision ({ctx.asof})")
+    md.append("")
+    md.append(f"**Anbefaling:** Kandidat = `{pick['ticker']}` (beste blant de som bestod filter).")
+    md.append("")
+    md.append("## Nøkkeltall")
+    md.append(f"- MoS-basis: {pick.get('mos_basis','')}")
+    md.append(f"- Market cap: {float(pick['market_cap']):.3g}")
+    md.append(f"- Intrinsic: {float(pick['intrinsic_value']):.3g}")
+    md.append(f"- MoS: {float(pick['mos'])*100:.1f}% (krav: {float(pick['mos_req'])*100:.0f}%)")
+    if np.isfinite(pick.get("beta", np.nan)): md.append(f"- Beta: {float(pick['beta']):.2f}")
+    if np.isfinite(pick.get("quality_score", np.nan)): md.append(f"- Quality score: {float(pick['quality_score']):.3f}")
+    md.append("")
+    md.append("## Topp 10 (eligible)")
+    md.append(_md_table(eligible[out_cols], max_rows=10))
+
+    _atomic_write_text(out_md, "\n".join(md))
+    log.info(f"decision: wrote {out_csv}")
+    log.info(f"decision: wrote {out_md}")
+    return 0

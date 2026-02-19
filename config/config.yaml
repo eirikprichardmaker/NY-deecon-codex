@@ -1,0 +1,11 @@
+﻿paths:
+  runs_dir: runs
+  data_dir: data
+  raw_dir: data/raw
+  processed_dir: data/processed
+
+includes:
+  sources: configs/sources.yaml
+  thresholds: configs/thresholds.yaml
+
+market_index_ticker: "^OSEAX"

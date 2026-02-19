@@ -1,0 +1,345 @@
+# src/ingest_fundamentals_history.py
+from __future__ import annotations
+
+import argparse
+import os
+import time
+import json
+from pathlib import Path
+from typing import Dict, Iterable, List, Tuple, Any
+
+import pandas as pd
+import requests
+
+BASE_URL = "https://apiservice.borsdata.se"  # [URL] i wiki-eksemplene :contentReference[oaicite:2]{index=2}
+
+
+# --- KPI-sett (prioriterer faktorene dine) ---
+# Merk: Ikke alle KPIer finnes i alle reporttypes. Dette er valgt basert på tabellen i KPI History-wiki. :contentReference[oaicite:3]{index=3}
+KPI_SPECS = [
+    # Quality / profitability
+    {"name": "roic", "kpi_id": 37, "reporttypes": ["year", "r12"], "pricetype": "mean"},
+    # Valuation / leverage
+    {"name": "ev_ebit", "kpi_id": 10, "reporttypes": ["year", "r12"], "pricetype": "mean"},
+    {"name": "netdebt_ebitda", "kpi_id": 42, "reporttypes": ["year", "r12"], "pricetype": "mean"},
+    # Building blocks for GP/A og FCF-yield
+    {"name": "gross_profit_m", "kpi_id": 135, "reporttypes": ["year", "r12", "quarter"], "pricetype": "mean"},
+    {"name": "total_assets_m", "kpi_id": 57, "reporttypes": ["year", "r12"], "pricetype": "mean"},
+    {"name": "fcf_m", "kpi_id": 63, "reporttypes": ["year", "r12", "quarter"], "pricetype": "mean"},
+    {"name": "mcap_m", "kpi_id": 50, "reporttypes": ["year", "r12"], "pricetype": "mean"},
+    # Ekstra nyttig
+    {"name": "ev_m", "kpi_id": 49, "reporttypes": ["year", "r12"], "pricetype": "mean"},
+    {"name": "netdebt_m", "kpi_id": 60, "reporttypes": ["year", "r12"], "pricetype": "mean"},
+    {"name": "ebit_m", "kpi_id": 55, "reporttypes": ["year", "r12", "quarter"], "pricetype": "mean"},
+    {"name": "ebitda_m", "kpi_id": 54, "reporttypes": ["year", "r12", "quarter"], "pricetype": "mean"},
+]
+
+
+def _auth_key() -> str:
+    key = (
+        os.getenv("BORSDATA_AUTHKEY")
+        or os.getenv("BORSDATA_API_KEY")
+        or os.getenv("BORSDATA_KEY")
+        or ""
+    ).strip()
+    if not key:
+        raise RuntimeError(
+            "Mangler Börsdata API-key. Sett env var BORSDATA_AUTHKEY (eller BORSDATA_API_KEY)."
+        )
+    return key
+
+
+def _chunked(xs: List[Any], n: int) -> Iterable[List[Any]]:
+    for i in range(0, len(xs), n):
+        yield xs[i : i + n]
+
+
+def _get_json(url: str, params: Dict[str, Any], max_retries: int = 6) -> Any:
+    backoff = 1.0
+    for attempt in range(1, max_retries + 1):
+        r = requests.get(url, params=params, timeout=60)
+        if r.status_code == 429 or 500 <= r.status_code < 600:
+            # rate limit / transient – enkel backoff
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 20)
+            continue
+        r.raise_for_status()
+        return r.json()
+
+    # siste forsøk: la exception komme med tekst
+    r.raise_for_status()
+    return None
+
+
+def _read_tickers_csv(path: Path) -> pd.DataFrame:
+    df = pd.read_csv(path)
+    need = {"ticker", "yahoo_ticker"}
+    missing = need - set(df.columns)
+    if missing:
+        raise ValueError(f"tickers.csv mangler kolonner: {sorted(missing)}")
+
+    # normalize
+    df["ticker"] = df["ticker"].astype(str).str.strip()
+    df["yahoo_ticker"] = df["yahoo_ticker"].astype(str).str.strip()
+    df = df[df["ticker"].ne("") & df["yahoo_ticker"].ne("")].copy()
+    df = df.drop_duplicates(subset=["ticker", "yahoo_ticker"])
+    # optional metadata
+    for col in ["country", "sector", "company"]:
+        if col not in df.columns:
+            df[col] = ""
+    return df
+
+
+def _fetch_instruments_map(authkey: str) -> pd.DataFrame:
+    # Standard endepunkt i Börsdata API: /v1/instruments (brukes av klientbibliotekene; base URL dokumentert) :contentReference[oaicite:4]{index=4}
+    url = f"{BASE_URL}/v1/instruments"
+    data = _get_json(url, params={"authKey": authkey})
+
+    # API kan returnere list eller dict-wrapped
+    if isinstance(data, dict):
+        # prøv vanlige wrappers
+        for k in ["instruments", "Instruments", "data", "Data"]:
+            if k in data and isinstance(data[k], list):
+                data = data[k]
+                break
+
+    if not isinstance(data, list):
+        raise RuntimeError(f"Uventet instruments-respons: {type(data)}")
+
+    df = pd.json_normalize(data)
+    # finn sannsynlige kolonnenavn
+    # insId er brukt i wiki-eksemplene (f.eks. Instruments/77/...) :contentReference[oaicite:5]{index=5}
+    col_ticker = next((c for c in df.columns if c.lower() == "ticker"), None)
+    col_insid = next((c for c in df.columns if c.lower() in ("insid", "ins_id", "id")), None)
+
+    if not col_ticker or not col_insid:
+        raise RuntimeError(f"Fant ikke ticker/insId i instruments. Kolonner: {df.columns.tolist()[:30]}")
+
+    out = df[[col_ticker, col_insid]].rename(columns={col_ticker: "ticker", col_insid: "ins_id"})
+    out["ticker"] = out["ticker"].astype(str).str.strip()
+    out["ins_id"] = pd.to_numeric(out["ins_id"], errors="coerce")
+    out = out.dropna(subset=["ins_id"]).copy()
+    out["ins_id"] = out["ins_id"].astype(int)
+    return out.drop_duplicates(subset=["ticker"])
+
+
+def _parse_kpi_history_payload(payload: Any) -> List[Dict[str, Any]]:
+    """
+    Returnerer liste av rader:
+    {ins_id, date, value}
+    Støtter både single-instrument og array-kall (instList) :contentReference[oaicite:6]{index=6}
+    """
+    rows: List[Dict[str, Any]] = []
+
+    def _points_from_obj(obj: Dict[str, Any]) -> List[Any]:
+        for k in ["values", "history", "data", "items", "kpiHistory"]:
+            if k in obj and isinstance(obj[k], list):
+                return obj[k]
+        # fallback: hvis obj selv ser ut som point
+        return []
+
+    def _date_val(pt: Dict[str, Any]) -> Tuple[Any, Any]:
+        d = (
+            pt.get("d")
+            or pt.get("date")
+            or pt.get("reportEndDate")
+            or pt.get("report_End_Date")
+            or pt.get("reportDate")
+            or pt.get("report_Date")
+        )
+        v = pt.get("v") if "v" in pt else pt.get("value", pt.get("val"))
+        return d, v
+
+    if isinstance(payload, list):
+        # kan være liste av instrument-objekter ELLER liste av points
+        if payload and isinstance(payload[0], dict) and any(k.lower() in ("insid", "ins_id") for k in payload[0].keys()):
+            # instrument-objekter
+            for inst_obj in payload:
+                if not isinstance(inst_obj, dict):
+                    continue
+                ins_id = inst_obj.get("insId") or inst_obj.get("ins_id") or inst_obj.get("InsId") or inst_obj.get("id")
+                pts = _points_from_obj(inst_obj)
+                if pts and ins_id is not None:
+                    for pt in pts:
+                        if not isinstance(pt, dict):
+                            continue
+                        d, v = _date_val(pt)
+                        rows.append({"ins_id": ins_id, "date": d, "value": v})
+        else:
+            # points direkte
+            for pt in payload:
+                if isinstance(pt, dict):
+                    d, v = _date_val(pt)
+                    rows.append({"ins_id": None, "date": d, "value": v})
+
+    elif isinstance(payload, dict):
+        # wrapper
+        ins_id = payload.get("insId") or payload.get("ins_id") or payload.get("InsId") or payload.get("id")
+        pts = _points_from_obj(payload)
+        if pts:
+            for pt in pts:
+                if not isinstance(pt, dict):
+                    continue
+                d, v = _date_val(pt)
+                rows.append({"ins_id": ins_id, "date": d, "value": v})
+        else:
+            # noen wrappers kan ha "data":[{insId, values:[...]}]
+            for k in ["data", "Data", "instruments", "Instruments"]:
+                if k in payload and isinstance(payload[k], list):
+                    return _parse_kpi_history_payload(payload[k])
+
+    return rows
+
+
+def _fetch_kpi_history_batch(
+    authkey: str, ins_ids: List[int], kpi_id: int, reporttype: str, pricetype: str
+) -> pd.DataFrame:
+    url = f"{BASE_URL}/v1/Instruments/kpis/{kpi_id}/{reporttype}/{pricetype}/history"
+    # instList-array call er dokumentert i wiki (max 50) :contentReference[oaicite:7]{index=7}
+    payload = _get_json(url, params={"authKey": authkey, "instList": ",".join(map(str, ins_ids))})
+    rows = _parse_kpi_history_payload(payload)
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    df["ins_id"] = pd.to_numeric(df["ins_id"], errors="coerce")
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df["value"] = pd.to_numeric(df["value"], errors="coerce")
+    df = df.dropna(subset=["ins_id", "date"])
+    df["ins_id"] = df["ins_id"].astype(int)
+    return df
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--asof", required=True, help="YYYY-MM-DD")
+    ap.add_argument("--tickers-csv", default=r"config\tickers.csv")
+    ap.add_argument("--min-periods", type=int, default=20)
+    ap.add_argument("--mode", choices=["year", "quarter", "both", "all"], default="both")
+    ap.add_argument("--include-r12", action="store_true", help="Inkluder r12-serier (anbefalt)")
+    args = ap.parse_args()
+
+    asof = args.asof
+    tickers_path = Path(args.tickers_csv)
+    raw_dir = Path("data") / "raw" / asof
+    raw_dir.mkdir(parents=True, exist_ok=True)
+
+    authkey = _auth_key()
+    tickers_df = _read_tickers_csv(tickers_path)
+
+    # Preferer ins_id hvis tickers.csv har det (da slipper vi match-problemer)
+    if "ins_id" in tickers_df.columns:
+        merged = tickers_df.copy()
+        merged["ins_id"] = pd.to_numeric(merged["ins_id"], errors="coerce")
+        merged = merged.dropna(subset=["ins_id"]).copy()
+        merged["ins_id"] = merged["ins_id"].astype(int)
+    else:
+        instruments_map = _fetch_instruments_map(authkey)
+        merged = tickers_df.merge(instruments_map, on="ticker", how="left")
+    merged = tickers_df.copy()
+    merged["ins_id"] = pd.to_numeric(merged["ins_id"], errors="coerce")
+    merged = merged.dropna(subset=["ins_id"]).copy()
+    merged["ins_id"] = merged["ins_id"].astype(int)
+else:
+    instruments_map = _fetch_instruments_map(authkey)
+    merged = tickers_df.merge(instruments_map, on="ticker", how="left")
+
+    missing_ins = merged[merged["ins_id"].isna()][["ticker", "yahoo_ticker"]]
+    if not missing_ins.empty:
+        (raw_dir / "missing_instruments.csv").write_text(missing_ins.to_csv(index=False), encoding="utf-8")
+        print(f"[WARN] {len(missing_ins)} tickers i tickers.csv matchet ikke /v1/instruments. Se data/raw/{asof}/missing_instruments.csv")
+
+    merged = merged.dropna(subset=["ins_id"]).copy()
+    merged["ins_id"] = merged["ins_id"].astype(int)
+
+    # lagre mapping for audit
+    merged.to_csv(raw_dir / "ticker_map.csv", index=False)
+
+    # velg hvilke reporttypes vi henter
+    want_year = args.mode in ("year", "both", "all")
+    want_quarter = args.mode in ("quarter", "both", "all")
+    want_r12 = args.include_r12 or args.mode == "all"
+
+    target_reporttypes = []
+    if want_year:
+        target_reporttypes.append("year")
+    if want_quarter:
+        target_reporttypes.append("quarter")
+    if want_r12:
+        target_reporttypes.append("r12")
+
+    all_rows: List[pd.DataFrame] = []
+    ins_ids_all = merged["ins_id"].tolist()
+
+    for spec in KPI_SPECS:
+        name = spec["name"]
+        kpi_id = int(spec["kpi_id"])
+        pricetype = spec.get("pricetype", "mean")
+        available = set(spec["reporttypes"])
+
+        for reporttype in target_reporttypes:
+            if reporttype not in available:
+                continue
+
+            for chunk in _chunked(ins_ids_all, 50):
+                df = _fetch_kpi_history_batch(authkey, chunk, kpi_id, reporttype, pricetype)
+                if df.empty:
+                    continue
+                df["kpi_id"] = kpi_id
+                df["metric"] = name
+                df["report_type"] = reporttype
+                df["price_type"] = pricetype
+                all_rows.append(df)
+
+    hist = pd.concat(all_rows, ignore_index=True) if all_rows else pd.DataFrame(
+        columns=["ins_id", "date", "value", "kpi_id", "metric", "report_type", "price_type"]
+    )
+
+    # join tilbake yahoo_ticker etc
+    hist = hist.merge(merged[["ins_id", "ticker", "yahoo_ticker", "country", "sector", "company"]], on="ins_id", how="left")
+    # reorder
+    cols = ["yahoo_ticker", "ticker", "ins_id", "company", "country", "sector", "metric", "kpi_id", "report_type", "price_type", "date", "value"]
+    hist = hist[cols].sort_values(["yahoo_ticker", "metric", "report_type", "date"])
+
+    out_path = raw_dir / "fundamentals_history.parquet"
+    hist.to_parquet(out_path, index=False)
+
+    # --- coverage logging (DoD) ---
+    # antall perioder per (ticker, metric, report_type)
+    coverage = (
+        hist.dropna(subset=["value"])
+        .groupby(["yahoo_ticker", "metric", "report_type"])["date"]
+        .nunique()
+        .reset_index(name="n_periods")
+        .sort_values(["yahoo_ticker", "metric", "report_type"])
+    )
+    coverage.to_csv(raw_dir / "coverage.csv", index=False)
+
+    # minimumskrav: minst N perioder per ticker for noen "core metrics" i r12/year
+    core_metrics = ["roic", "ev_ebit", "netdebt_ebitda"]
+    core = coverage[coverage["metric"].isin(core_metrics)].copy()
+    # velg beste av r12/year (max n_periods)
+    core_best = core[core["report_type"].isin(["r12", "year"])].groupby(["yahoo_ticker", "metric"])["n_periods"].max().reset_index()
+    failing = core_best[core_best["n_periods"] < int(args.min_periods)].copy()
+    failing.to_csv(raw_dir / "coverage_fail.csv", index=False)
+
+    meta = {
+        "asof": asof,
+        "mode": args.mode,
+        "include_r12": bool(want_r12),
+        "min_periods": int(args.min_periods),
+        "rows": int(len(hist)),
+        "tickers_in": int(len(tickers_df)),
+        "tickers_mapped": int(merged["yahoo_ticker"].nunique()),
+        "base_url": BASE_URL,
+        "notes": "KPI History bruker array calls (instList max 50) og reporttype/year|quarter|r12 iht wiki.",
+    }
+    (raw_dir / "ingest_meta.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    print(f"[OK] wrote: {out_path}")
+    print(f"[OK] wrote: {raw_dir / 'coverage.csv'}")
+    if len(failing):
+        print(f"[WARN] coverage_fail rows={len(failing)} -> {raw_dir / 'coverage_fail.csv'}")
+
+
+if __name__ == "__main__":
+    main()
