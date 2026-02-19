@@ -1,0 +1,25 @@
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Local/editor
+.idea/
+.vscode/
+
+# Runtime outputs
+runs/
+logs/
+
+# Data snapshots and heavy exports
+data/raw/
+data/freeze/
+*.parquet
+
+# Environment secrets
+.env
