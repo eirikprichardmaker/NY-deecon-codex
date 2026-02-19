@@ -14,3 +14,12 @@ ir_reports:
   mapping_csv: config/ir_sources.csv
   rate_limit_sec: 1.0
   timeout_sec: 20
+
+wft_opt_strategy_a:
+  weights_prior:
+    quality: 0.4
+    value: 0.3
+    lowrisk: 0.2
+    balance: 0.1
+  weights_bounds: [0.0, 0.7]
+  weights_reg_lambda: 0.5
