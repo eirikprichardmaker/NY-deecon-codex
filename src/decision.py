@@ -12,6 +12,9 @@ from src.common.errors import SchemaError
 from src.common.io import read_parquet
 from src.common.utils import safe_div, zscore
 
+REASON_DATA_MISSING_MA200 = "DATA_MISSING_MA200"
+REASON_DATA_MISSING_BENCHMARK = "DATA_MISSING_BENCHMARK"
+
 
 def _canon_cols(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -269,31 +272,11 @@ def _build_index_snapshot(prices_df: pd.DataFrame, asof: str, index_keys: list[s
 
     px = px.sort_values(["index_key", date_col])
     px["_price"] = pd.to_numeric(px[price_col], errors="coerce")
-
-    ma21_col = _pick(px, ["ma21"])
-    ma200_col = _pick(px, ["ma200"])
-    mad_col = _pick(px, ["mad"])
-    above_col = _pick(px, ["above_ma200"])
-
-    if ma21_col:
-        px["_ma21"] = pd.to_numeric(px[ma21_col], errors="coerce")
-    else:
-        px["_ma21"] = px.groupby("index_key")["_price"].transform(lambda s: s.rolling(21, min_periods=21).mean())
-
-    if ma200_col:
-        px["_ma200"] = pd.to_numeric(px[ma200_col], errors="coerce")
-    else:
-        px["_ma200"] = px.groupby("index_key")["_price"].transform(lambda s: s.rolling(200, min_periods=200).mean())
-
-    if mad_col:
-        px["_mad"] = pd.to_numeric(px[mad_col], errors="coerce")
-    else:
-        px["_mad"] = (px["_ma21"] - px["_ma200"]) / px["_ma200"]
-
-    if above_col:
-        px["_above"] = px[above_col].astype("boolean").fillna(False).astype(bool)
-    else:
-        px["_above"] = px["_price"] > px["_ma200"]
+    g = px.groupby("index_key", group_keys=False)
+    px["_ma21"] = g["_price"].transform(lambda s: s.rolling(21, min_periods=21).mean())
+    px["_ma200"] = g["_price"].transform(lambda s: s.rolling(200, min_periods=200).mean())
+    px["_mad"] = (px["_ma21"] - px["_ma200"]) / px["_ma200"]
+    px["_above"] = px["_price"] > px["_ma200"]
 
     snap = (
         px.sort_values(["index_key", date_col])
@@ -327,27 +310,31 @@ def _apply_index_technical_filter(df: pd.DataFrame, prices_df: pd.DataFrame, aso
         out = out.drop(columns=["index_key"])
 
     require_index_ma200 = bool(dec_cfg.get("require_index_ma200", True))
-    require_index_mad = bool(dec_cfg.get("require_index_mad", True))
+    require_index_mad = bool(dec_cfg.get("require_index_mad", False))
+    idx_price = pd.to_numeric(out.get("index_price"), errors="coerce")
+    idx_ma200 = pd.to_numeric(out.get("index_ma200"), errors="coerce")
+    idx_mad = pd.to_numeric(out.get("index_mad"), errors="coerce")
+    idx_has_price_ma = idx_price.notna() & idx_ma200.notna()
+    idx_has_mad = idx_mad.notna()
+    idx_above = idx_price > idx_ma200
 
-    out["index_data_ok"] = (
-        out["relevant_index_key"].astype(str).ne("") &
-        pd.to_numeric(out.get("index_price"), errors="coerce").notna() &
-        pd.to_numeric(out.get("index_ma200"), errors="coerce").notna()
+    out["index_above_ma200"] = pd.Series(
+        np.where(idx_has_price_ma, idx_above, pd.NA),
+        index=out.index,
+        dtype="boolean",
     )
-    idx_above = out.get("index_above_ma200", pd.Series(False, index=out.index)).astype("boolean").fillna(False).astype(bool)
+    out["index_data_ok"] = out["relevant_index_key"].astype(str).ne("") & idx_has_price_ma
     out["index_ma200_ok"] = np.where(
         require_index_ma200,
-        out["index_data_ok"] & idx_above,
+        idx_has_price_ma & idx_above,
         True,
     )
-
-    idx_mad = pd.to_numeric(out.get("index_mad"), errors="coerce")
     out["index_mad_ok"] = np.where(
         require_index_mad,
-        out["index_data_ok"] & idx_mad.notna() & (idx_mad >= mad_min),
+        idx_has_mad & (idx_mad >= mad_min),
         True,
     )
-    out["index_tech_ok"] = out["index_ma200_ok"].astype(bool) & out["index_mad_ok"].astype(bool)
+    out["index_tech_ok"] = out["index_ma200_ok"].astype(bool) & (out["index_mad_ok"].astype(bool) if require_index_mad else True)
     return out
 
 
@@ -494,7 +481,14 @@ def run(ctx, log) -> int:
     mos_high = float(dec_cfg.get("mos_high_uncertainty", 0.40))
     require_above_ma200 = bool(dec_cfg.get("require_above_ma200", True))
     mad_min = float(dec_cfg.get("mad_min", -0.05))
+    technical_gate_mode = str(dec_cfg.get("technical_gate_mode", "two_of_three_index_primary")).strip().lower()
     top_n = int(dec_cfg.get("top_n", 25))
+    if technical_gate_mode == "strict":
+        tech_rule_text = "Teknisk regel: aksje + relevant indeks må være over 200d, og MAD må være over terskel."
+    elif technical_gate_mode == "two_of_three":
+        tech_rule_text = "Teknisk regel: 2 av 3 må være oppfylt (aksje>MA200, indeks>MA200, MAD>=terskel)."
+    else:
+        tech_rule_text = "Teknisk regel: 2 av 3 må være oppfylt med indeks-trend som primær (må være over MA200)."
 
     # --- risk flags ---
     df["beta"] = pd.to_numeric(df.get("beta", pd.NA), errors="coerce")
@@ -513,26 +507,52 @@ def run(ctx, log) -> int:
         prices_df = pd.DataFrame()
         log.info(f"decision: missing {prices_path} -> index filter forces CASH")
 
-    # --- technical filter (missing -> False) ---
-    above_ma200_series = pd.Series(True, index=df.index)
-    if "above_ma200" in df.columns:
-        above_ma200_series = df["above_ma200"].astype("boolean").fillna(False).astype(bool)
+    # --- technical filter ---
+    stock_price = _as_num_series(df, ["adj_close", "close", "price", "last"])
+    stock_ma200 = _as_num_series(df, ["ma200"])
+    mad_s = _as_num_series(df, ["mad"])
+    stock_has_price_ma = stock_price.notna() & stock_ma200.notna()
+    stock_above_ma200 = stock_price > stock_ma200
+    stock_data_ok = stock_has_price_ma
 
-    if require_above_ma200 and "above_ma200" in df.columns:
-        stock_ma200_ok = above_ma200_series
-    else:
-        stock_ma200_ok = pd.Series(True, index=df.index)
+    above_ma200_series = pd.Series(
+        np.where(stock_has_price_ma, stock_above_ma200, pd.NA),
+        index=df.index,
+        dtype="boolean",
+    )
+    df["above_ma200"] = above_ma200_series
+    df["stock_data_ok"] = stock_data_ok
 
-    if "mad" in df.columns:
-        mad_s = pd.to_numeric(df["mad"], errors="coerce")
-        stock_mad_ok = mad_s.notna() & (mad_s >= mad_min)
-    else:
-        stock_mad_ok = pd.Series(True, index=df.index)
+    stock_ma200_ok = pd.Series(True, index=df.index)
+    if require_above_ma200:
+        stock_ma200_ok = stock_has_price_ma & stock_above_ma200
+
+    stock_mad_ok = mad_s.notna() & (mad_s >= mad_min)
 
     df["stock_ma200_ok"] = stock_ma200_ok
     df["stock_mad_ok"] = stock_mad_ok
     df = _apply_index_technical_filter(df, prices_df=prices_df, asof=ctx.asof, dec_cfg=dec_cfg, mad_min=mad_min)
-    df["tech_ok"] = df["stock_ma200_ok"].astype(bool) & df["stock_mad_ok"].astype(bool) & df["index_tech_ok"].astype(bool)
+    df["tech_signal_stock_trend"] = df["stock_ma200_ok"].astype(bool)
+    df["tech_signal_index_trend"] = df["index_ma200_ok"].astype(bool)
+    df["tech_signal_mad"] = df["stock_mad_ok"].astype(bool)
+    df["tech_signal_count"] = (
+        df["tech_signal_stock_trend"].astype(int) +
+        df["tech_signal_index_trend"].astype(int) +
+        df["tech_signal_mad"].astype(int)
+    )
+    tech_data_ready = df["stock_data_ok"].astype(bool) & df["index_data_ok"].astype(bool)
+
+    if technical_gate_mode == "strict":
+        df["tech_ok"] = (
+            tech_data_ready &
+            df["stock_ma200_ok"].astype(bool) &
+            df["stock_mad_ok"].astype(bool) &
+            df["index_tech_ok"].astype(bool)
+        )
+    elif technical_gate_mode == "two_of_three":
+        df["tech_ok"] = tech_data_ready & df["tech_signal_count"].ge(2)
+    else:
+        df["tech_ok"] = tech_data_ready & df["tech_signal_index_trend"].astype(bool) & df["tech_signal_count"].ge(2)
 
     # --- quality score (lightweight) ---
     comps, wts = [], []
@@ -565,10 +585,7 @@ def run(ctx, log) -> int:
     )
     df["technical_ok"] = df["tech_ok"]
 
-    ma200_ok_series = pd.Series(False, index=df.index)
-    if "above_ma200" in df.columns:
-        ma200_ok_series = above_ma200_series
-    df["ma200_ok"] = ma200_ok_series
+    df["ma200_ok"] = df["stock_ma200_ok"].astype(bool)
     df["reason_fundamental_fail"] = ""
     mos_fail = ~(df["mos"].notna() & (df["mos"] >= df["mos_req"]))
     vc_fail = ~df["value_creation_ok"].fillna(False)
@@ -596,22 +613,36 @@ def run(ctx, log) -> int:
         )
 
     df["reason_technical_fail"] = ""
-    if "above_ma200" in df.columns:
-        df.loc[~above_ma200_series, "reason_technical_fail"] = "below_ma200"
-    if "mad" in df.columns:
-        bad_mad = pd.to_numeric(df["mad"], errors="coerce") < mad_min
-        df.loc[bad_mad, "reason_technical_fail"] = df.loc[bad_mad, "reason_technical_fail"].map(lambda x: _join_reasons([x, "mad_below_min"]))
+    missing_stock_ma200 = stock_ma200.isna()
+    missing_stock_tech = stock_price.isna() & ~missing_stock_ma200
+    stock_below_ma200 = df["stock_data_ok"].astype(bool) & ~df["stock_ma200_ok"].astype(bool)
+    bad_mad = df["stock_data_ok"].astype(bool) & mad_s.notna() & ~df["stock_mad_ok"].astype(bool)
+
+    df.loc[missing_stock_ma200, "reason_technical_fail"] = df.loc[missing_stock_ma200, "reason_technical_fail"].map(
+        lambda x: _join_reasons([x, REASON_DATA_MISSING_MA200])
+    )
+    df.loc[missing_stock_tech, "reason_technical_fail"] = df.loc[missing_stock_tech, "reason_technical_fail"].map(
+        lambda x: _join_reasons([x, "missing_stock_technical_data"])
+    )
+    df.loc[stock_below_ma200, "reason_technical_fail"] = df.loc[stock_below_ma200, "reason_technical_fail"].map(
+        lambda x: _join_reasons([x, "below_ma200"])
+    )
+    df.loc[bad_mad, "reason_technical_fail"] = df.loc[bad_mad, "reason_technical_fail"].map(
+        lambda x: _join_reasons([x, "mad_below_min"])
+    )
 
     unknown_idx = df["relevant_index_key"].astype(str).eq("")
     missing_idx_data = df["relevant_index_key"].astype(str).ne("") & ~df["index_data_ok"].astype(bool)
-    idx_below_ma200 = df["index_data_ok"].astype(bool) & ~df["index_ma200_ok"].astype(bool)
-    idx_mad_below = df["index_data_ok"].astype(bool) & ~df["index_mad_ok"].astype(bool)
+    idx_has_price_ma = pd.to_numeric(df.get("index_price"), errors="coerce").notna() & pd.to_numeric(df.get("index_ma200"), errors="coerce").notna()
+    idx_mad = pd.to_numeric(df.get("index_mad"), errors="coerce")
+    idx_below_ma200 = idx_has_price_ma & ~df["index_ma200_ok"].astype(bool)
+    idx_mad_below = idx_mad.notna() & ~df["index_mad_ok"].astype(bool)
 
     df.loc[unknown_idx, "reason_technical_fail"] = df.loc[unknown_idx, "reason_technical_fail"].map(
-        lambda x: _join_reasons([x, "unknown_relevant_index"])
+        lambda x: _join_reasons([x, REASON_DATA_MISSING_BENCHMARK])
     )
     df.loc[missing_idx_data, "reason_technical_fail"] = df.loc[missing_idx_data, "reason_technical_fail"].map(
-        lambda x: _join_reasons([x, "missing_index_data"])
+        lambda x: _join_reasons([x, REASON_DATA_MISSING_BENCHMARK])
     )
     df.loc[idx_below_ma200, "reason_technical_fail"] = df.loc[idx_below_ma200, "reason_technical_fail"].map(
         lambda x: _join_reasons([x, "index_below_ma200"])
@@ -619,6 +650,7 @@ def run(ctx, log) -> int:
     df.loc[idx_mad_below, "reason_technical_fail"] = df.loc[idx_mad_below, "reason_technical_fail"].map(
         lambda x: _join_reasons([x, "index_mad_below_min"])
     )
+    df.loc[df["technical_ok"].astype(bool), "reason_technical_fail"] = ""
 
     df["eligible"] = df["technical_ok"] & df["fundamental_ok"]
 
@@ -666,7 +698,7 @@ def run(ctx, log) -> int:
             f"- MoS-regel aktiv: min {mos_min:.0%} (høy risiko {mos_high:.0%})",
             "- Verdiskaping-regel aktiv: ROIC > WACC i 3-års konservativ bane",
             "- Kvalitetsregel aktiv: >=2 svekkede kvalitetsindikatorer => CASH",
-            "- Teknisk regel aktiv: aksje + relevant indeks må være over 200d (MAD brukt som risikofilter)",
+            f"- {tech_rule_text}",
             "",
             "## Topp (diagnostikk – før filter)",
             _md_table(diag[out_cols], max_rows=10),
@@ -697,7 +729,7 @@ def run(ctx, log) -> int:
     md.append(f"- Krav MoS >= {mos_min:.0%} (høy risiko: {mos_high:.0%})")
     md.append("- Verdiskaping: ROIC-WACC må være positiv i 3-års konservativ bane")
     md.append("- Kvalitetsgate: minst 2 svekkede indikatorer forkaster kandidat")
-    md.append("- Teknisk gate: aksje + relevant indeks må passere 200d/MAD-filter")
+    md.append(f"- {tech_rule_text}")
     md.append(f"- Valgt ticker har MoS {float(pick['mos']):.1%} og quality_score {float(pick.get('quality_score', 0.0)):.3f}")
     if np.isfinite(pick.get("roic_wacc_spread", np.nan)):
         md.append(f"- ROIC-WACC spread (normalisert): {float(pick.get('roic_wacc_spread')):.3%}")

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import importlib.util
 import subprocess
 import sys
 from pathlib import Path
@@ -7,6 +9,34 @@ from pathlib import Path
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _load_sweep_module():
+    p = ROOT / "tools" / "run_wft_sweep.py"
+    spec = importlib.util.spec_from_file_location("run_wft_sweep_mod", p)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_reason_distribution_counts_new_data_missing_reasons():
+    mod = _load_sweep_module()
+    dist, risk_share, data_missing_share = mod._reason_distribution(
+        pd.Series(
+            [
+                "DATA_MISSING_MA200|ingen kandidat",
+                "DATA_MISSING_BENCHMARK|ingen kandidat",
+                ">200d|ingen kandidat",
+            ]
+        )
+    )
+
+    assert abs(float(risk_share) - (1.0 / 3.0)) < 1e-12
+    assert abs(float(data_missing_share) - (2.0 / 3.0)) < 1e-12
+    assert float(dist.get("DATA_MISSING_MA200", 0.0)) > 0.0
+    assert float(dist.get("DATA_MISSING_BENCHMARK", 0.0)) > 0.0
 
 
 def _write_smoke_dataset(base: Path) -> tuple[Path, Path, Path]:
@@ -88,12 +118,16 @@ def test_wft_sweep_smoke(tmp_path):
         "2013",
         "--end",
         "2013",
+        "--asof",
+        "2013-12-31",
         "--rebalance",
         "monthly",
         "--test-window-years",
         "1",
         "--train-window-years",
         "12",
+        "--seeds",
+        "11",
         "--cost-bps",
         "20",
         "--master-path",
@@ -102,8 +136,6 @@ def test_wft_sweep_smoke(tmp_path):
         str(prices_path),
         "--output-dir",
         str(out_dir),
-        "--max-combos",
-        "2",
     ]
 
     proc = subprocess.run(
@@ -114,22 +146,70 @@ def test_wft_sweep_smoke(tmp_path):
     )
     assert proc.returncode == 0, proc.stderr
 
-    results_path = out_dir / "sweep_results.csv"
-    summary_path = out_dir / "sweep_summary.md"
+    seed_dir = out_dir / "train_12" / "seed_11"
+    wft_results_path = seed_dir / "wft_results.csv"
+    wft_summary_path = seed_dir / "wft_summary.md"
+    tuned_cfg_path = seed_dir / "tuned_config.yaml"
+    metadata_path = seed_dir / "metadata.json"
+    summary_csv = out_dir / "sweep_summary.csv"
+    summary_md = out_dir / "sweep_summary.md"
 
-    assert results_path.exists()
-    assert summary_path.exists()
+    assert wft_results_path.exists()
+    assert wft_summary_path.exists()
+    assert tuned_cfg_path.exists()
+    assert metadata_path.exists()
+    assert summary_csv.exists()
+    assert summary_md.exists()
 
-    df = pd.read_csv(results_path)
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    required_meta = {
+        "asof",
+        "start",
+        "end",
+        "rebalance",
+        "train_years",
+        "test_years",
+        "seed",
+        "git_commit",
+        "config_path",
+        "cost_bps_per_100pct_turnover",
+        "cost_model_note",
+    }
+    assert required_meta.issubset(set(metadata.keys()))
+    assert metadata["asof"] == "2013-12-31"
+    assert int(metadata["seed"]) == 11
+    assert int(metadata["start"]) == 2013
+    assert int(metadata["end"]) == 2013
+
+    df = pd.read_csv(summary_csv)
     expected = {
-        "config_id",
-        "params",
-        "oos_cagr",
-        "oos_maxdd",
-        "oos_worst_year",
-        "oos_turnover",
-        "oos_pct_cash",
-        "oos_cagr_gross",
-        "oos_cagr_net",
+        "seed",
+        "status",
+        "cagr",
+        "sharpe",
+        "max_dd",
+        "hitrate",
+        "turnover",
+        "costs",
+        "cagr_net",
+        "benchmark_cagr",
+        "benchmark_maxdd",
+        "excess_cagr",
+        "info_ratio",
+        "cash_share",
+        "cash_risk_reason_share",
+        "cash_datamangler_share",
+        "cash_reason_distribution",
+        "maxdd_gap_vs_benchmark",
+        "rule_excess_cagr",
+        "rule_info_ratio",
+        "rule_maxdd_vs_benchmark",
+        "rule_cash_share_reasons",
+        "go_no_go",
+        "go_no_go_reasons",
+        "run_dir",
     }
     assert expected.issubset(set(df.columns))
+    assert len(df) == 1
+    assert int(df.iloc[0]["seed"]) == 11
+    assert str(df.iloc[0]["go_no_go"]) in {"GO", "NO_GO"}

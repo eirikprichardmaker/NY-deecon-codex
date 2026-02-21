@@ -186,6 +186,183 @@ def test_determinism_seed(monkeypatch):
     pd.testing.assert_frame_equal(out1[5], out2[5], check_dtype=False)
 
 
+def test_cash_reasons_include_quality_filter_failure():
+    params = wft.WFTParams(mos_threshold=0.30, mad_min=-0.05, weakness_rule_variant="baseline")
+    month_df = pd.DataFrame(
+        {
+            "ticker": ["AAA.OL", "BBB.OL"],
+            "k": ["AAA", "BBB"],
+            "mos": [0.50, 0.55],
+            "high_risk_flag": [False, False],
+            "value_creation_ok_base": [True, True],
+            "quality_weak_count": [3, 4],
+            "adj_close": [110.0, 120.0],
+            "above_ma200": [True, True],
+            "ma200": [100.0, 100.0],
+            "mad": [0.03, 0.02],
+            "index_price": [1000.0, 1000.0],
+            "index_ma200": [900.0, 900.0],
+            "index_data_ok": [True, True],
+            "index_above_ma200": [True, True],
+            "index_mad": [0.03, 0.03],
+            "roic": [0.10, 0.11],
+            "fcf_yield": [0.05, 0.06],
+            "market_cap": [10_000_000_000.0, 9_000_000_000.0],
+        }
+    )
+
+    position, reasons = wft._pick_ticker_with_reason(month_df, params)
+
+    assert position == "CASH"
+    assert "kvalitetsscore" in reasons
+    assert "ingen kandidat" in reasons
+
+
+def test_cash_reasons_include_data_missing_ma200_on_warmup_without_200d():
+    params = wft.WFTParams(mos_threshold=0.30, mad_min=-0.05, weakness_rule_variant="baseline")
+    month_df = pd.DataFrame(
+        {
+            "ticker": ["AAA.OL", "BBB.OL"],
+            "k": ["AAA", "BBB"],
+            "mos": [0.50, 0.55],
+            "high_risk_flag": [False, False],
+            "value_creation_ok_base": [True, True],
+            "quality_weak_count": [0, 0],
+            "adj_close": [110.0, 120.0],
+            "ma200": [None, None],
+            "mad": [None, None],
+            "index_price": [1000.0, 1000.0],
+            "index_ma200": [None, None],
+            "index_mad": [None, None],
+            "roic": [0.10, 0.11],
+            "fcf_yield": [0.05, 0.06],
+            "market_cap": [10_000_000_000.0, 9_000_000_000.0],
+        }
+    )
+
+    position, reasons = wft._pick_ticker_with_reason(month_df, params)
+
+    assert position == "CASH"
+    assert "DATA_MISSING_MA200" in reasons
+    assert ">200d" not in reasons
+
+
+def test_cash_reasons_include_data_missing_benchmark_when_mapping_missing():
+    params = wft.WFTParams(mos_threshold=0.30, mad_min=-0.05, weakness_rule_variant="baseline")
+    month_df = pd.DataFrame(
+        {
+            "ticker": ["AAA.XX", "BBB.XX"],
+            "k": ["AAA", "BBB"],
+            "relevant_index_key": ["", ""],
+            "mos": [0.50, 0.55],
+            "high_risk_flag": [False, False],
+            "value_creation_ok_base": [True, True],
+            "quality_weak_count": [0, 0],
+            "adj_close": [110.0, 120.0],
+            "ma200": [100.0, 100.0],
+            "mad": [0.03, 0.02],
+            "index_price": [None, None],
+            "index_ma200": [None, None],
+            "index_mad": [None, None],
+            "roic": [0.10, 0.11],
+            "fcf_yield": [0.05, 0.06],
+            "market_cap": [10_000_000_000.0, 9_000_000_000.0],
+        }
+    )
+
+    position, reasons = wft._pick_ticker_with_reason(month_df, params)
+
+    assert position == "CASH"
+    assert "DATA_MISSING_BENCHMARK" in reasons
+    assert ">200d" not in reasons
+
+
+def test_apply_filters_uses_price_over_ma200_for_stock_and_index():
+    params = wft.WFTParams(mos_threshold=0.30, mad_min=-0.05, weakness_rule_variant="baseline")
+    month_df = pd.DataFrame(
+        {
+            "ticker": ["AAA.OL"],
+            "k": ["AAA"],
+            "mos": [0.50],
+            "high_risk_flag": [False],
+            "value_creation_ok_base": [True],
+            "quality_weak_count": [0],
+            "adj_close": [110.0],
+            "ma200": [100.0],
+            "mad": [0.03],
+            "above_ma200": [False],
+            "index_price": [1100.0],
+            "index_ma200": [1000.0],
+            "index_mad": [0.02],
+            "index_above_ma200": [False],
+            "roic": [0.10],
+            "fcf_yield": [0.05],
+            "market_cap": [10_000_000_000.0],
+        }
+    )
+
+    out = wft._apply_filters(month_df, params)
+    assert bool(out.loc[0, "stock_technical_ok"]) is True
+    assert bool(out.loc[0, "index_technical_ok"]) is True
+    assert bool(out.loc[0, "technical_ok"]) is True
+
+
+def test_apply_filters_two_of_three_allows_stock_trend_fail_when_index_and_mad_pass():
+    params = wft.WFTParams(mos_threshold=0.30, mad_min=-0.05, weakness_rule_variant="baseline")
+    month_df = pd.DataFrame(
+        {
+            "ticker": ["AAA.OL"],
+            "k": ["AAA"],
+            "mos": [0.50],
+            "high_risk_flag": [False],
+            "value_creation_ok_base": [True],
+            "quality_weak_count": [0],
+            "adj_close": [95.0],
+            "ma200": [100.0],
+            "mad": [0.02],
+            "index_price": [1100.0],
+            "index_ma200": [1000.0],
+            "index_mad": [0.01],
+            "roic": [0.10],
+            "fcf_yield": [0.05],
+            "market_cap": [10_000_000_000.0],
+        }
+    )
+
+    out = wft._apply_filters(month_df, params)
+    assert bool(out.loc[0, "stock_technical_ok"]) is False
+    assert bool(out.loc[0, "tech_signal_mad"]) is True
+    assert int(out.loc[0, "tech_signal_count"]) == 2
+    assert bool(out.loc[0, "technical_ok"]) is True
+
+
+def test_apply_filters_two_of_three_blocks_when_only_index_trend_passes():
+    params = wft.WFTParams(mos_threshold=0.30, mad_min=-0.05, weakness_rule_variant="baseline")
+    month_df = pd.DataFrame(
+        {
+            "ticker": ["AAA.OL"],
+            "k": ["AAA"],
+            "mos": [0.50],
+            "high_risk_flag": [False],
+            "value_creation_ok_base": [True],
+            "quality_weak_count": [0],
+            "adj_close": [95.0],
+            "ma200": [100.0],
+            "mad": [-0.20],
+            "index_price": [1100.0],
+            "index_ma200": [1000.0],
+            "index_mad": [0.01],
+            "roic": [0.10],
+            "fcf_yield": [0.05],
+            "market_cap": [10_000_000_000.0],
+        }
+    )
+
+    out = wft._apply_filters(month_df, params)
+    assert int(out.loc[0, "tech_signal_count"]) == 1
+    assert bool(out.loc[0, "technical_ok"]) is False
+
+
 def test_wft_cli_smoke_outputs_files(tmp_path, monkeypatch):
     root = tmp_path / "repo"
     master_path, prices_path = _write_smoke_dataset(root)

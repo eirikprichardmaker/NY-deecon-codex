@@ -78,3 +78,27 @@ Scriptet skriver:
 - train-metrikker: `train_objective`, `train_return`, `train_sharpe`, `train_turnover`, `train_pct_cash`
 - OOS-metrikker: `test_return_gross`, `test_return_net`, `test_max_dd`, `test_turnover`, `test_pct_cash`
 - benchmark/excess: `benchmark_return`, `excess_return_net`, `benchmark_symbols_used`, `benchmark_missing_months`
+
+## Multi-seed Verification (Strategy A)
+Aggreger eksisterende optimize-runs for seed-stabilitet + holdout sammenligning mot baseline:
+
+```bash
+python tools/aggregate_experiments.py --mode strategyA --holdout-start 2021 --holdout-end 2022 --seeds 1,2,3,4,5 --latest 10
+```
+
+Bruk eksplisitt baseline-run:
+
+```bash
+python tools/aggregate_experiments.py --mode strategyA --holdout-start 2021 --holdout-end 2022 --seeds 1,2,3,4,5 --latest 10 --baseline-run-id <run_id>
+```
+
+Kjor baseline automatisk (n-trials=1, faste baseline-knobs):
+
+```bash
+python tools/aggregate_experiments.py --mode strategyA --holdout-start 2021 --holdout-end 2022 --seeds 1,2,3,4,5 --latest 10 --run-baseline
+```
+
+Output i `experiments/`:
+- `strategyA_seed_summary.csv` (en rad per seed/run, med run_id + filstier for audit)
+- `strategyA_seed_summary.md` (rangert tabell + kommentarer)
+- `strategyA_recommendation.md` (beslutning: `freeze config` vs `tighten regularization/penalties`)

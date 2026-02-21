@@ -655,10 +655,29 @@ def _score_month(month_df: pd.DataFrame, params: StrategyAParams) -> pd.DataFram
         & (_to_num(d["quality_weak_count"]).lt(float(weak_fail_min)).fillna(False))
     )
 
+    stock_price = _to_num(d.get("adj_close", pd.Series(np.nan, index=d.index)))
+    stock_ma200 = _to_num(d.get("ma200", pd.Series(np.nan, index=d.index)))
+    stock_mad = _to_num(d.get("mad", pd.Series(np.nan, index=d.index)))
+    index_price = _to_num(d.get("index_price", pd.Series(np.nan, index=d.index)))
+    index_ma200 = _to_num(d.get("index_ma200", pd.Series(np.nan, index=d.index)))
+    index_mad = _to_num(d.get("index_mad", pd.Series(np.nan, index=d.index)))
+
+    d["stock_data_ok"] = stock_price.notna() & stock_ma200.notna()
+    d["index_data_ok"] = index_price.notna() & index_ma200.notna()
+    d["stock_above_ma200"] = stock_price > stock_ma200
+    d["index_above_ma200"] = index_price > index_ma200
+    d["stock_mad_ok"] = stock_mad.notna() & stock_mad.ge(float(params.mad_min))
+    d["tech_signal_count"] = (
+        (d["stock_data_ok"].astype(bool) & d["stock_above_ma200"].astype(bool)).astype(int) +
+        (d["index_data_ok"].astype(bool) & d["index_above_ma200"].astype(bool)).astype(int) +
+        d["stock_mad_ok"].astype(int)
+    )
+
     d["technical_ok"] = (
-        d["above_ma200"].astype("boolean").fillna(False).astype(bool)
+        d["stock_data_ok"].astype(bool)
         & d["index_data_ok"].astype(bool)
-        & d["index_above_ma200"].astype("boolean").fillna(False).astype(bool)
+        & d["index_above_ma200"].astype(bool)
+        & d["tech_signal_count"].ge(2)
     )
     d["eligible"] = d["fundamental_ok"] & d["technical_ok"]
 
@@ -670,10 +689,10 @@ def _score_month(month_df: pd.DataFrame, params: StrategyAParams) -> pd.DataFram
         + float(params.weight_balance) * d["score_balance"]
     )
 
-    stock_mad = _to_num(d.get("mad", pd.Series(np.nan, index=d.index))).fillna(float(params.mad_min) - 0.10)
-    index_mad = _to_num(d.get("index_mad", pd.Series(np.nan, index=d.index))).fillna(float(params.mad_min) - 0.10)
-    deficit_stock = np.maximum(0.0, float(params.mad_min) - stock_mad)
-    deficit_index = np.maximum(0.0, float(params.mad_min) - index_mad)
+    stock_mad_penalty = stock_mad.fillna(float(params.mad_min) - 0.10)
+    index_mad_penalty = index_mad.fillna(float(params.mad_min) - 0.10)
+    deficit_stock = np.maximum(0.0, float(params.mad_min) - stock_mad_penalty)
+    deficit_index = np.maximum(0.0, float(params.mad_min) - index_mad_penalty)
     d["mad_penalty"] = float(params.mad_penalty_k) * (deficit_stock + deficit_index)
     d["selection_score"] = d["score_raw"] - d["mad_penalty"]
 
@@ -842,7 +861,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--config", default="config/config.yaml")
     p.add_argument("--start", required=True, type=int)
     p.add_argument("--end", required=True, type=int)
-    p.add_argument("--train-window-years", required=True, type=int)
+    p.add_argument("--train-window-years", type=int, default=8)
     p.add_argument("--test-window-years", required=True, type=int)
     p.add_argument("--rebalance", required=True, default="monthly")
     p.add_argument("--n-trials", required=True, type=int)

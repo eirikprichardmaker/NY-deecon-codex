@@ -4,6 +4,7 @@ import argparse
 import json
 import math
 import os
+import random
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +15,44 @@ import pandas as pd
 import yaml
 
 from src.common.config import load_config, project_root_from_file, resolve_paths
+
+COUNTRY_FROM_SUFFIX = {
+    "OL": "NO",
+    "ST": "SE",
+    "CO": "DK",
+    "HE": "FI",
+}
+
+INDEX_KEY_TO_COUNTRY = {
+    "OSEAX": "NO",
+    "OSEBX": "NO",
+    "OBX": "NO",
+    "OMXS": "SE",
+    "OMXS30": "SE",
+    "OMXC25": "DK",
+    "HEX": "FI",
+    "OMXH25": "FI",
+}
+
+COUNTRY_BENCHMARK_PRIORITY = {
+    "NO": ["^OBX", "^OSEBX", "^OSEAX"],
+    "SE": ["^OMXS30", "^OMXS"],
+    "DK": ["^OMXC25"],
+    "FI": ["^OMXH25", "^HEX"],
+}
+
+REASON_DATA_MISSING_MA200 = "DATA_MISSING_MA200"
+REASON_DATA_MISSING_BENCHMARK = "DATA_MISSING_BENCHMARK"
+
+DECISION_REASON_PRIORITY = [
+    "MoS",
+    ">200d",
+    "kvalitetsscore",
+    REASON_DATA_MISSING_MA200,
+    REASON_DATA_MISSING_BENCHMARK,
+    "datamangler",
+    "ingen kandidat",
+]
 
 
 @dataclass(frozen=True)
@@ -53,6 +92,56 @@ def _to_decimal_rate(s: pd.Series) -> pd.Series:
     if np.isfinite(med) and med > 2.0:
         x = x / 100.0
     return x
+
+
+def _norm_index_symbol(x: str) -> str:
+    s = str(x).strip().upper()
+    if not s:
+        return ""
+    return "^" + s.lstrip("^")
+
+
+def _country_from_ticker_symbol(x) -> str:
+    suffix = _suffix_from_symbol(x)
+    return COUNTRY_FROM_SUFFIX.get(suffix, "")
+
+
+def _country_from_index_key(x) -> str:
+    key = _norm_ticker(x)
+    return INDEX_KEY_TO_COUNTRY.get(key, "")
+
+
+def _to_period_return(ret: pd.Series) -> float:
+    r = _to_num(ret).fillna(0.0)
+    if r.empty:
+        return 0.0
+    return float((1.0 + r).prod() - 1.0)
+
+
+def _collect_decision_reasons(values: pd.Series) -> str:
+    tokens: list[str] = []
+    for v in values.fillna("").astype(str):
+        for part in v.split("|"):
+            t = part.strip()
+            if t:
+                tokens.append(t)
+
+    if not tokens:
+        return ""
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for key in DECISION_REASON_PRIORITY:
+        if key in tokens and key not in seen:
+            out.append(key)
+            seen.add(key)
+
+    for token in sorted(tokens):
+        if token not in seen:
+            out.append(token)
+            seen.add(token)
+
+    return "|".join(out)
 
 
 def _zscore(s: pd.Series) -> pd.Series:
@@ -195,6 +284,130 @@ def _build_folds(
     return folds
 
 
+def _attach_country_code(panel: pd.DataFrame) -> pd.DataFrame:
+    d = panel.copy()
+    if "ticker" in d.columns:
+        stock_country = d["ticker"].map(_country_from_ticker_symbol)
+    else:
+        stock_country = pd.Series("", index=d.index)
+    index_country = d.get("relevant_index_key", pd.Series("", index=d.index)).map(_country_from_index_key)
+    d["country_code"] = stock_country.where(stock_country.ne(""), index_country).fillna("")
+    return d
+
+
+def _build_position_country_lookup(panel: pd.DataFrame) -> dict[str, str]:
+    if panel.empty or "k" not in panel.columns:
+        return {}
+    c = panel[["k", "country_code"]].dropna(subset=["k"]).copy()
+    c["k"] = c["k"].astype(str)
+    c["country_code"] = c["country_code"].astype(str)
+    c = c[c["country_code"].ne("")]
+    if c.empty:
+        return {}
+    c = c.drop_duplicates(subset=["k"], keep="first")
+    return dict(zip(c["k"], c["country_code"]))
+
+
+def _build_index_monthly_returns(prices_path: Path) -> dict[str, pd.Series]:
+    px = pd.read_parquet(prices_path).copy()
+    px.columns = [str(c).strip().lower().replace(" ", "_") for c in px.columns]
+
+    for c in ("ticker", "date", "adj_close"):
+        if c not in px.columns:
+            raise RuntimeError(f"prices.parquet mangler {c}")
+
+    px["date"] = pd.to_datetime(px["date"], errors="coerce")
+    px["adj_close"] = _to_num(px["adj_close"])
+    px = px.dropna(subset=["ticker", "date", "adj_close"]).copy()
+    px["month"] = px["date"].dt.to_period("M").dt.to_timestamp("M")
+
+    snap = (
+        px.sort_values(["month", "ticker", "date"])
+        .groupby(["month", "ticker"], as_index=False)
+        .tail(1)
+        .copy()
+    )
+
+    idx = snap[snap["ticker"].astype(str).str.startswith("^")].copy()
+    if idx.empty:
+        return {}
+    idx["index_symbol"] = idx["ticker"].map(_norm_index_symbol)
+
+    out: dict[str, pd.Series] = {}
+    for sym, g in idx.groupby("index_symbol", as_index=False):
+        d = g.sort_values("month")[["month", "adj_close"]].drop_duplicates(subset=["month"], keep="last").copy()
+        d["ret"] = (d["adj_close"].shift(-1) / d["adj_close"]) - 1.0
+        out[str(sym)] = pd.Series(d["ret"].values, index=pd.to_datetime(d["month"]), dtype=float)
+    return out
+
+
+def _select_country_benchmarks(index_returns: dict[str, pd.Series]) -> tuple[dict[str, str], list[str]]:
+    available = set(index_returns.keys())
+    selected: dict[str, str] = {}
+    notes: list[str] = []
+    for country, candidates in COUNTRY_BENCHMARK_PRIORITY.items():
+        picked = ""
+        for c in candidates:
+            cc = _norm_index_symbol(c)
+            if cc in available:
+                picked = cc
+                break
+        selected[country] = picked
+        if not picked:
+            notes.append(f"No benchmark series available for {country}; benchmark_return defaults to 0 for those months.")
+    return selected, notes
+
+
+def _compute_benchmark_returns(
+    trades: pd.DataFrame,
+    position_country: dict[str, str],
+    country_benchmarks: dict[str, str],
+    index_returns: dict[str, pd.Series],
+) -> tuple[pd.Series, str, int]:
+    if trades.empty:
+        return pd.Series(dtype=float), "", 0
+
+    out: list[float] = []
+    used: set[str] = set()
+    missing = 0
+
+    for _, row in trades.iterrows():
+        pos = str(row.get("position", "CASH"))
+        if pos == "CASH":
+            out.append(0.0)
+            continue
+
+        month = pd.to_datetime(row.get("month"), errors="coerce")
+        if pd.isna(month):
+            out.append(0.0)
+            missing += 1
+            continue
+
+        country = position_country.get(pos, "")
+        bench_sym = country_benchmarks.get(country, "")
+        if not bench_sym:
+            out.append(0.0)
+            missing += 1
+            continue
+
+        bench_series = index_returns.get(bench_sym)
+        if bench_series is None or month not in bench_series.index:
+            out.append(0.0)
+            missing += 1
+            continue
+
+        val = bench_series.loc[month]
+        if pd.isna(val):
+            out.append(0.0)
+            missing += 1
+            continue
+
+        out.append(float(val))
+        used.add(bench_sym)
+
+    return pd.Series(out, index=trades.index, dtype=float), ",".join(sorted(used)), int(missing)
+
+
 def _load_static_universe(master_path: Path) -> pd.DataFrame:
     m = pd.read_parquet(master_path).copy()
     m.columns = [str(c).strip().lower().replace(" ", "_") for c in m.columns]
@@ -301,12 +514,15 @@ def _load_monthly_panel(prices_path: Path, static_universe: pd.DataFrame) -> pd.
         g = px.groupby("ticker", group_keys=False)
         px["ma21"] = g["adj_close"].transform(lambda s: s.rolling(21, min_periods=21).mean())
         px["ma200"] = g["adj_close"].transform(lambda s: s.rolling(200, min_periods=200).mean())
+    else:
+        px["ma21"] = _to_num(px["ma21"])
+        px["ma200"] = _to_num(px["ma200"])
 
     if "mad" not in px.columns:
         px["mad"] = (px["ma21"] - px["ma200"]) / px["ma200"]
-
-    if "above_ma200" not in px.columns:
-        px["above_ma200"] = px["adj_close"] > px["ma200"]
+    else:
+        px["mad"] = _to_num(px["mad"])
+    px["above_ma200"] = px["adj_close"] > px["ma200"]
 
     px["month"] = px["date"].dt.to_period("M").dt.to_timestamp("M")
 
@@ -350,22 +566,63 @@ def _apply_filters(month_df: pd.DataFrame, params: WFTParams) -> pd.DataFrame:
 
     base_mos = float(params.mos_threshold)
     mos_req = np.where(d["high_risk_flag"].fillna(False), np.maximum(0.40, base_mos), base_mos)
+    d["mos_req"] = mos_req
 
     weak_fail_min = 2 if params.weakness_rule_variant == "baseline" else 1
 
+    d["mos_ok"] = d["mos"].notna() & (d["mos"] >= d["mos_req"])
+    d["value_creation_ok"] = d["value_creation_ok_base"].fillna(False).astype(bool)
+    d["quality_ok"] = pd.to_numeric(d["quality_weak_count"], errors="coerce") < weak_fail_min
+
     d["fundamental_ok"] = (
-        d["mos"].notna() &
-        (d["mos"] >= mos_req) &
-        d["value_creation_ok_base"].fillna(False).astype(bool) &
-        (pd.to_numeric(d["quality_weak_count"], errors="coerce") < weak_fail_min)
+        d["mos_ok"] &
+        d["value_creation_ok"] &
+        d["quality_ok"]
+    )
+
+    stock_price = _to_num(d.get("adj_close", pd.Series(np.nan, index=d.index)))
+    stock_ma200 = _to_num(d.get("ma200", pd.Series(np.nan, index=d.index)))
+    stock_mad = _to_num(d.get("mad", pd.Series(np.nan, index=d.index)))
+    index_price = _to_num(d.get("index_price", pd.Series(np.nan, index=d.index)))
+    index_ma200 = _to_num(d.get("index_ma200", pd.Series(np.nan, index=d.index)))
+    index_mad = _to_num(d.get("index_mad", pd.Series(np.nan, index=d.index)))
+    if "relevant_index_key" in d.columns:
+        idx_key = d["relevant_index_key"].astype(str).str.strip()
+        benchmark_mapping_ok = idx_key.ne("")
+    else:
+        benchmark_mapping_ok = pd.Series(True, index=d.index)
+
+    d["stock_data_ok"] = stock_price.notna() & stock_ma200.notna()
+    d["benchmark_mapping_ok"] = benchmark_mapping_ok
+    d["index_data_ok"] = index_price.notna() & index_ma200.notna()
+    d["stock_above_ma200"] = stock_price > stock_ma200
+    d["index_above_ma200"] = index_price > index_ma200
+    d["stock_mad_ok"] = stock_mad.notna() & stock_mad.ge(float(params.mad_min))
+    d["index_mad_ok"] = index_mad.notna() & index_mad.ge(float(params.mad_min))
+
+    d["tech_signal_stock_trend"] = d["stock_data_ok"].astype(bool) & d["stock_above_ma200"].astype(bool)
+    d["tech_signal_index_trend"] = d["index_data_ok"].astype(bool) & d["index_above_ma200"].astype(bool)
+    d["tech_signal_mad"] = d["stock_mad_ok"].astype(bool)
+    d["tech_signal_count"] = (
+        d["tech_signal_stock_trend"].astype(int) +
+        d["tech_signal_index_trend"].astype(int) +
+        d["tech_signal_mad"].astype(int)
+    )
+
+    d["stock_technical_ok"] = (
+        d["stock_data_ok"].astype(bool) &
+        d["stock_above_ma200"].astype(bool)
+    )
+    d["index_technical_ok"] = (
+        d["index_data_ok"].astype(bool) &
+        d["index_above_ma200"].astype(bool)
     )
 
     d["technical_ok"] = (
-        d["above_ma200"].astype("boolean").fillna(False).astype(bool) &
-        pd.to_numeric(d["mad"], errors="coerce").ge(float(params.mad_min)).fillna(False) &
+        d["stock_data_ok"].astype(bool) &
         d["index_data_ok"].astype(bool) &
-        d["index_above_ma200"].astype("boolean").fillna(False).astype(bool) &
-        pd.to_numeric(d["index_mad"], errors="coerce").ge(float(params.mad_min)).fillna(False)
+        d["tech_signal_index_trend"].astype(bool) &
+        d["tech_signal_count"].ge(2)
     )
 
     d["eligible"] = d["fundamental_ok"] & d["technical_ok"]
@@ -379,16 +636,67 @@ def _apply_filters(month_df: pd.DataFrame, params: WFTParams) -> pd.DataFrame:
     elif fcf_z.notna().any():
         d["quality_score"] = fcf_z
     else:
-        d["quality_score"] = 0.0
+        d["quality_score"] = np.nan
 
     return d
 
 
-def _pick_ticker(month_df: pd.DataFrame, params: WFTParams) -> str:
+def _cash_decision_reasons(d: pd.DataFrame) -> str:
+    if d.empty:
+        return "datamangler|ingen kandidat"
+
+    reasons: list[str] = []
+
+    req_cols = ["mos", "ma200", "index_ma200", "roic", "fcf_yield"]
+    data_ok = pd.Series(True, index=d.index)
+    for c in req_cols:
+        if c in d.columns:
+            data_ok = data_ok & d[c].notna()
+
+    stock_data_ok = d.get("stock_data_ok", pd.Series(False, index=d.index)).astype(bool)
+    index_data_ok = d.get("index_data_ok", pd.Series(False, index=d.index)).astype(bool)
+    benchmark_mapping_ok = d.get("benchmark_mapping_ok", pd.Series(False, index=d.index)).astype(bool)
+    tech_eval_ok = stock_data_ok & index_data_ok
+
+    stock_ma200 = _to_num(d.get("ma200", pd.Series(np.nan, index=d.index)))
+    if not stock_ma200.notna().any():
+        reasons.append(REASON_DATA_MISSING_MA200)
+
+    if (not benchmark_mapping_ok.any()) or (benchmark_mapping_ok.any() and (not index_data_ok.any())):
+        reasons.append(REASON_DATA_MISSING_BENCHMARK)
+
+    if (not data_ok.any()) and (REASON_DATA_MISSING_MA200 not in reasons) and (REASON_DATA_MISSING_BENCHMARK not in reasons):
+        reasons.append("datamangler")
+
+    if not d["mos_ok"].astype(bool).any():
+        reasons.append("MoS")
+
+    if tech_eval_ok.any() and (not d.loc[tech_eval_ok, "technical_ok"].astype(bool).any()):
+        reasons.append(">200d")
+
+    quality_filter_failed = ("quality_ok" in d.columns) and (not d["quality_ok"].astype(bool).any())
+    pre_quality = d[d["eligible"].astype(bool)].copy()
+    quality_score_failed = (not pre_quality.empty) and pre_quality["quality_score"].isna().all()
+    if quality_filter_failed or quality_score_failed:
+        reasons.append("kvalitetsscore")
+
+    if not reasons:
+        reasons.append("ingen kandidat")
+    elif "ingen kandidat" not in reasons:
+        reasons.append("ingen kandidat")
+
+    return _collect_decision_reasons(pd.Series(["|".join(reasons)]))
+
+
+def _pick_ticker_with_reason(month_df: pd.DataFrame, params: WFTParams) -> tuple[str, str]:
     d = _apply_filters(month_df, params)
     elig = d[d["eligible"]].copy()
     if elig.empty:
-        return "CASH"
+        return "CASH", _cash_decision_reasons(d)
+
+    elig = elig[elig["quality_score"].notna()].copy()
+    if elig.empty:
+        return "CASH", _collect_decision_reasons(pd.Series(["kvalitetsscore|ingen kandidat"]))
 
     elig = elig.sort_values(
         by=["quality_score", "mos", "market_cap", "ticker"],
@@ -396,13 +704,18 @@ def _pick_ticker(month_df: pd.DataFrame, params: WFTParams) -> str:
         na_position="last",
         kind="mergesort",
     )
-    return str(elig.iloc[0]["k"])
+    return str(elig.iloc[0]["k"]), ""
+
+
+def _pick_ticker(month_df: pd.DataFrame, params: WFTParams) -> str:
+    pos, _reason = _pick_ticker_with_reason(month_df, params)
+    return pos
 
 
 def _simulate_window(window_df: pd.DataFrame, params: WFTParams) -> pd.DataFrame:
     months = sorted(window_df["month"].dropna().unique().tolist())
     if len(months) < 2:
-        return pd.DataFrame(columns=["month", "position", "ret"])
+        return pd.DataFrame(columns=["month", "position", "ret", "decision_reasons"])
 
     rows: list[dict] = []
     for i in range(len(months) - 1):
@@ -411,7 +724,7 @@ def _simulate_window(window_df: pd.DataFrame, params: WFTParams) -> pd.DataFrame
         cur = window_df[window_df["month"] == m]
         nxt = window_df[window_df["month"] == n]
 
-        pos = _pick_ticker(cur, params)
+        pos, decision_reasons = _pick_ticker_with_reason(cur, params)
         if pos == "CASH":
             ret = 0.0
         else:
@@ -420,12 +733,25 @@ def _simulate_window(window_df: pd.DataFrame, params: WFTParams) -> pd.DataFrame
             if c.empty or x.empty:
                 ret = 0.0
                 pos = "CASH"
+                decision_reasons = _collect_decision_reasons(pd.Series(["datamangler|ingen kandidat"]))
             else:
                 p0 = float(c.iloc[0]["adj_close"])
                 p1 = float(x.iloc[0]["adj_close"])
-                ret = float((p1 / p0) - 1.0) if np.isfinite(p0) and p0 > 0 and np.isfinite(p1) else 0.0
+                if np.isfinite(p0) and p0 > 0 and np.isfinite(p1):
+                    ret = float((p1 / p0) - 1.0)
+                else:
+                    ret = 0.0
+                    pos = "CASH"
+                    decision_reasons = _collect_decision_reasons(pd.Series(["datamangler|ingen kandidat"]))
 
-        rows.append({"month": pd.Timestamp(m), "position": pos, "ret": ret})
+        rows.append(
+            {
+                "month": pd.Timestamp(m),
+                "position": pos,
+                "ret": ret,
+                "decision_reasons": decision_reasons if pos == "CASH" else "",
+            }
+        )
 
     out = pd.DataFrame(rows)
     if out.empty:
@@ -448,6 +774,7 @@ def _window_metrics(trades: pd.DataFrame) -> dict:
             "stability": 1.0,
             "sharpe_ann": 0.0,
             "cagr": 0.0,
+            "decision_reasons": "datamangler|ingen kandidat",
         }
 
     ret = _to_num(trades["ret"]).fillna(0.0)
@@ -457,6 +784,8 @@ def _window_metrics(trades: pd.DataFrame) -> dict:
     total_return = float((1.0 + ret).prod() - 1.0)
     turnover = float(changes.iloc[1:].mean()) if len(changes) > 1 else 0.0
     pct_cash = float(is_cash.mean()) if len(is_cash) else 1.0
+    cash_reason_series = trades.loc[is_cash, "decision_reasons"] if "decision_reasons" in trades.columns else pd.Series(dtype=str)
+    decision_reasons = _collect_decision_reasons(cash_reason_series) if float(pct_cash) >= 0.999 else ""
 
     return {
         "return": total_return,
@@ -466,6 +795,7 @@ def _window_metrics(trades: pd.DataFrame) -> dict:
         "stability": _stability(turnover),
         "sharpe_ann": _annualized_sharpe(ret),
         "cagr": _cagr_from_monthly(ret),
+        "decision_reasons": decision_reasons,
     }
 
 
@@ -645,6 +975,7 @@ def run_wft(
 
     static = _load_static_universe(master_path)
     panel = _load_monthly_panel(prices_path, static)
+    panel = _attach_country_code(panel)
     if asof:
         cutoff_month = pd.to_datetime(asof).to_period("M").to_timestamp("M")
         panel = panel[pd.to_datetime(panel["month"], errors="coerce") <= cutoff_month].copy()
@@ -661,6 +992,9 @@ def run_wft(
 
     grid = _iter_param_grid(mos_grid, mad_grid, weakness_variants)
     baseline = WFTParams(mos_threshold=0.30, mad_min=-0.05, weakness_rule_variant="baseline")
+    index_returns = _build_index_monthly_returns(prices_path)
+    country_benchmarks, _benchmark_notes = _select_country_benchmarks(index_returns)
+    position_country = _build_position_country_lookup(panel)
 
     run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -683,6 +1017,15 @@ def run_wft(
             ("baseline", baseline, base_metrics, base_trades),
             ("tuned", chosen, tuned_metrics, tuned_trades),
         ]:
+            benchmark_ret, bench_symbols, bench_missing = _compute_benchmark_returns(
+                trades,
+                position_country=position_country,
+                country_benchmarks=country_benchmarks,
+                index_returns=index_returns,
+            )
+            benchmark_return = _to_period_return(benchmark_ret)
+            benchmark_max_dd = _max_drawdown(benchmark_ret)
+            candidate_or_cash = _candidate_or_cash(metrics["pct_cash"])
             rows.append(
                 {
                     "mode": mode,
@@ -691,11 +1034,16 @@ def run_wft(
                     "test_year": int(fold["test_year"]),
                     "chosen_params": _param_to_json(p),
                     "chosen_params_json": _param_to_json(p),
-                    "candidate_or_cash": _candidate_or_cash(metrics["pct_cash"]),
+                    "candidate_or_cash": candidate_or_cash,
                     "return": metrics["return"],
                     "max_dd": metrics["max_dd"],
                     "turnover": metrics["turnover"],
                     "pct_cash": metrics["pct_cash"],
+                    "benchmark_return": float(benchmark_return),
+                    "benchmark_max_dd": float(benchmark_max_dd),
+                    "benchmark_symbols_used": str(bench_symbols),
+                    "benchmark_missing_months": int(bench_missing),
+                    "decision_reasons": str(metrics.get("decision_reasons", "")) if candidate_or_cash == "CASH" else "",
                 }
             )
 
@@ -718,7 +1066,21 @@ def run_wft(
 
     wft_results_path = run_dir / "wft_results.csv"
     results_df[[
-        "mode", "train_start", "train_end", "test_year", "chosen_params", "candidate_or_cash", "return", "max_dd", "turnover", "pct_cash"
+        "mode",
+        "train_start",
+        "train_end",
+        "test_year",
+        "chosen_params",
+        "candidate_or_cash",
+        "return",
+        "max_dd",
+        "turnover",
+        "pct_cash",
+        "benchmark_return",
+        "benchmark_max_dd",
+        "benchmark_symbols_used",
+        "benchmark_missing_months",
+        "decision_reasons",
     ]].to_csv(wft_results_path, index=False)
 
     wft_summary_path = run_dir / "wft_summary.md"
@@ -752,10 +1114,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--end", required=True, type=int, help="Last test year (YYYY)")
     p.add_argument("--rebalance", default="monthly", choices=["monthly"])
     p.add_argument("--test-window-years", type=int, default=1)
-    p.add_argument("--train-window-years", type=int, default=12)
+    p.add_argument("--train-window-years", type=int, default=8)
     p.add_argument("--step-years", type=int, default=1)
     p.add_argument("--run-dir", default=None)
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--asof", default=None, help="Use data snapshot up to YYYY-MM-DD (inclusive month-end)")
     p.add_argument("--master-path", default=None)
     p.add_argument("--prices-path", default=None)
     return p.parse_args()
@@ -787,6 +1150,12 @@ def _parse_str_grid_env(var_name: str, default_values: list[str]) -> list[str]:
     return out if out else list(default_values)
 
 
+def _set_global_seed(seed: int) -> None:
+    random.seed(int(seed))
+    np.random.seed(int(seed))
+    os.environ["PYTHONHASHSEED"] = str(int(seed))
+
+
 def main() -> int:
     args = parse_args()
     if int(args.start) > int(args.end):
@@ -795,6 +1164,7 @@ def main() -> int:
         raise ValueError("--test-window-years must be 1 for annual test folds")
     if str(args.rebalance).lower() != "monthly":
         raise ValueError("--rebalance must be 'monthly'")
+    _set_global_seed(int(args.seed))
 
     root = project_root_from_file()
     cfg_path = (root / args.config).resolve() if not Path(args.config).is_absolute() else Path(args.config)
@@ -825,6 +1195,7 @@ def main() -> int:
         weakness_variants=weakness_variants,
         start_year=int(args.start),
         end_year=int(args.end),
+        asof=str(args.asof) if args.asof else None,
         master_path=master_path,
         prices_path=prices_path,
     )
