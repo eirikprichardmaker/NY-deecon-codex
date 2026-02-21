@@ -186,6 +186,34 @@ def test_determinism_seed(monkeypatch):
     pd.testing.assert_frame_equal(out1[5], out2[5], check_dtype=False)
 
 
+def test_cash_reasons_include_quality_filter_failure():
+    params = wft.WFTParams(mos_threshold=0.30, mad_min=-0.05, weakness_rule_variant="baseline")
+    month_df = pd.DataFrame(
+        {
+            "ticker": ["AAA.OL", "BBB.OL"],
+            "k": ["AAA", "BBB"],
+            "mos": [0.50, 0.55],
+            "high_risk_flag": [False, False],
+            "value_creation_ok_base": [True, True],
+            "quality_weak_count": [3, 4],
+            "above_ma200": [True, True],
+            "mad": [0.03, 0.02],
+            "index_data_ok": [True, True],
+            "index_above_ma200": [True, True],
+            "index_mad": [0.03, 0.03],
+            "roic": [0.10, 0.11],
+            "fcf_yield": [0.05, 0.06],
+            "market_cap": [10_000_000_000.0, 9_000_000_000.0],
+        }
+    )
+
+    position, reasons = wft._pick_ticker_with_reason(month_df, params)
+
+    assert position == "CASH"
+    assert "kvalitetsscore" in reasons
+    assert "ingen kandidat" in reasons
+
+
 def test_wft_cli_smoke_outputs_files(tmp_path, monkeypatch):
     root = tmp_path / "repo"
     master_path, prices_path = _write_smoke_dataset(root)

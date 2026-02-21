@@ -842,7 +842,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--config", default="config/config.yaml")
     p.add_argument("--start", required=True, type=int)
     p.add_argument("--end", required=True, type=int)
-    p.add_argument("--train-window-years", required=True, type=int)
+    p.add_argument("--train-window-years", type=int, default=8)
     p.add_argument("--test-window-years", required=True, type=int)
     p.add_argument("--rebalance", required=True, default="monthly")
     p.add_argument("--n-trials", required=True, type=int)
