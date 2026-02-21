@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import subprocess
 import sys
 from pathlib import Path
@@ -8,6 +9,34 @@ from pathlib import Path
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _load_sweep_module():
+    p = ROOT / "tools" / "run_wft_sweep.py"
+    spec = importlib.util.spec_from_file_location("run_wft_sweep_mod", p)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_reason_distribution_counts_new_data_missing_reasons():
+    mod = _load_sweep_module()
+    dist, risk_share, data_missing_share = mod._reason_distribution(
+        pd.Series(
+            [
+                "DATA_MISSING_MA200|ingen kandidat",
+                "DATA_MISSING_BENCHMARK|ingen kandidat",
+                ">200d|ingen kandidat",
+            ]
+        )
+    )
+
+    assert abs(float(risk_share) - (1.0 / 3.0)) < 1e-12
+    assert abs(float(data_missing_share) - (2.0 / 3.0)) < 1e-12
+    assert float(dist.get("DATA_MISSING_MA200", 0.0)) > 0.0
+    assert float(dist.get("DATA_MISSING_BENCHMARK", 0.0)) > 0.0
 
 
 def _write_smoke_dataset(base: Path) -> tuple[Path, Path, Path]:

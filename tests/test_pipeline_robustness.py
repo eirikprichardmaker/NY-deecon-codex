@@ -57,6 +57,23 @@ def test_ma200_mad_computed_on_synthetic_series():
     assert bool(last["above_ma200"]) is True
 
 
+def test_ma200_warmup_is_nan_for_first_199_observations():
+    n = 220
+    prices = pd.DataFrame(
+        {
+            "ticker_norm": ["EQNR"] * n,
+            "date": pd.date_range("2025-01-01", periods=n, freq="D"),
+            "adj_close": np.arange(1, n + 1, dtype=float),
+            "ma200": np.arange(n, dtype=float),
+            "mad": np.arange(n, dtype=float),
+            "above_ma200": [True] * n,
+        }
+    )
+    out = _ensure_price_features(prices)
+    assert pd.isna(out["ma200"].iloc[198])
+    assert pd.notna(out["ma200"].iloc[199])
+
+
 def test_fail_fast_rules_cash_when_no_candidate_passes():
     master = pd.DataFrame(
         {

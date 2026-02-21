@@ -102,8 +102,11 @@ def _build_hysteresis_window() -> pd.DataFrame:
                     "ticker": f"{t}.OL",
                     "k": t,
                     "adj_close": px,
+                    "ma200": px * 0.95,
                     "above_ma200": True,
                     "mad": mad,
+                    "index_price": 1000.0 + float(i),
+                    "index_ma200": (1000.0 + float(i)) * 0.95,
                     "index_data_ok": True,
                     "index_above_ma200": True,
                     "index_mad": 0.05,
@@ -249,3 +252,86 @@ def test_hysteresis_min_hold_sanity():
 
     assert any(i < 6 for i in fast_switches)
     assert all(i >= 6 for i in slow_switches)
+
+
+def test_score_month_uses_price_over_ma200_not_input_flags():
+    opt = _load_optimizer_module()
+    params = opt.StrategyAParams(
+        mos_threshold=0.30,
+        mad_min=0.0,
+        mad_penalty_k=1.0,
+        min_hold_months=0,
+        score_gap=0.0,
+        weight_quality=0.4,
+        weight_value=0.3,
+        weight_lowrisk=0.2,
+        weight_balance=0.1,
+        weakness_rule_variant="baseline",
+    )
+    month_df = pd.DataFrame(
+        {
+            "ticker": ["AAA.OL"],
+            "k": ["AAA"],
+            "high_risk_flag": [False],
+            "mos": [0.50],
+            "value_creation_ok_base": [True],
+            "quality_weak_count": [0],
+            "adj_close": [110.0],
+            "ma200": [100.0],
+            "mad": [0.05],
+            "above_ma200": [False],
+            "index_price": [1100.0],
+            "index_ma200": [1000.0],
+            "index_mad": [0.05],
+            "index_above_ma200": [False],
+            "roic": [0.12],
+            "fcf_yield": [0.06],
+            "beta": [1.0],
+            "nd_ebitda": [1.0],
+            "market_cap": [1_000_000_000.0],
+        }
+    )
+
+    scored = opt._score_month(month_df, params)
+    assert bool(scored.loc[0, "technical_ok"]) is True
+
+
+def test_score_month_two_of_three_allows_stock_trend_fail_when_index_and_mad_pass():
+    opt = _load_optimizer_module()
+    params = opt.StrategyAParams(
+        mos_threshold=0.30,
+        mad_min=0.0,
+        mad_penalty_k=1.0,
+        min_hold_months=0,
+        score_gap=0.0,
+        weight_quality=0.4,
+        weight_value=0.3,
+        weight_lowrisk=0.2,
+        weight_balance=0.1,
+        weakness_rule_variant="baseline",
+    )
+    month_df = pd.DataFrame(
+        {
+            "ticker": ["AAA.OL"],
+            "k": ["AAA"],
+            "high_risk_flag": [False],
+            "mos": [0.50],
+            "value_creation_ok_base": [True],
+            "quality_weak_count": [0],
+            "adj_close": [95.0],
+            "ma200": [100.0],
+            "mad": [0.05],
+            "index_price": [1100.0],
+            "index_ma200": [1000.0],
+            "index_mad": [0.05],
+            "roic": [0.12],
+            "fcf_yield": [0.06],
+            "beta": [1.0],
+            "nd_ebitda": [1.0],
+            "market_cap": [1_000_000_000.0],
+        }
+    )
+
+    scored = opt._score_month(month_df, params)
+    assert int(scored.loc[0, "tech_signal_count"]) == 2
+    assert bool(scored.loc[0, "technical_ok"]) is True

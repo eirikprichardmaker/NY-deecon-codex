@@ -41,7 +41,18 @@ COUNTRY_BENCHMARK_PRIORITY = {
     "FI": ["^OMXH25", "^HEX"],
 }
 
-DECISION_REASON_PRIORITY = ["MoS", ">200d", "kvalitetsscore", "datamangler", "ingen kandidat"]
+REASON_DATA_MISSING_MA200 = "DATA_MISSING_MA200"
+REASON_DATA_MISSING_BENCHMARK = "DATA_MISSING_BENCHMARK"
+
+DECISION_REASON_PRIORITY = [
+    "MoS",
+    ">200d",
+    "kvalitetsscore",
+    REASON_DATA_MISSING_MA200,
+    REASON_DATA_MISSING_BENCHMARK,
+    "datamangler",
+    "ingen kandidat",
+]
 
 
 @dataclass(frozen=True)
@@ -503,12 +514,15 @@ def _load_monthly_panel(prices_path: Path, static_universe: pd.DataFrame) -> pd.
         g = px.groupby("ticker", group_keys=False)
         px["ma21"] = g["adj_close"].transform(lambda s: s.rolling(21, min_periods=21).mean())
         px["ma200"] = g["adj_close"].transform(lambda s: s.rolling(200, min_periods=200).mean())
+    else:
+        px["ma21"] = _to_num(px["ma21"])
+        px["ma200"] = _to_num(px["ma200"])
 
     if "mad" not in px.columns:
         px["mad"] = (px["ma21"] - px["ma200"]) / px["ma200"]
-
-    if "above_ma200" not in px.columns:
-        px["above_ma200"] = px["adj_close"] > px["ma200"]
+    else:
+        px["mad"] = _to_num(px["mad"])
+    px["above_ma200"] = px["adj_close"] > px["ma200"]
 
     px["month"] = px["date"].dt.to_period("M").dt.to_timestamp("M")
 
@@ -566,17 +580,50 @@ def _apply_filters(month_df: pd.DataFrame, params: WFTParams) -> pd.DataFrame:
         d["quality_ok"]
     )
 
+    stock_price = _to_num(d.get("adj_close", pd.Series(np.nan, index=d.index)))
+    stock_ma200 = _to_num(d.get("ma200", pd.Series(np.nan, index=d.index)))
+    stock_mad = _to_num(d.get("mad", pd.Series(np.nan, index=d.index)))
+    index_price = _to_num(d.get("index_price", pd.Series(np.nan, index=d.index)))
+    index_ma200 = _to_num(d.get("index_ma200", pd.Series(np.nan, index=d.index)))
+    index_mad = _to_num(d.get("index_mad", pd.Series(np.nan, index=d.index)))
+    if "relevant_index_key" in d.columns:
+        idx_key = d["relevant_index_key"].astype(str).str.strip()
+        benchmark_mapping_ok = idx_key.ne("")
+    else:
+        benchmark_mapping_ok = pd.Series(True, index=d.index)
+
+    d["stock_data_ok"] = stock_price.notna() & stock_ma200.notna()
+    d["benchmark_mapping_ok"] = benchmark_mapping_ok
+    d["index_data_ok"] = index_price.notna() & index_ma200.notna()
+    d["stock_above_ma200"] = stock_price > stock_ma200
+    d["index_above_ma200"] = index_price > index_ma200
+    d["stock_mad_ok"] = stock_mad.notna() & stock_mad.ge(float(params.mad_min))
+    d["index_mad_ok"] = index_mad.notna() & index_mad.ge(float(params.mad_min))
+
+    d["tech_signal_stock_trend"] = d["stock_data_ok"].astype(bool) & d["stock_above_ma200"].astype(bool)
+    d["tech_signal_index_trend"] = d["index_data_ok"].astype(bool) & d["index_above_ma200"].astype(bool)
+    d["tech_signal_mad"] = d["stock_mad_ok"].astype(bool)
+    d["tech_signal_count"] = (
+        d["tech_signal_stock_trend"].astype(int) +
+        d["tech_signal_index_trend"].astype(int) +
+        d["tech_signal_mad"].astype(int)
+    )
+
     d["stock_technical_ok"] = (
-        d["above_ma200"].astype("boolean").fillna(False).astype(bool) &
-        pd.to_numeric(d["mad"], errors="coerce").ge(float(params.mad_min)).fillna(False)
+        d["stock_data_ok"].astype(bool) &
+        d["stock_above_ma200"].astype(bool)
     )
     d["index_technical_ok"] = (
         d["index_data_ok"].astype(bool) &
-        d["index_above_ma200"].astype("boolean").fillna(False).astype(bool) &
-        pd.to_numeric(d["index_mad"], errors="coerce").ge(float(params.mad_min)).fillna(False)
+        d["index_above_ma200"].astype(bool)
     )
 
-    d["technical_ok"] = d["stock_technical_ok"] & d["index_technical_ok"]
+    d["technical_ok"] = (
+        d["stock_data_ok"].astype(bool) &
+        d["index_data_ok"].astype(bool) &
+        d["tech_signal_index_trend"].astype(bool) &
+        d["tech_signal_count"].ge(2)
+    )
 
     d["eligible"] = d["fundamental_ok"] & d["technical_ok"]
 
@@ -600,18 +647,31 @@ def _cash_decision_reasons(d: pd.DataFrame) -> str:
 
     reasons: list[str] = []
 
-    req_cols = ["mos", "ma200", "mad", "index_ma200", "index_mad", "roic", "fcf_yield"]
+    req_cols = ["mos", "ma200", "index_ma200", "roic", "fcf_yield"]
     data_ok = pd.Series(True, index=d.index)
     for c in req_cols:
         if c in d.columns:
             data_ok = data_ok & d[c].notna()
-    if not data_ok.any():
+
+    stock_data_ok = d.get("stock_data_ok", pd.Series(False, index=d.index)).astype(bool)
+    index_data_ok = d.get("index_data_ok", pd.Series(False, index=d.index)).astype(bool)
+    benchmark_mapping_ok = d.get("benchmark_mapping_ok", pd.Series(False, index=d.index)).astype(bool)
+    tech_eval_ok = stock_data_ok & index_data_ok
+
+    stock_ma200 = _to_num(d.get("ma200", pd.Series(np.nan, index=d.index)))
+    if not stock_ma200.notna().any():
+        reasons.append(REASON_DATA_MISSING_MA200)
+
+    if (not benchmark_mapping_ok.any()) or (benchmark_mapping_ok.any() and (not index_data_ok.any())):
+        reasons.append(REASON_DATA_MISSING_BENCHMARK)
+
+    if (not data_ok.any()) and (REASON_DATA_MISSING_MA200 not in reasons) and (REASON_DATA_MISSING_BENCHMARK not in reasons):
         reasons.append("datamangler")
 
     if not d["mos_ok"].astype(bool).any():
         reasons.append("MoS")
 
-    if not d["stock_technical_ok"].astype(bool).any() or not d["index_technical_ok"].astype(bool).any():
+    if tech_eval_ok.any() and (not d.loc[tech_eval_ok, "technical_ok"].astype(bool).any()):
         reasons.append(">200d")
 
     quality_filter_failed = ("quality_ok" in d.columns) and (not d["quality_ok"].astype(bool).any())

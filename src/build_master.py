@@ -24,20 +24,22 @@ def _norm_ticker(x) -> str:
 
 
 def _ensure_price_features(prices: pd.DataFrame) -> pd.DataFrame:
-    """Ensure ma21/ma200/mad/above_ma200 exists. Compute if missing."""
+    """Ensure SMA-based MA columns exist and recompute derived technical flags."""
     prices = prices.copy()
-    need = ["ma21", "ma200", "mad", "above_ma200"]
+    need = ["ma21", "ma200"]
     missing_any = any(c not in prices.columns for c in need)
-    all_nan = any((c in prices.columns and pd.to_numeric(prices[c], errors="coerce").notna().mean() == 0.0) for c in ["ma21","ma200"])
-    if not missing_any and not all_nan:
-        return prices
+    all_nan = any((c in prices.columns and pd.to_numeric(prices[c], errors="coerce").notna().mean() == 0.0) for c in need)
 
     prices["adj_close"] = pd.to_numeric(prices["adj_close"], errors="coerce")
-    prices = prices.sort_values(["ticker_norm", "date"])
-    g = prices.groupby("ticker_norm", group_keys=False)
+    if missing_any or all_nan:
+        prices = prices.sort_values(["ticker_norm", "date"])
+        g = prices.groupby("ticker_norm", group_keys=False)
+        prices["ma21"] = g["adj_close"].transform(lambda s: s.rolling(21, min_periods=21).mean())
+        prices["ma200"] = g["adj_close"].transform(lambda s: s.rolling(200, min_periods=200).mean())
+    else:
+        prices["ma21"] = pd.to_numeric(prices["ma21"], errors="coerce")
+        prices["ma200"] = pd.to_numeric(prices["ma200"], errors="coerce")
 
-    prices["ma21"] = g["adj_close"].transform(lambda s: s.rolling(21, min_periods=21).mean())
-    prices["ma200"] = g["adj_close"].transform(lambda s: s.rolling(200, min_periods=200).mean())
     prices["mad"] = (prices["ma21"] - prices["ma200"]) / prices["ma200"]
     prices["above_ma200"] = prices["adj_close"] > prices["ma200"]
     return prices
@@ -159,19 +161,30 @@ def run(ctx, log) -> int:
     snap = snap[keep_cols]
 
     # 3) Drop any old price cols in master (prevents "all NaN" from master_input)
-    drop_old = [c for c in ["date", "adj_close", "volume", "ma21", "ma200", "mad", "above_ma200", "missing_price", "reason_technical_fail"] if c in master.columns]
+    drop_old = [c for c in ["date", "adj_close", "volume", "ma21", "ma200", "mad", "above_ma200", "missing_price", "missing_technical_data", "reason_technical_fail"] if c in master.columns]
     if drop_old:
         master = master.drop(columns=drop_old)
 
     master = master.merge(snap, on="ticker_norm", how="left")
-    master["ma200_ok"] = pd.to_numeric(master.get("adj_close"), errors="coerce") > pd.to_numeric(master.get("ma200"), errors="coerce")
+    price_s = pd.to_numeric(master.get("adj_close"), errors="coerce")
+    ma200_s = pd.to_numeric(master.get("ma200"), errors="coerce")
+    mad_s = pd.to_numeric(master.get("mad"), errors="coerce")
+
+    master["above_ma200"] = pd.Series(
+        np.where(price_s.notna() & ma200_s.notna(), price_s > ma200_s, pd.NA),
+        index=master.index,
+        dtype="boolean",
+    )
+    master["ma200_ok"] = price_s.notna() & ma200_s.notna() & (price_s > ma200_s)
     master["index_ma200_ok"] = True
-    master["missing_price"] = pd.to_numeric(master.get("adj_close"), errors="coerce").isna()
+    master["missing_price"] = price_s.isna()
+    master["missing_technical_data"] = (~master["missing_price"]) & (ma200_s.isna() | mad_s.isna())
     master["reason_technical_fail"] = ""
     master.loc[master["missing_price"], "reason_technical_fail"] = "missing_price"
-    master.loc[~master["missing_price"] & ~master["ma200_ok"].fillna(False), "reason_technical_fail"] = "below_ma200"
+    master.loc[master["missing_technical_data"], "reason_technical_fail"] = "missing_technical_data"
+    master.loc[~master["missing_price"] & ~master["missing_technical_data"] & ~master["ma200_ok"], "reason_technical_fail"] = "below_ma200"
     if "mad" in master.columns:
-        master.loc[~master["missing_price"] & master["reason_technical_fail"].eq("") & pd.to_numeric(master["mad"], errors="coerce").lt(0), "reason_technical_fail"] = "negative_mad"
+        master.loc[~master["missing_price"] & ~master["missing_technical_data"] & master["reason_technical_fail"].eq("") & mad_s.lt(0), "reason_technical_fail"] = "negative_mad"
     master = master.drop(columns=["ticker_norm"])
 
     # Coverage log

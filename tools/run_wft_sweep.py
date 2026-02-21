@@ -18,6 +18,7 @@ from src.common.config import load_config, resolve_paths
 
 
 GO_REASON_RISK_KEYS = {"MoS", ">200d", "kvalitetsscore"}
+GO_REASON_DATA_MISSING_KEYS = {"datamangler", "DATA_MISSING_MA200", "DATA_MISSING_BENCHMARK"}
 
 
 def _parse_seed_list(raw: str) -> list[int]:
@@ -122,7 +123,7 @@ def _reason_distribution(cash_reason_series: pd.Series) -> tuple[dict[str, float
             continue
         if tokens.intersection(GO_REASON_RISK_KEYS):
             risk_rows += 1
-        if "datamangler" in tokens:
+        if tokens.intersection(GO_REASON_DATA_MISSING_KEYS):
             datamangler_rows += 1
         for tok in tokens:
             counts[tok] = counts.get(tok, 0) + 1
