@@ -245,6 +245,7 @@ def test_cash_reasons_include_data_missing_ma200_on_warmup_without_200d():
     assert position == "CASH"
     assert "DATA_MISSING_MA200" in reasons
     assert ">200d" not in reasons
+    assert "datamangler" not in reasons
 
 
 def test_cash_reasons_include_data_missing_benchmark_when_mapping_missing():

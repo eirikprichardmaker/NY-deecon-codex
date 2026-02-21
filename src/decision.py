@@ -90,6 +90,64 @@ def _atomic_write_csv(path: Path, df: pd.DataFrame) -> None:
     tmp.replace(path)
 
 
+def _write_ma200_sanity_report(run_dir: Path, asof: str, df: pd.DataFrame) -> None:
+    stock_price = pd.to_numeric(df.get("adj_close"), errors="coerce")
+    stock_ma200 = pd.to_numeric(df.get("ma200"), errors="coerce")
+
+    bench_key = df.get("relevant_index_key", pd.Series("", index=df.index)).astype(str).str.strip()
+    bench_scope = bench_key.ne("")
+    bench_price = pd.to_numeric(df.get("index_price"), errors="coerce")
+    bench_ma200 = pd.to_numeric(df.get("index_ma200"), errors="coerce")
+
+    def _row(scope: str, metric: str, numerator: int, denominator: int) -> dict:
+        share = float(numerator) / float(denominator) if int(denominator) > 0 else float("nan")
+        return {
+            "scope": scope,
+            "metric": metric,
+            "numerator": int(numerator),
+            "denominator": int(denominator),
+            "share": share,
+        }
+
+    stock_total = int(len(df))
+    stock_evaluable = stock_price.notna() & stock_ma200.notna()
+    bench_total = int(bench_scope.sum())
+    bench_ma200_in_scope = bench_scope & bench_ma200.isna()
+    bench_evaluable = bench_scope & bench_price.notna() & bench_ma200.notna()
+
+    rows = [
+        _row("stock", "ma200_nan_rows", int(stock_ma200.isna().sum()), stock_total),
+        _row("stock", "price_gt_ma200_rows", int((stock_evaluable & (stock_price > stock_ma200)).sum()), int(stock_evaluable.sum())),
+        _row("benchmark", "ma200_nan_rows", int(bench_ma200_in_scope.sum()), bench_total),
+        _row("benchmark", "price_gt_ma200_rows", int((bench_evaluable & (bench_price > bench_ma200)).sum()), int(bench_evaluable.sum())),
+    ]
+    report = pd.DataFrame(rows)
+    _atomic_write_csv(run_dir / "ma200_sanity_report.csv", report)
+
+    def _fmt(scope: str, metric: str) -> str:
+        r = report[(report["scope"] == scope) & (report["metric"] == metric)].iloc[0]
+        num = int(r["numerator"])
+        den = int(r["denominator"])
+        if den > 0:
+            return f"{num}/{den} ({(float(num) / float(den)):.1%})"
+        return f"{num}/{den} (n/a)"
+
+    lines = [
+        f"# MA200 Sanity Report ({asof})",
+        "",
+        "## Stock",
+        f"- MA200=NaN: {_fmt('stock', 'ma200_nan_rows')}",
+        f"- price>MA200 (blant evaluerbare rader): {_fmt('stock', 'price_gt_ma200_rows')}",
+        "",
+        "## Benchmark",
+        f"- MA200=NaN (blant rader med relevant benchmark): {_fmt('benchmark', 'ma200_nan_rows')}",
+        f"- price>MA200 (blant evaluerbare benchmark-rader): {_fmt('benchmark', 'price_gt_ma200_rows')}",
+        "",
+        "Formål: skille reelt regime (trend) fra datamangler/warmup.",
+    ]
+    _atomic_write_text(run_dir / "ma200_sanity_report.md", "\n".join(lines))
+
+
 def _join_reasons(parts: list[str]) -> str:
     return "; ".join([p for p in parts if p])
 
@@ -653,6 +711,7 @@ def run(ctx, log) -> int:
     df.loc[df["technical_ok"].astype(bool), "reason_technical_fail"] = ""
 
     df["eligible"] = df["technical_ok"] & df["fundamental_ok"]
+    _write_ma200_sanity_report(ctx.run_dir, ctx.asof, df)
 
     screen_cols = [c for c in [
         "ticker", "company", "market_cap", "intrinsic_value", "mos", "mos_req",
