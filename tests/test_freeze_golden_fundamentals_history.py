@@ -183,3 +183,46 @@ def test_write_coverage_md_contains_expected_and_missing_sections(tmp_path):
     assert "## Missing semantics" in text
     assert "expected = antall instrumenter i scope" in text
     assert "coverage_ratio = completed / expected" in text
+
+
+def test_endpoint_candidates_use_supported_kpi_and_dividend_routes():
+    kpi_candidates = mod._endpoint_candidates("kpis", asof="2026-02-16", ins_id=101)
+    assert kpi_candidates[0][0].endswith("/kpis/year/summary")
+    assert kpi_candidates[1][0].endswith("/kpis/r12/summary")
+    assert kpi_candidates[2][0].endswith("/kpis/quarter/summary")
+
+    div_candidates = mod._endpoint_candidates("dividends", asof="2026-02-16", ins_id=101)
+    assert div_candidates[0][0] == "/instruments/dividend/calendar"
+    assert div_candidates[0][1]["instList"] == "101"
+
+
+def test_fetch_splits_payload_for_instrument_uses_shared_cache(monkeypatch):
+    mod._SPLITS_CACHE_BY_ASOF.clear()
+
+    class DummyClient:
+        def __init__(self):
+            self.calls = 0
+
+        def get_json(self, path, params):
+            self.calls += 1
+            assert path == "/instruments/StockSplits"
+            assert "from" in params
+            return {
+                "stockSplitList": [
+                    {"instrumentId": 100, "ratio": "1:2"},
+                    {"instrumentId": 200, "ratio": "1:10"},
+                ]
+            }, 1
+
+    client = DummyClient()
+    p1, a1 = mod._fetch_splits_payload_for_instrument(client, asof="2026-02-16", ins_id=100)
+    p2, a2 = mod._fetch_splits_payload_for_instrument(client, asof="2026-02-16", ins_id=200)
+    p3, a3 = mod._fetch_splits_payload_for_instrument(client, asof="2026-02-16", ins_id=300)
+
+    assert client.calls == 1
+    assert a1 == 1
+    assert a2 == 1
+    assert a3 == 1
+    assert len(p1["stockSplitList"]) == 1
+    assert len(p2["stockSplitList"]) == 1
+    assert p3["stockSplitList"] == []

@@ -31,6 +31,9 @@ MANIFEST_COLUMNS = [
     "source",
 ]
 
+# Cache global stock splits payload per asof to avoid repeated full-endpoint calls.
+_SPLITS_CACHE_BY_ASOF: Dict[str, Dict[int, List[Dict[str, Any]]]] = {}
+
 
 class ApiError(RuntimeError):
     def __init__(self, message: str, status_code: Optional[int] = None):
@@ -412,23 +415,47 @@ def _endpoint_candidates(dataset: str, asof: str, ins_id: int) -> Sequence[Tuple
         return ((f"/instruments/{ins_id}/reports/r12", {"maxCount": 40}),)
     if dataset == "kpis":
         return (
-            (f"/instruments/{ins_id}/kpis", {}),
-            (f"/instruments/{ins_id}/kpi", {}),
+            (f"/instruments/{ins_id}/kpis/year/summary", {"maxCount": 20}),
+            (f"/instruments/{ins_id}/kpis/r12/summary", {"maxCount": 20}),
+            (f"/instruments/{ins_id}/kpis/quarter/summary", {"maxCount": 20}),
         )
     if dataset == "dividends":
         return (
-            (f"/instruments/{ins_id}/dividends", {}),
-            (f"/instruments/{ins_id}/dividend", {}),
+            ("/instruments/dividend/calendar", {"instList": str(ins_id)}),
         )
     if dataset == "splits":
-        return (
-            (f"/instruments/{ins_id}/splits", {}),
-            (f"/instruments/{ins_id}/split", {}),
-        )
+        # handled via global endpoint in _fetch_splits_payload_for_instrument
+        return ()
     raise ValueError(f"Unsupported dataset: {dataset}")
 
 
+def _fetch_splits_payload_for_instrument(client: ApiClient, asof: str, ins_id: int) -> Tuple[Any, int]:
+    if asof not in _SPLITS_CACHE_BY_ASOF:
+        asof_date = datetime.strptime(asof, "%Y-%m-%d").date()
+        from_date = (asof_date - timedelta(days=365)).isoformat()
+        payload, attempts = client.get_json("/instruments/StockSplits", {"from": from_date})
+        data_list = _find_first_list(payload) or []
+        by_ins: Dict[int, List[Dict[str, Any]]] = {}
+        if isinstance(data_list, list):
+            for item in data_list:
+                if not isinstance(item, dict):
+                    continue
+                iid_raw = item.get("instrumentId") or item.get("insId") or item.get("ins_id") or item.get("instrument")
+                if iid_raw is None:
+                    continue
+                try:
+                    iid = int(iid_raw)
+                except Exception:
+                    continue
+                by_ins.setdefault(iid, []).append(item)
+        _SPLITS_CACHE_BY_ASOF[asof] = by_ins
+        return {"stockSplitList": by_ins.get(int(ins_id), [])}, attempts
+    return {"stockSplitList": _SPLITS_CACHE_BY_ASOF[asof].get(int(ins_id), [])}, 1
+
+
 def _fetch_dataset_payload(client: ApiClient, dataset: str, asof: str, ins_id: int) -> Tuple[Any, int]:
+    if dataset == "splits":
+        return _fetch_splits_payload_for_instrument(client, asof, ins_id)
     last_error: Optional[Exception] = None
     for path, params in _endpoint_candidates(dataset, asof, ins_id):
         try:

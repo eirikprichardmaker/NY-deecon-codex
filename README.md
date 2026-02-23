@@ -4,10 +4,10 @@ Dette repoet er klargjort for import av kjernefiler fra Børsdata uten å inklud
 
 ## Status
 - Kilderepo `Borsdata` ble ikke funnet i arbeidsområdet i denne sesjonen.
-- Target-repo `NY-deecon-codex` finnes, men inneholder foreløpig ikke pipeline-kode (`src/` mangler).
+- Target-repo `NY-deecon-codex` finnes og inneholder n? pipeline-kode (`src/`, `tools/`, `tests/`, `config/`).
 
 ## Planlagt smoke test
-Når `src/` og `config/` er importert, kjør:
+Kj?r smoke test med n?v?rende kodebase:
 
 ```bash
 python -m src.run_weekly --asof 2026-02-16 --config ./config/config.yaml --steps valuation,decision
