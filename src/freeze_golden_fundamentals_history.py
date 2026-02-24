@@ -2,6 +2,7 @@
 
 import argparse
 import random
+import re
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -18,6 +19,17 @@ from src.common.utils import get_first_env
 BASE_URL = "https://apiservice.borsdata.se/v1"
 DEFAULT_DATASETS = ("prices", "reports_y", "reports_q", "reports_r12", "kpis", "dividends", "splits")
 DEFAULT_MARKETS = ("NO", "SE", "DK", "FI")
+COUNTRY_ID_TO_MARKET = {
+    1: "SE",
+    2: "NO",
+    3: "FI",
+    4: "DK",
+    5: "US",
+    6: "CA",
+    7: "UK",
+    8: "DE",
+    9: "FR",
+}
 MANIFEST_COLUMNS = [
     "dataset",
     "market",
@@ -175,6 +187,18 @@ def _parse_csv_list(raw: str) -> Tuple[str, ...]:
             seen.add(item)
             out.append(item)
     return tuple(out)
+
+
+def _validate_market_codes(markets: Sequence[str]) -> None:
+    """
+    Accept any uppercase market code token (2-5 chars), so Pro+ global markets can be used.
+    Keep Nordic defaults unchanged via DEFAULT_MARKETS.
+    """
+    if not markets:
+        raise ValueError("No markets provided.")
+    bad = [m for m in markets if not re.fullmatch(r"[A-Z]{2,5}", str(m))]
+    if bad:
+        raise ValueError(f"Invalid market code(s): {bad}. Use comma-separated uppercase codes, e.g. NO,SE,DK,FI,US,DE.")
 
 
 def _is_readable_non_empty_parquet(path: Path) -> Tuple[bool, int, str]:
@@ -475,7 +499,7 @@ def _market_from_instrument(item: Dict[str, Any]) -> Optional[str]:
         if value is None:
             continue
         txt = str(value).upper()
-        if txt in {"NO", "SE", "DK", "FI"}:
+        if txt in set(COUNTRY_ID_TO_MARKET.values()):
             return txt
         if "NORWAY" in txt or "OSLO" in txt:
             return "NO"
@@ -485,11 +509,12 @@ def _market_from_instrument(item: Dict[str, Any]) -> Optional[str]:
             return "DK"
         if "FINLAND" in txt or "HELSINKI" in txt:
             return "FI"
+    # country id fallback
     country_id = item.get("countryId")
     if country_id is not None:
         try:
             cid = int(country_id)
-            return {1: "SE", 2: "NO", 3: "FI", 4: "DK"}.get(cid)
+            return COUNTRY_ID_TO_MARKET.get(cid)
         except Exception:
             return None
     return None
@@ -541,8 +566,8 @@ def _fetch_market_instruments(client: ApiClient, market: str, include_delisted: 
             ins_id = int(iid)
         except Exception:
             continue
-        row_market = _market_from_instrument(item) or market
-        if row_market != market:
+        row_market = _market_from_instrument(item)
+        if row_market is None or row_market != market:
             continue
         if not include_delisted and _is_delisted(item):
             continue
@@ -881,7 +906,11 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Incremental MAX FREEZE with manifest and cache-aware fetch.")
     p.add_argument("--asof", required=True, help="YYYY-MM-DD")
     p.add_argument("--data-dir", default="data")
-    p.add_argument("--markets", default="NO,SE,DK,FI")
+    p.add_argument(
+        "--markets",
+        default="NO,SE,DK,FI",
+        help="Comma-separated market codes. Default is Nordic; Pro+ users can pass additional markets (e.g. US,DE,FR).",
+    )
     p.add_argument("--include-delisted", default="true")
     p.add_argument(
         "--skip-existing",
@@ -907,9 +936,7 @@ def build_config(args: argparse.Namespace) -> FreezeConfig:
     if unsupported:
         raise ValueError(f"Unsupported datasets: {unsupported}. Allowed: {', '.join(DEFAULT_DATASETS)}")
     markets = tuple(x.upper() for x in _parse_csv_list(args.markets))
-    unsupported_mk = [m for m in markets if m not in set(DEFAULT_MARKETS)]
-    if unsupported_mk:
-        raise ValueError(f"Unsupported markets: {unsupported_mk}. Allowed: {', '.join(DEFAULT_MARKETS)}")
+    _validate_market_codes(markets)
     return FreezeConfig(
         asof=args.asof,
         data_dir=Path(args.data_dir),

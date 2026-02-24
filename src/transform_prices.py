@@ -15,6 +15,7 @@ from src.common.config import resolve_paths
 from src.common.io import read_csv, read_parquet, write_parquet
 
 INDEX_TICKERS = ["^OSEAX", "^OMXS", "^OMXC25", "^HEX"]
+DEFAULT_MODEL_SUFFIX_ALLOWLIST = {"OL", "ST", "CO", "HE"}
 
 
 def _load_any(path: Path) -> pd.DataFrame:
@@ -75,6 +76,33 @@ def _add_price_indicators(df: pd.DataFrame) -> pd.DataFrame:
     out["mad"] = (out["ma21"] - out["ma200"]) / out["ma200"]
     out["above_ma200"] = out["adj_close"] > out["ma200"]
     return out
+
+
+def _filter_non_model_markets(df: pd.DataFrame, cfg: dict, log) -> pd.DataFrame:
+    """
+    Keep model price universe Nordic-only by default.
+    This allows storing extra markets (e.g. DE) in raw data for experiments
+    without contaminating the production model inputs.
+    """
+    out = df.copy()
+    raw = ((cfg.get("model_data_guard") or {}).get("allowed_ticker_suffixes", None))
+    if raw is None:
+        allowed = set(DEFAULT_MODEL_SUFFIX_ALLOWLIST)
+    else:
+        allowed = {str(x).strip().upper() for x in raw if str(x).strip()}
+        if not allowed:
+            allowed = set(DEFAULT_MODEL_SUFFIX_ALLOWLIST)
+
+    tick = out["ticker"].astype(str).str.strip()
+    is_index = tick.str.startswith("^")
+    suffix = tick.str.rsplit(".", n=1).str[-1].str.upper()
+    has_suffix = tick.str.contains(r"\.", regex=True)
+    keep = is_index | (~has_suffix) | suffix.isin(allowed)
+
+    dropped = int((~keep).sum())
+    if dropped > 0:
+        log.info(f"TRANSFORM prices: dropped {dropped} rows outside model suffix allowlist={sorted(allowed)}")
+    return out.loc[keep].copy()
 
 
 def _fetch_yahoo_chart(symbol: str, start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
@@ -213,6 +241,8 @@ def run(ctx, log) -> int:
         return 0
 
     df = _std_cols(_load_any(cand[0]))
+    df = _ensure_price_schema(df)
+    df = _filter_non_model_markets(df, cfg=ctx.cfg, log=log)
     df = _append_missing_indices(df, asof=ctx.asof, log=log)
 
     out = processed_dir / "prices.parquet"

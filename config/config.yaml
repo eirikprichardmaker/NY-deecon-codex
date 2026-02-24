@@ -23,9 +23,3 @@ wft_opt_strategy_a:
     balance: 0.1
   weights_bounds: [0.0, 0.7]
   weights_reg_lambda: 0.5
-
-decision:
-  mos_min: 0.35
-  mos_high_uncertainty: 0.40
-  mad_min: -0.08
-  technical_gate_mode: two_of_three_index_primary

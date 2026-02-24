@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
+from types import SimpleNamespace
 
 import pandas as pd
 
@@ -226,3 +227,42 @@ def test_fetch_splits_payload_for_instrument_uses_shared_cache(monkeypatch):
     assert len(p1["stockSplitList"]) == 1
     assert len(p2["stockSplitList"]) == 1
     assert p3["stockSplitList"] == []
+
+
+def test_build_config_allows_global_market_codes():
+    args = SimpleNamespace(
+        asof="2026-02-16",
+        data_dir="data",
+        markets="NO,SE,US,DE",
+        include_delisted="true",
+        skip_existing="true",
+        refresh_stale_days=0,
+        refetch_invalid_cache="false",
+        force="false",
+        datasets="prices,reports_y",
+        timeout=60,
+        max_attempts=8,
+    )
+    cfg = mod.build_config(args)
+    assert cfg.markets == ("NO", "SE", "US", "DE")
+
+
+def test_market_from_instrument_prefers_country_id_mapping():
+    assert mod._market_from_instrument({"countryId": 8}) == "DE"
+    assert mod._market_from_instrument({"countryId": 9}) == "FR"
+    assert mod._market_from_instrument({"countryId": 1}) == "SE"
+
+
+def test_fetch_market_instruments_does_not_default_unknown_to_requested_market():
+    class DummyClient:
+        def get_json(self, _path, _params):
+            return {
+                "instruments": [
+                    {"insId": 1, "countryId": 1},  # SE
+                    {"insId": 2, "market": "DE"},  # explicit DE
+                    {"insId": 3},  # unknown mapping should be ignored
+                ]
+            }, 1
+
+    out = mod._fetch_market_instruments(DummyClient(), market="DE", include_delisted=True)
+    assert out == [2]

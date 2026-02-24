@@ -991,7 +991,7 @@ def run_wft(
         raise RuntimeError("No WFT folds found inside requested --start/--end range.")
 
     grid = _iter_param_grid(mos_grid, mad_grid, weakness_variants)
-    baseline = WFTParams(mos_threshold=0.35, mad_min=-0.08, weakness_rule_variant="baseline")
+    baseline = WFTParams(mos_threshold=0.30, mad_min=-0.05, weakness_rule_variant="baseline")
     index_returns = _build_index_monthly_returns(prices_path)
     country_benchmarks, _benchmark_notes = _select_country_benchmarks(index_returns)
     position_country = _build_position_country_lookup(panel)
