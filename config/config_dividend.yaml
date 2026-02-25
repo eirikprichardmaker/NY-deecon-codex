@@ -1,4 +1,4 @@
-﻿paths:
+paths:
   runs_dir: runs
   data_dir: data
   raw_dir: data/raw
@@ -25,5 +25,5 @@ wft_opt_strategy_a:
   weights_reg_lambda: 0.5
 
 decision:
-  quality_strategy: baseline
+  quality_strategy: dividend_quality
   dividend_min_score: 0

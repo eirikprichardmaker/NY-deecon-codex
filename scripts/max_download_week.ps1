@@ -8,8 +8,11 @@ param(
     [string]$OutRoot = "data/freeze/borsdata",
     [string]$DataDir = "data",
     [string]$MarketSet = "NO,SE,DK,FI",
+    [string]$ExtraKpiIds = "33,68,71,73,23",
     [switch]$IncludeDelisted,
-    [switch]$SkipTests
+    [switch]$SkipTests,
+    [switch]$BackupData,
+    [string]$BackupDataDir = "C:\Backup\NEW DEECON\data"
 )
 
 Set-StrictMode -Version Latest
@@ -62,6 +65,10 @@ function Run-KpiBackfill {
     Invoke-LoggedCommand "python tools/borsdata_freeze.py --asof $ArchiveAsOf --ids-csv $IdsCsv --ids-col $IdsCol --out-root $OutRoot --only kpi --kpi-ids 37,10,42,135,57,63,50,49,60,55,54 --kpi-period r12 --kpi-value-type mean"
     # Quarter only for KPIs known to support quarter in this project
     Invoke-LoggedCommand "python tools/borsdata_freeze.py --asof $ArchiveAsOf --ids-csv $IdsCsv --ids-col $IdsCol --out-root $OutRoot --only kpi --kpi-ids 135,63,55,54 --kpi-period quarter --kpi-value-type mean"
+    if ($ExtraKpiIds -and $ExtraKpiIds.Trim().Length -gt 0) {
+        Invoke-LoggedCommand "python tools/borsdata_freeze.py --asof $ArchiveAsOf --ids-csv $IdsCsv --ids-col $IdsCol --out-root $OutRoot --only kpi --kpi-ids $ExtraKpiIds --kpi-period year --kpi-value-type mean"
+        Invoke-LoggedCommand "python tools/borsdata_freeze.py --asof $ArchiveAsOf --ids-csv $IdsCsv --ids-col $IdsCol --out-root $OutRoot --only kpi --kpi-ids $ExtraKpiIds --kpi-period r12 --kpi-value-type mean"
+    }
 }
 
 function Run-Day2 {
@@ -124,6 +131,28 @@ function Run-Validation {
     Invoke-LoggedCommand "python -m pytest -q"
 }
 
+function Run-DataBackup {
+    if (-not $BackupData) {
+        return
+    }
+    if (-not (Test-Path $DataDir)) {
+        throw "Backup source mangler: $DataDir"
+    }
+    Write-Host ""
+    Write-Host (">> Backup data: {0} -> {1}" -f $DataDir, $BackupDataDir) -ForegroundColor Cyan
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    & robocopy $DataDir $BackupDataDir /E /Z /R:1 /W:1 /NFL /NDL /NP /MT:16 | Out-Host
+    $exitCode = $LASTEXITCODE
+    $sw.Stop()
+    if ($null -eq $exitCode) {
+        throw "Backup feilet: robocopy returnerte ingen exit code."
+    }
+    if ($exitCode -gt 7) {
+        throw ("Backup feilet med robocopy exit code {0}" -f $exitCode)
+    }
+    Write-Host ("OK backup (code {0}, {1:n1}s)" -f $exitCode, $sw.Elapsed.TotalSeconds) -ForegroundColor Green
+}
+
 function Run-DayByNumber {
     param([int]$Index)
     switch ($Index) {
@@ -148,4 +177,5 @@ if ($RunAll) {
 }
 
 Run-Validation
+Run-DataBackup
 Write-Host "Done." -ForegroundColor Green

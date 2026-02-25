@@ -15,6 +15,30 @@ from src.common.utils import safe_div, zscore
 REASON_DATA_MISSING_MA200 = "DATA_MISSING_MA200"
 REASON_DATA_MISSING_BENCHMARK = "DATA_MISSING_BENCHMARK"
 
+DIVIDEND_CRITERIA = [
+    ("dividend_history", "Dividend History"),
+    ("dividend_growth", "Dividend Growth"),
+    ("payout_ratio", "Payout ratio"),
+    ("share_count", "Increase of the number of shares"),
+    ("market_value", "Market value"),
+    ("fcf_margin", "Free cash flow margin"),
+    ("ocf_margin", "Operating cash flow margin"),
+    ("profit_margin", "Profit Margin"),
+    ("roa", "Return on assets"),
+    ("yield", "Yield"),
+    ("pe", "P/E"),
+]
+
+GRAHAM_CRITERIA = [
+    ("size", "Size"),
+    ("financial_strength", "Financial strength"),
+    ("earning_stability", "Earning stability-requirements for profit"),
+    ("dividend_history", "Dividend History-requirements for the dividend"),
+    ("profit_growth", "Profit GROWTH - Total profit growth"),
+    ("moderate_pe", "Moderate P/E ratio"),
+    ("moderate_equity_price", "Moderate Equity Price"),
+]
+
 
 def _canon_cols(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -165,10 +189,217 @@ def _to_decimal_rate(s: pd.Series) -> pd.Series:
     Example: 12.0 -> 0.12 (if series median suggests percent-scale input).
     """
     x = pd.to_numeric(s, errors="coerce")
+    if int(x.notna().sum()) == 0:
+        return x
     med = x.abs().median(skipna=True)
     if np.isfinite(med) and med > 2.0:
         x = x / 100.0
     return x
+
+
+def _evaluate_numeric_rule(values: pd.Series, rule) -> tuple[pd.Series, pd.Series]:
+    s = pd.to_numeric(values, errors="coerce")
+    available = s.notna()
+    ok = pd.Series(False, index=s.index, dtype=bool)
+    if bool(available.any()):
+        ok.loc[available] = rule(s.loc[available]).astype(bool)
+    return ok, available
+
+
+def _baseline_quality_score(df: pd.DataFrame) -> pd.Series:
+    comps: list[pd.Series] = []
+    wts: list[float] = []
+    if "roic" in df.columns and pd.to_numeric(df["roic"], errors="coerce").notna().any():
+        comps.append(zscore(pd.to_numeric(df["roic"], errors="coerce")))
+        wts.append(0.60)
+    elif "roic_current" in df.columns and pd.to_numeric(df["roic_current"], errors="coerce").notna().any():
+        comps.append(zscore(pd.to_numeric(df["roic_current"], errors="coerce")))
+        wts.append(0.60)
+
+    if "fcf_yield" in df.columns and pd.to_numeric(df["fcf_yield"], errors="coerce").notna().any():
+        comps.append(zscore(pd.to_numeric(df["fcf_yield"], errors="coerce")))
+        wts.append(0.40)
+
+    if not comps:
+        return pd.Series(0.0, index=df.index, dtype=float)
+    w = np.array(wts, dtype=float)
+    w = w / w.sum()
+    return sum(w[i] * comps[i] for i in range(len(comps)))
+
+
+def _dividend_quality_score(df: pd.DataFrame) -> pd.DataFrame:
+    out = pd.DataFrame(index=df.index)
+
+    def _apply(name: str, values: pd.Series, rule) -> None:
+        ok, available = _evaluate_numeric_rule(values, rule)
+        out[f"dividend_{name}_ok"] = ok.astype(int)
+        out[f"dividend_{name}_available"] = available.astype(int)
+
+    hist = _as_num_series(
+        df,
+        ["dividend_history_years", "dividend_streak_years", "dividend_years", "dividend_paid_years"],
+    )
+    _apply("dividend_history", hist, lambda s: s >= 5.0)
+
+    div_growth = _to_decimal_rate(
+        _as_num_series(
+            df,
+            ["dividend_growth", "dividend_growth_5y", "dividend_cagr_5y", "dps_growth_5y"],
+        )
+    )
+    _apply("dividend_growth", div_growth, lambda s: s > 0.0)
+
+    payout = _to_decimal_rate(_as_num_series(df, ["payout_ratio", "dividend_payout_ratio"]))
+    _apply("payout_ratio", payout, lambda s: (s > 0.0) & (s <= 0.75))
+
+    share_growth = _to_decimal_rate(
+        _as_num_series(
+            df,
+            ["share_count_growth", "share_count_growth_5y", "shares_outstanding_growth_5y", "shares_dilution_rate"],
+        )
+    )
+    _apply("share_count", share_growth, lambda s: s <= 0.02)
+
+    market_value = _as_num_series(df, ["market_cap", "market_cap_current"])
+    _apply("market_value", market_value, lambda s: s >= 1_000_000_000.0)
+
+    fcf_margin = _to_decimal_rate(_as_num_series(df, ["fcf_margin", "free_cash_flow_margin", "fcf_margin_ttm"]))
+    _apply("fcf_margin", fcf_margin, lambda s: s >= 0.05)
+
+    ocf_margin = _to_decimal_rate(_as_num_series(df, ["ocf_margin", "operating_cash_flow_margin", "operating_cf_margin"]))
+    _apply("ocf_margin", ocf_margin, lambda s: s >= 0.08)
+
+    profit_margin = _to_decimal_rate(_as_num_series(df, ["profit_margin", "net_margin", "net_profit_margin"]))
+    _apply("profit_margin", profit_margin, lambda s: s >= 0.05)
+
+    roa = _to_decimal_rate(_as_num_series(df, ["roa", "return_on_assets"]))
+    _apply("roa", roa, lambda s: s >= 0.05)
+
+    div_yield = _to_decimal_rate(_as_num_series(df, ["dividend_yield", "yield", "dividend_yield_ttm"]))
+    _apply("yield", div_yield, lambda s: s >= 0.02)
+
+    pe = _as_num_series(df, ["p_e_current", "p_e", "pe", "pe_ratio"])
+    _apply("pe", pe, lambda s: (s > 0.0) & (s <= 25.0))
+
+    ok_cols = [f"dividend_{k}_ok" for k, _ in DIVIDEND_CRITERIA]
+    available_cols = [f"dividend_{k}_available" for k, _ in DIVIDEND_CRITERIA]
+    out["dividend_score"] = out[ok_cols].sum(axis=1)
+    out["dividend_criteria_available_count"] = out[available_cols].sum(axis=1)
+    out["dividend_criteria_missing_count"] = len(DIVIDEND_CRITERIA) - out["dividend_criteria_available_count"]
+
+    reason_series = pd.Series("", index=df.index, dtype=object)
+    for key, _ in DIVIDEND_CRITERIA:
+        ok_col = f"dividend_{key}_ok"
+        available_col = f"dividend_{key}_available"
+        fail_mask = out[available_col].astype(bool) & ~out[ok_col].astype(bool)
+        missing_mask = ~out[available_col].astype(bool)
+        reason_series.loc[fail_mask] = reason_series.loc[fail_mask].map(
+            lambda x, k=key: _join_reasons([x, f"{k}_fail"])
+        )
+        reason_series.loc[missing_mask] = reason_series.loc[missing_mask].map(
+            lambda x, k=key: _join_reasons([x, f"{k}_missing"])
+        )
+    out["dividend_reason"] = reason_series
+    return out
+
+
+def _graham_strategy_score(df: pd.DataFrame) -> pd.DataFrame:
+    out = pd.DataFrame(index=df.index)
+
+    def _apply(name: str, values: pd.Series, rule) -> None:
+        ok, available = _evaluate_numeric_rule(values, rule)
+        out[f"graham_{name}_ok"] = ok.astype(int)
+        out[f"graham_{name}_available"] = available.astype(int)
+
+    market_cap = _as_num_series(df, ["market_cap", "market_cap_current"])
+    _apply("size", market_cap, lambda s: s >= 2_000_000_000.0)
+
+    nd_ebitda = _as_num_series(df, ["nd_ebitda", "n_debt_ebitda_current"])
+    net_debt = _as_num_series(df, ["net_debt", "net_debt_current", "net_debt_used"])
+    mcap_pos = market_cap.where(market_cap > 0)
+    fin_available = nd_ebitda.notna() | (net_debt.notna() & mcap_pos.notna())
+    fin_ok = (
+        (~nd_ebitda.notna() | (nd_ebitda <= 3.0)) &
+        (~(net_debt.notna() & mcap_pos.notna()) | (net_debt <= mcap_pos))
+    )
+    out["graham_financial_strength_ok"] = (fin_available & fin_ok).astype(int)
+    out["graham_financial_strength_available"] = fin_available.astype(int)
+
+    profit_margin = _to_decimal_rate(_as_num_series(df, ["profit_margin", "net_margin", "net_profit_margin"]))
+    roic = _to_decimal_rate(_as_num_series(df, ["roic", "roic_current"]))
+    earn_available = profit_margin.notna() | roic.notna()
+    earn_ok = (
+        (~profit_margin.notna() | (profit_margin > 0.0)) &
+        (~roic.notna() | (roic > 0.0))
+    )
+    out["graham_earning_stability_ok"] = (earn_available & earn_ok).astype(int)
+    out["graham_earning_stability_available"] = earn_available.astype(int)
+
+    div_hist = _as_num_series(df, ["dividend_history_years", "dividend_streak_years", "dividend_years", "dividend_paid_years"])
+    _apply("dividend_history", div_hist, lambda s: s >= 10.0)
+
+    profit_growth = _to_decimal_rate(
+        _as_num_series(df, ["profit_growth_5y", "earnings_growth_5y", "eps_growth_5y", "net_income_growth_5y"])
+    )
+    _apply("profit_growth", profit_growth, lambda s: s > 0.0)
+
+    pe = _as_num_series(df, ["p_e_current", "p_e", "pe", "pe_ratio"])
+    _apply("moderate_pe", pe, lambda s: (s > 0.0) & (s <= 15.0))
+
+    pb = _as_num_series(df, ["p_b_current", "p_b", "pb_ratio", "price_to_book"])
+    ps = _as_num_series(df, ["p_s_current", "p_s", "ps", "price_to_sales"])
+    eq_available = pb.notna() | ps.notna()
+    eq_ok = (
+        (pb.notna() & (pb > 0.0) & (pb <= 1.5)) |
+        (~pb.notna() & ps.notna() & (ps > 0.0) & (ps <= 2.0))
+    )
+    out["graham_moderate_equity_price_ok"] = (eq_available & eq_ok).astype(int)
+    out["graham_moderate_equity_price_available"] = eq_available.astype(int)
+
+    ok_cols = [f"graham_{k}_ok" for k, _ in GRAHAM_CRITERIA]
+    available_cols = [f"graham_{k}_available" for k, _ in GRAHAM_CRITERIA]
+    out["graham_score"] = out[ok_cols].sum(axis=1)
+    out["graham_criteria_available_count"] = out[available_cols].sum(axis=1)
+    out["graham_criteria_missing_count"] = len(GRAHAM_CRITERIA) - out["graham_criteria_available_count"]
+
+    reason_series = pd.Series("", index=df.index, dtype=object)
+    for key, _ in GRAHAM_CRITERIA:
+        ok_col = f"graham_{key}_ok"
+        available_col = f"graham_{key}_available"
+        fail_mask = out[available_col].astype(bool) & ~out[ok_col].astype(bool)
+        missing_mask = ~out[available_col].astype(bool)
+        reason_series.loc[fail_mask] = reason_series.loc[fail_mask].map(
+            lambda x, k=key: _join_reasons([x, f"graham_{k}_fail"])
+        )
+        reason_series.loc[missing_mask] = reason_series.loc[missing_mask].map(
+            lambda x, k=key: _join_reasons([x, f"graham_{k}_missing"])
+        )
+    out["graham_reason"] = reason_series
+    return out
+
+
+def _build_quality_block(df: pd.DataFrame, dec_cfg: dict) -> pd.DataFrame:
+    strategy_raw = str(dec_cfg.get("quality_strategy", "baseline")).strip().lower()
+    use_dividend = strategy_raw in {"dividend", "dividend_quality"}
+    use_graham = strategy_raw in {"graham", "graham_strategy"}
+
+    out = pd.DataFrame(index=df.index)
+    if use_dividend:
+        div = _dividend_quality_score(df)
+        for c in div.columns:
+            out[c] = div[c]
+        out["quality_score"] = pd.to_numeric(out["dividend_score"], errors="coerce").fillna(0.0)
+        out["quality_strategy"] = "dividend_quality"
+    elif use_graham:
+        graham = _graham_strategy_score(df)
+        for c in graham.columns:
+            out[c] = graham[c]
+        out["quality_score"] = pd.to_numeric(out["graham_score"], errors="coerce").fillna(0.0)
+        out["quality_strategy"] = "graham_strategy"
+    else:
+        out["quality_score"] = _baseline_quality_score(df)
+        out["quality_strategy"] = "baseline"
+    return out
 
 
 def _quality_gate(df: pd.DataFrame, dec_cfg: dict) -> pd.DataFrame:
@@ -612,21 +843,23 @@ def run(ctx, log) -> int:
     else:
         df["tech_ok"] = tech_data_ready & df["tech_signal_index_trend"].astype(bool) & df["tech_signal_count"].ge(2)
 
-    # --- quality score (lightweight) ---
-    comps, wts = [], []
-    if "roic" in df.columns and pd.to_numeric(df["roic"], errors="coerce").notna().any():
-        comps.append(zscore(pd.to_numeric(df["roic"], errors="coerce"))); wts.append(0.60)
-    elif "roic_current" in df.columns and pd.to_numeric(df["roic_current"], errors="coerce").notna().any():
-        comps.append(zscore(pd.to_numeric(df["roic_current"], errors="coerce"))); wts.append(0.60)
+    quality_block = _build_quality_block(df, dec_cfg)
+    for c in quality_block.columns:
+        df[c] = quality_block[c]
 
-    if "fcf_yield" in df.columns and pd.to_numeric(df["fcf_yield"], errors="coerce").notna().any():
-        comps.append(zscore(pd.to_numeric(df["fcf_yield"], errors="coerce"))); wts.append(0.40)
-
-    if comps:
-        w = np.array(wts, dtype=float); w = w / w.sum()
-        df["quality_score"] = sum(w[i] * comps[i] for i in range(len(comps)))
+    quality_strategy = str(df.get("quality_strategy", pd.Series("baseline", index=df.index)).iloc[0]).strip().lower()
+    use_dividend_strategy = quality_strategy == "dividend_quality"
+    use_graham_strategy = quality_strategy == "graham_strategy"
+    dividend_min_score = int(dec_cfg.get("dividend_min_score", 0)) if use_dividend_strategy else 0
+    graham_min_score = int(dec_cfg.get("graham_min_score", 0)) if use_graham_strategy else 0
+    if use_dividend_strategy and "dividend_score" in df.columns:
+        df["dividend_min_score_ok"] = pd.to_numeric(df["dividend_score"], errors="coerce").fillna(0.0) >= float(dividend_min_score)
     else:
-        df["quality_score"] = 0.0
+        df["dividend_min_score_ok"] = True
+    if use_graham_strategy and "graham_score" in df.columns:
+        df["graham_min_score_ok"] = pd.to_numeric(df["graham_score"], errors="coerce").fillna(0.0) >= float(graham_min_score)
+    else:
+        df["graham_min_score_ok"] = True
 
     value_gate = _value_creation_gate(df, dec_cfg)
     quality_gate = _quality_gate(df, dec_cfg)
@@ -639,7 +872,9 @@ def run(ctx, log) -> int:
         df["mos"].notna() &
         (df["mos"] >= df["mos_req"]) &
         df["value_creation_ok"].fillna(False) &
-        df["quality_gate_ok"].fillna(False)
+        df["quality_gate_ok"].fillna(False) &
+        df["dividend_min_score_ok"].fillna(True) &
+        df["graham_min_score_ok"].fillna(True)
     )
     df["technical_ok"] = df["tech_ok"]
 
@@ -648,6 +883,8 @@ def run(ctx, log) -> int:
     mos_fail = ~(df["mos"].notna() & (df["mos"] >= df["mos_req"]))
     vc_fail = ~df["value_creation_ok"].fillna(False)
     q_fail = ~df["quality_gate_ok"].fillna(False)
+    div_fail = ~df["dividend_min_score_ok"].fillna(True)
+    graham_fail = ~df["graham_min_score_ok"].fillna(True)
 
     df.loc[mos_fail, "reason_fundamental_fail"] = "mos_below_required"
     df.loc[vc_fail, "reason_fundamental_fail"] = df.loc[vc_fail, "reason_fundamental_fail"].map(
@@ -656,6 +893,24 @@ def run(ctx, log) -> int:
     df.loc[q_fail, "reason_fundamental_fail"] = df.loc[q_fail, "reason_fundamental_fail"].map(
         lambda x: _join_reasons([x, "quality_gate_fail"])
     )
+    if use_dividend_strategy:
+        df.loc[div_fail, "reason_fundamental_fail"] = df.loc[div_fail, "reason_fundamental_fail"].map(
+            lambda x: _join_reasons([x, f"dividend_score_below_{dividend_min_score}"])
+        )
+        if "dividend_reason" in df.columns:
+            df.loc[div_fail, "reason_fundamental_fail"] = df.loc[div_fail].apply(
+                lambda r: _join_reasons([r["reason_fundamental_fail"], str(r.get("dividend_reason", ""))]),
+                axis=1,
+            )
+    if use_graham_strategy:
+        df.loc[graham_fail, "reason_fundamental_fail"] = df.loc[graham_fail, "reason_fundamental_fail"].map(
+            lambda x: _join_reasons([x, f"graham_score_below_{graham_min_score}"])
+        )
+        if "graham_reason" in df.columns:
+            df.loc[graham_fail, "reason_fundamental_fail"] = df.loc[graham_fail].apply(
+                lambda r: _join_reasons([r["reason_fundamental_fail"], str(r.get("graham_reason", ""))]),
+                axis=1,
+            )
 
     if "value_creation_reason" in df.columns:
         needs_vc_reason = vc_fail & df["value_creation_reason"].astype(str).ne("")
@@ -713,6 +968,36 @@ def run(ctx, log) -> int:
     df["eligible"] = df["technical_ok"] & df["fundamental_ok"]
     _write_ma200_sanity_report(ctx.run_dir, ctx.asof, df)
 
+    strategy_screen_cols: list[str] = []
+    if use_dividend_strategy:
+        strategy_screen_cols.extend(
+            [
+                "quality_strategy",
+                "dividend_score",
+                "dividend_criteria_available_count",
+                "dividend_criteria_missing_count",
+                "dividend_min_score_ok",
+                "dividend_reason",
+            ]
+        )
+        for key, _ in DIVIDEND_CRITERIA:
+            strategy_screen_cols.append(f"dividend_{key}_ok")
+            strategy_screen_cols.append(f"dividend_{key}_available")
+    if use_graham_strategy:
+        strategy_screen_cols.extend(
+            [
+                "quality_strategy",
+                "graham_score",
+                "graham_criteria_available_count",
+                "graham_criteria_missing_count",
+                "graham_min_score_ok",
+                "graham_reason",
+            ]
+        )
+        for key, _ in GRAHAM_CRITERIA:
+            strategy_screen_cols.append(f"graham_{key}_ok")
+            strategy_screen_cols.append(f"graham_{key}_available")
+
     screen_cols = [c for c in [
         "ticker", "company", "market_cap", "intrinsic_value", "mos", "mos_req",
         "fundamental_ok", "technical_ok", "reason_fundamental_fail", "reason_technical_fail",
@@ -722,16 +1007,33 @@ def run(ctx, log) -> int:
         "relevant_index_symbol", "relevant_index_key", "index_price_date", "index_price", "index_ma200", "index_mad", "index_above_ma200",
         "index_data_ok", "index_ma200_ok", "index_mad_ok", "index_tech_ok",
         "mad", "ma21", "ma200", "above_ma200", "quality_score"
-    ] if c in df.columns]
+    ] + strategy_screen_cols if c in df.columns]
     _atomic_write_csv(ctx.run_dir / "screen_basic.csv", df[screen_cols])
 
     eligible = df[df["eligible"]].copy()
-    eligible = eligible.sort_values(by=["quality_score", "mos", "market_cap"], ascending=[False, False, False], na_position="last")
+    if use_dividend_strategy and "dividend_score" in eligible.columns:
+        eligible = eligible.sort_values(
+            by=["dividend_score", "intrinsic_value", "market_cap"],
+            ascending=[False, False, False],
+            na_position="last",
+        )
+    elif use_graham_strategy and "graham_score" in eligible.columns:
+        eligible = eligible.sort_values(
+            by=["graham_score", "intrinsic_value", "market_cap"],
+            ascending=[False, False, False],
+            na_position="last",
+        )
+    else:
+        eligible = eligible.sort_values(by=["quality_score", "mos", "market_cap"], ascending=[False, False, False], na_position="last")
 
     out_cols = [c for c in [
         "ticker", "company",
         "market_cap", "intrinsic_value", "mos", "mos_req", "mos_basis",
-        "quality_score", "beta", "coe_used", "wacc_used",
+        "quality_strategy", "quality_score", "dividend_score", "dividend_criteria_available_count", "dividend_criteria_missing_count",
+        "dividend_min_score_ok", "dividend_reason",
+        "graham_score", "graham_criteria_available_count", "graham_criteria_missing_count",
+        "graham_min_score_ok", "graham_reason",
+        "beta", "coe_used", "wacc_used",
         "value_creation_ok", "roic_wacc_spread", "roic_wacc_spread_y1", "roic_wacc_spread_y2", "roic_wacc_spread_y3", "value_creation_reason",
         "quality_gate_ok", "quality_weak_count", "quality_gate_reason",
         "above_ma200", "mad", "ma21", "ma200", "stock_ma200_ok", "stock_mad_ok",
@@ -745,7 +1047,12 @@ def run(ctx, log) -> int:
     out_md = ctx.run_dir / "decision.md"
 
     if eligible.empty:
-        diag = df.sort_values(by=["quality_score", "mos"], ascending=[False, False], na_position="last")
+        if use_dividend_strategy and "dividend_score" in df.columns:
+            diag = df.sort_values(by=["dividend_score", "mos"], ascending=[False, False], na_position="last")
+        elif use_graham_strategy and "graham_score" in df.columns:
+            diag = df.sort_values(by=["graham_score", "mos"], ascending=[False, False], na_position="last")
+        else:
+            diag = df.sort_values(by=["quality_score", "mos"], ascending=[False, False], na_position="last")
         _atomic_write_csv(out_csv, diag[out_cols].head(top_n))
         _atomic_write_csv(ctx.run_dir / "shortlist.csv", pd.DataFrame(columns=out_cols))
         md = [
@@ -757,6 +1064,9 @@ def run(ctx, log) -> int:
             f"- MoS-regel aktiv: min {mos_min:.0%} (høy risiko {mos_high:.0%})",
             "- Verdiskaping-regel aktiv: ROIC > WACC i 3-års konservativ bane",
             "- Kvalitetsregel aktiv: >=2 svekkede kvalitetsindikatorer => CASH",
+            f"- Quality-strategi: {quality_strategy}",
+            (f"- Dividend minimum score: {dividend_min_score}/11" if use_dividend_strategy else "- Dividend minimum score: ikke aktiv"),
+            (f"- Graham minimum score: {graham_min_score}/7" if use_graham_strategy else "- Graham minimum score: ikke aktiv"),
             f"- {tech_rule_text}",
             "",
             "## Topp (diagnostikk – før filter)",
@@ -781,13 +1091,28 @@ def run(ctx, log) -> int:
     md.append(f"- Market cap: {float(pick['market_cap']):.3g}")
     md.append(f"- Intrinsic: {float(pick['intrinsic_value']):.3g}")
     md.append(f"- MoS: {float(pick['mos'])*100:.1f}% (krav: {float(pick['mos_req'])*100:.0f}%)")
+    md.append(f"- Quality strategy: {quality_strategy}")
     if np.isfinite(pick.get("beta", np.nan)): md.append(f"- Beta: {float(pick['beta']):.2f}")
     if np.isfinite(pick.get("quality_score", np.nan)): md.append(f"- Quality score: {float(pick['quality_score']):.3f}")
+    if use_dividend_strategy and np.isfinite(pick.get("dividend_score", np.nan)):
+        md.append(f"- Dividend quality score: {int(pick['dividend_score'])}/11")
+        md.append(f"- Dividend criteria available: {int(pick.get('dividend_criteria_available_count', 0))}/11")
+    if use_graham_strategy and np.isfinite(pick.get("graham_score", np.nan)):
+        md.append(f"- Graham score: {int(pick['graham_score'])}/7")
+        md.append(f"- Graham criteria available: {int(pick.get('graham_criteria_available_count', 0))}/7")
     md.append("")
     md.append("## Årsaker (5-10 punkter)")
     md.append(f"- Krav MoS >= {mos_min:.0%} (høy risiko: {mos_high:.0%})")
     md.append("- Verdiskaping: ROIC-WACC må være positiv i 3-års konservativ bane")
     md.append("- Kvalitetsgate: minst 2 svekkede indikatorer forkaster kandidat")
+    if use_dividend_strategy:
+        md.append("- Dividend strategy aktiv: 11 kriterier for utbyttekvalitet, lønnsomhet og verdsettelse")
+        md.append(f"- Minst {dividend_min_score} av 11 kriterier kreves")
+        md.append("- Kriterier: Dividend History, Dividend Growth, Payout ratio, Increase of the number of shares, Market value, Free cash flow margin, Operating cash flow margin, Profit Margin, Return on assets, Yield, P/E")
+    if use_graham_strategy:
+        md.append("- Graham strategy aktiv: defensive kriterier fra The Intelligent Investor")
+        md.append(f"- Minst {graham_min_score} av 7 kriterier kreves")
+        md.append("- Kriterier: Size, Financial strength, Earning stability, Dividend History, Profit Growth, Moderate P/E ratio, Moderate Equity Price")
     md.append(f"- {tech_rule_text}")
     md.append(f"- Valgt ticker har MoS {float(pick['mos']):.1%} og quality_score {float(pick.get('quality_score', 0.0)):.3f}")
     if np.isfinite(pick.get("roic_wacc_spread", np.nan)):

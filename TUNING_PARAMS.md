@@ -47,3 +47,20 @@ These affect weekly decision output, and mirror/extend WFT concepts:
 - The only parameters that are both implemented in WFT tuning and exported in `chosen_params` are:
   - `mos_threshold`, `mad_min`, `weakness_rule_variant`.
 - Literal variant `"strict"` is not implemented; implemented stricter mode is `"stricter"`.
+
+## Decision strategy selection (weekly pipeline)
+
+These are config-driven in `config/config.yaml` under `decision` and affect `src/decision.py` output:
+- `quality_strategy`:
+  - `baseline` (legacy quality score from ROIC + FCF yield z-score)
+  - `dividend_quality` (11-criteria dividend quality score)
+  - `graham_strategy` (7-criteria defensive Graham-style score)
+- `dividend_min_score`:
+  - integer floor for dividend strategy gate (`0..11`)
+  - only active when `quality_strategy=dividend_quality`
+- `graham_min_score`:
+  - integer floor for Graham strategy gate (`0..7`)
+  - only active when `quality_strategy=graham_strategy`
+- Current default in `config/config.yaml`: `quality_strategy=baseline`
+- Optional alternative config: `config/config_dividend.yaml` (`quality_strategy=dividend_quality`)
+- Optional alternative config: `config/config_graham.yaml` (`quality_strategy=graham_strategy`)

@@ -13,6 +13,18 @@ Kj?r smoke test med n?v?rende kodebase:
 python -m src.run_weekly --asof 2026-02-16 --config ./config/config.yaml --steps valuation,decision
 ```
 
+Alternativ strategi (dividend quality) er tilgjengelig via egen config:
+
+```bash
+python -m src.run_weekly --asof 2026-02-16 --config ./config/config_dividend.yaml --steps valuation,decision
+```
+
+Alternativ strategi (graham strategy) er tilgjengelig via egen config:
+
+```bash
+python -m src.run_weekly --asof 2026-02-16 --config ./config/config_graham.yaml --steps valuation,decision
+```
+
 ## Import-manifest (forventet innhold fra Børsdata)
 - `src/`
 - `tools/`
