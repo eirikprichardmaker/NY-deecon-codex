@@ -1,0 +1,8 @@
+report_sources_csv: report_sources.csv
+canonical_schema: canonical_schema.yaml
+mapping_default: mappings/esef_ifrs_default.yaml
+mapping_overrides_dir: mappings/company_overrides
+tolerance_balance: 0.02
+tolerance_cashflow: 0.08
+timeout_sec: 45
+user_agent: nordic-financials-agent/1.0 (+local)

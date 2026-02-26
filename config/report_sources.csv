@@ -1,0 +1,2 @@
+company_id,ticker,year,report_url,source_type
+SAMPLE_CO,SAMPLE,2024,https://example.com/sample-esef-report.zip,esef
