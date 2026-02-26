@@ -1,0 +1,4 @@
+company_id,period_end,period_type,source_doc_id,field_id,value,currency
+CO1,2024-12-31,annual,doc_old,revenue_total,100,EUR
+CO1,2024-12-31,annual,doc_new,revenue_total,110,EUR
+CO1,2024-12-31,annual,doc_new,total_assets,500,EUR
