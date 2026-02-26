@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import logging
 import re
@@ -51,7 +52,15 @@ LONG_COLUMNS = [
     "confidence",
     "raw_tag",
     "raw_label",
+    "period_type",
+    "original_value",
+    "original_unit",
+    "normalized_value",
+    "normalized_unit",
 ]
+
+ARELLE_VALIDATION_COLUMNS = ["severity", "code", "message", "location", "source_doc_id"]
+SOURCE_PRIORITY = {"esef_zip": 3, "esef": 2, "esef_xhtml": 2, "pdf": 1}
 
 
 @dataclass
@@ -225,9 +234,90 @@ def _parse_esef_file(path: Path) -> list[dict[str, Any]]:
     return _extract_ixbrl_facts_from_text(text)
 
 
-def parse_reports(docs_df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict[str, Any]]]:
+def _infer_currency_from_unit(unit: Any) -> str:
+    token = str(unit or "").upper()
+    for code in ("EUR", "USD", "NOK", "SEK", "DKK", "ISK", "GBP"):
+        if code in token:
+            return code
+    return ""
+
+
+def _arelle_available() -> bool:
+    return importlib.util.find_spec("arelle") is not None
+
+
+def parse_esef_with_arelle(file_path: Path, source_doc_id: str, validate: bool = False) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if not _arelle_available():
+        raise RuntimeError("Arelle dependency is not installed. Install `arelle` or run with --arelle-mode off.")
+
+    if file_path.suffix.lower() in {".json", ".jsonl"}:
+        payload = json.loads(file_path.read_text(encoding="utf-8"))
+        facts = payload.get("facts", payload if isinstance(payload, list) else [])
+        validation = payload.get("validation", [])
+        return facts, validation
+
+    from arelle import Cntlr, FileSource, ModelDocument, ModelManager, ValidateXbrl
+
+    cntlr = Cntlr.Cntlr(logFileName=None)
+    model_manager = ModelManager.initialize(cntlr)
+    model_manager.validateDisclosureSystem = True
+    file_source = FileSource.openFileSource(str(file_path), cntlr)
+    model_xbrl = model_manager.load(file_source, "loading")
+    if model_xbrl is None:
+        raise RuntimeError(f"Arelle failed to load source {file_path}")
+
+    if getattr(model_xbrl.modelDocument, "type", None) == ModelDocument.Type.INLINEXBRLDOCUMENTSET:
+        model_xbrl.createContexts = True
+
+    facts_out: list[dict[str, Any]] = []
+    for fact in model_xbrl.factsInInstance:
+        context = getattr(fact, "context", None)
+        unit = getattr(fact, "unit", None)
+        measures = [str(m) for side in getattr(unit, "measures", ()) for m in side] if unit is not None else []
+        period_end = getattr(context, "endDatetime", None) if context else None
+        instant = getattr(context, "instantDatetime", None) if context else None
+        dims = {}
+        if context is not None:
+            for dim_qn, mem in context.qnameDims.items():
+                dims[str(dim_qn)] = str(getattr(mem, "memberQname", mem))
+        unit_str = "*".join(measures)
+        facts_out.append(
+            {
+                "concept": str(getattr(fact, "qname", "")),
+                "value": pd.to_numeric(getattr(fact, "value", np.nan), errors="coerce"),
+                "decimals": getattr(fact, "decimals", None),
+                "unit": unit_str,
+                "currency": _infer_currency_from_unit(unit_str),
+                "context_ref": getattr(fact, "contextID", None),
+                "period_end": (period_end or instant).date().isoformat() if (period_end or instant) else None,
+                "entity": str(getattr(context, "entityIdentifier", (None, ""))[1]) if context else "",
+                "dimensions": json.dumps(dims, ensure_ascii=False),
+                "raw_label": str(getattr(fact, "qname", "")).split(":")[-1],
+                "source_doc_id": source_doc_id,
+            }
+        )
+
+    validation_rows: list[dict[str, Any]] = []
+    if validate:
+        ValidateXbrl.ValidateXbrl(model_xbrl).validate(model_xbrl)
+        for entry in getattr(model_xbrl, "errors", []):
+            validation_rows.append(
+                {
+                    "severity": "error",
+                    "code": "ARELLE_VALIDATION",
+                    "message": str(entry),
+                    "location": str(file_path),
+                    "source_doc_id": source_doc_id,
+                }
+            )
+    model_xbrl.close()
+    return facts_out, validation_rows
+
+
+def parse_reports(docs_df: pd.DataFrame, arelle_mode: str = "off") -> tuple[pd.DataFrame, list[dict[str, Any]], pd.DataFrame]:
     all_facts: list[dict[str, Any]] = []
     issues: list[dict[str, Any]] = []
+    arelle_validation_rows: list[dict[str, Any]] = []
 
     for row in docs_df.itertuples(index=False):
         if row.status not in {"downloaded", "cached"}:
@@ -238,7 +328,11 @@ def parse_reports(docs_df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict[str, A
         parsed: list[dict[str, Any]] = []
         if source_type == "esef":
             try:
-                parsed = _parse_esef_file(file_path)
+                if arelle_mode in {"parse", "parse_validate"}:
+                    parsed, val_rows = parse_esef_with_arelle(file_path, source_doc_id=row.doc_id, validate=arelle_mode == "parse_validate")
+                    arelle_validation_rows.extend(val_rows)
+                else:
+                    parsed = _parse_esef_file(file_path)
             except Exception as exc:
                 issues.append({"severity": "error", "issue_type": "parse_failed", "doc_id": row.doc_id, "details": str(exc)})
         elif source_type == "pdf":
@@ -264,10 +358,10 @@ def parse_reports(docs_df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict[str, A
                     "value": fact.get("value"),
                     "decimals": fact.get("decimals"),
                     "unit": fact.get("unit"),
-                    "currency": "",
+                    "currency": fact.get("currency") or _infer_currency_from_unit(fact.get("unit")),
                     "context_ref": fact.get("context_ref"),
-                    "entity": row.company_id,
-                    "dimensions": "",
+                    "entity": fact.get("entity") or row.company_id,
+                    "dimensions": fact.get("dimensions") or "",
                     "taxonomy_ref": "",
                     "raw_label": fact.get("raw_label"),
                     "source_type": source_type,
@@ -275,8 +369,8 @@ def parse_reports(docs_df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict[str, A
             )
 
     if not all_facts:
-        return pd.DataFrame(columns=RAW_FACT_COLUMNS), issues
-    return pd.DataFrame(all_facts, columns=RAW_FACT_COLUMNS), issues
+        return pd.DataFrame(columns=RAW_FACT_COLUMNS), issues, pd.DataFrame(columns=ARELLE_VALIDATION_COLUMNS)
+    return pd.DataFrame(all_facts, columns=RAW_FACT_COLUMNS), issues, pd.DataFrame(arelle_validation_rows, columns=ARELLE_VALIDATION_COLUMNS)
 
 
 def _load_mapping(path: Path) -> pd.DataFrame:
@@ -352,6 +446,11 @@ def map_to_canonical(facts: pd.DataFrame, cfg: AgentConfig) -> tuple[pd.DataFram
                     "confidence": rec.confidence,
                     "raw_tag": rec.concept,
                     "raw_label": rec.raw_label,
+                    "period_type": "annual",
+                    "original_value": rec.value,
+                    "original_unit": "",
+                    "normalized_value": rec.value,
+                    "normalized_unit": "currency" if rec.currency else "",
                 }
             )
 
@@ -365,6 +464,50 @@ def map_to_canonical(facts: pd.DataFrame, cfg: AgentConfig) -> tuple[pd.DataFram
     out["statement"] = out["statement_schema"].fillna(out["statement"])
     out = out.drop(columns=["statement_schema"])
     return out[LONG_COLUMNS], issues
+
+
+def resolve_conflicting_filings(long_df: pd.DataFrame, docs_df: pd.DataFrame, cfg: AgentConfig) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if long_df.empty:
+        empty = pd.DataFrame(columns=["company_id", "period_end", "doc_id_winner", "doc_ids_all", "reasons", "stats"])
+        return empty, long_df
+
+    schema = yaml.safe_load(cfg.canonical_schema.read_text(encoding="utf-8")) or {}
+    required_core = {f.get("field_id") for f in schema.get("fields", []) if f.get("required_core")}
+
+    docs = docs_df.copy()
+    if "filing_datetime" not in docs.columns:
+        docs["filing_datetime"] = pd.NaT
+    docs["filing_datetime"] = pd.to_datetime(docs["filing_datetime"], errors="coerce")
+    if "year" in docs.columns:
+        fallback = pd.to_datetime(docs["year"].astype("Int64").astype(str) + "-12-31", errors="coerce")
+        docs["filing_datetime"] = docs["filing_datetime"].fillna(fallback)
+    docs["source_priority"] = docs["source_type"].map(lambda x: SOURCE_PRIORITY.get(str(x).lower(), 0))
+
+    base = long_df.merge(docs[["doc_id", "filing_datetime", "source_priority"]], left_on="source_doc_id", right_on="doc_id", how="left")
+    base["required_core_present"] = base["field_id"].isin(required_core).astype(int)
+
+    stats = base.groupby(["company_id", "period_end", "period_type", "source_doc_id"], dropna=False).agg(
+        source_priority=("source_priority", "max"),
+        filing_datetime=("filing_datetime", "max"),
+        required_core_present=("required_core_present", "sum"),
+    ).reset_index()
+
+    winners = stats.sort_values(["source_priority", "filing_datetime", "required_core_present"], ascending=[False, False, False]).groupby(["company_id", "period_end", "period_type"], as_index=False).head(1)
+    winners = winners.rename(columns={"source_doc_id": "doc_id_winner"})
+
+    doc_lists = stats.groupby(["company_id", "period_end", "period_type"], dropna=False)["source_doc_id"].apply(list).rename("doc_ids_all").reset_index()
+    resolution = winners.merge(doc_lists, on=["company_id", "period_end", "period_type"], how="left")
+    resolution["reasons"] = "priority>filing_datetime>required_core_present"
+    resolution["stats"] = resolution[["source_priority", "required_core_present"]].astype(str).agg("|".join, axis=1)
+
+    winner_long = long_df.merge(
+        resolution[["company_id", "period_end", "period_type", "doc_id_winner"]],
+        on=["company_id", "period_end", "period_type"],
+        how="left",
+    )
+    winner_long = winner_long[winner_long["source_doc_id"] == winner_long["doc_id_winner"]].drop(columns=["doc_id_winner"])
+
+    return resolution[["company_id", "period_end", "doc_id_winner", "doc_ids_all", "reasons", "stats"]], winner_long
 
 
 def build_wide(long_df: pd.DataFrame) -> pd.DataFrame:
@@ -441,6 +584,55 @@ def validate_financials(long_df: pd.DataFrame, wide_df: pd.DataFrame, cfg: Agent
             }
         )
 
+    currency_series = long_df.get("currency", pd.Series(["" for _ in range(len(long_df))]))
+    monetary_fields = set(long_df[currency_series.astype(str) != ""]["field_id"].dropna().unique())
+    group_cols = ["company_id", "period_end"] + (["source_doc_id"] if "source_doc_id" in long_df.columns else [])
+    for key, part in long_df.groupby(group_cols, dropna=False):
+        if not isinstance(key, tuple):
+            key = (key,)
+        company_id = key[0] if len(key) > 0 else None
+        period_end = key[1] if len(key) > 1 else None
+        source_doc_id = key[2] if len(key) > 2 else "unknown_doc"
+        inferred = part.get("currency", pd.Series(["" for _ in range(len(part))])).fillna("").astype(str).tolist()
+        inferred += [_infer_currency_from_unit(u) for u in part.get("unit", pd.Series(["" for _ in range(len(part))])).tolist()]
+        currencies = sorted({c for c in inferred if c})
+        if len(currencies) > 1:
+            issues.append(
+                {
+                    "severity": "warning",
+                    "issue_type": "mixed_currencies",
+                    "company_id": company_id,
+                    "period_end": period_end,
+                    "field_id": None,
+                    "details": f"{source_doc_id}: {currencies}",
+                }
+            )
+
+    for rec in long_df.itertuples(index=False):
+        if rec.field_id in monetary_fields and not str(getattr(rec, "currency", "") or ""):
+            issues.append(
+                {
+                    "severity": "warning",
+                    "issue_type": "missing_currency",
+                    "company_id": rec.company_id,
+                    "period_end": rec.period_end,
+                    "field_id": rec.field_id,
+                    "details": rec.source_doc_id,
+                }
+            )
+
+        if "share" in str(getattr(rec, "unit", "")).lower() and str(getattr(rec, "normalized_unit", "")) == "currency":
+            issues.append(
+                {
+                    "severity": "warning",
+                    "issue_type": "inconsistent_units",
+                    "company_id": rec.company_id,
+                    "period_end": rec.period_end,
+                    "field_id": rec.field_id,
+                    "details": rec.source_doc_id,
+                }
+            )
+
     return pd.DataFrame(issues)
 
 
@@ -451,16 +643,25 @@ def export_outputs(
     long_df: pd.DataFrame,
     wide_df: pd.DataFrame,
     issues_df: pd.DataFrame,
+    filing_resolution_df: pd.DataFrame | None = None,
+    arelle_validation_df: pd.DataFrame | None = None,
 ) -> dict[str, str]:
     processed_dir.mkdir(parents=True, exist_ok=True)
     exports_dir.mkdir(parents=True, exist_ok=True)
     long_path = processed_dir / "financials_long.parquet"
     wide_path = processed_dir / "financials_wide.parquet"
     issues_path = processed_dir / "issues.parquet"
+    resolution_path = processed_dir / "filing_resolution.parquet"
+    arelle_validation_path = processed_dir / "arelle_validation.parquet"
+
+    filing_resolution_df = filing_resolution_df if filing_resolution_df is not None else pd.DataFrame(columns=["company_id", "period_end", "doc_id_winner", "doc_ids_all", "reasons", "stats"])
+    arelle_validation_df = arelle_validation_df if arelle_validation_df is not None else pd.DataFrame(columns=ARELLE_VALIDATION_COLUMNS)
 
     long_df.to_parquet(long_path, index=False)
     wide_df.to_parquet(wide_path, index=False)
     issues_df.to_parquet(issues_path, index=False)
+    filing_resolution_df.to_parquet(resolution_path, index=False)
+    arelle_validation_df.to_parquet(arelle_validation_path, index=False)
 
     xlsx_path = exports_dir / "financials.xlsx"
     with pd.ExcelWriter(xlsx_path, engine="openpyxl") as writer:
@@ -472,6 +673,8 @@ def export_outputs(
         "financials_long": str(long_path),
         "financials_wide": str(wide_path),
         "issues": str(issues_path),
+        "filing_resolution": str(resolution_path),
+        "arelle_validation": str(arelle_validation_path),
         "xlsx": str(xlsx_path),
     }
 
@@ -530,6 +733,8 @@ def run_pipeline(args: argparse.Namespace) -> None:
     facts_df = pd.DataFrame(columns=RAW_FACT_COLUMNS)
     long_df = pd.DataFrame(columns=LONG_COLUMNS)
     wide_df = pd.DataFrame()
+    filing_resolution_df = pd.DataFrame(columns=["company_id", "period_end", "doc_id_winner", "doc_ids_all", "reasons", "stats"])
+    arelle_validation_df = pd.DataFrame(columns=ARELLE_VALIDATION_COLUMNS)
     issues_df = pd.DataFrame(columns=["severity", "issue_type", "company_id", "period_end", "field_id", "details"])
 
     issue_rows: list[dict[str, Any]] = []
@@ -542,7 +747,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
         docs_df = pd.read_parquet(index_path) if index_path.exists() else pd.DataFrame()
 
     if "parse" in selected_steps and not docs_df.empty:
-        facts_df, i = parse_reports(docs_df)
+        facts_df, i, arelle_validation_df = parse_reports(docs_df, arelle_mode=args.arelle_mode)
         issue_rows.extend(i)
         raw_facts_path = processed_dir / "raw_facts.parquet"
         raw_facts_path.parent.mkdir(parents=True, exist_ok=True)
@@ -551,7 +756,8 @@ def run_pipeline(args: argparse.Namespace) -> None:
     if "map" in selected_steps:
         long_df, i = map_to_canonical(facts_df, cfg)
         issue_rows.extend(i)
-        wide_df = build_wide(long_df)
+        filing_resolution_df, winner_long_df = resolve_conflicting_filings(long_df, docs_df, cfg)
+        wide_df = build_wide(winner_long_df)
 
     if "validate" in selected_steps:
         val_issues = validate_financials(long_df, wide_df, cfg)
@@ -562,7 +768,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
 
     outputs: dict[str, str] = {}
     if "export" in selected_steps:
-        outputs = export_outputs(asof, processed_dir, exports_dir, long_df, wide_df, issues_df)
+        outputs = export_outputs(asof, processed_dir, exports_dir, long_df, wide_df, issues_df, filing_resolution_df=filing_resolution_df, arelle_validation_df=arelle_validation_df)
 
     manifest_path = write_manifest(asof, processed_dir, docs_df, facts_df, long_df, wide_df, issues_df, outputs, started)
     LOGGER.info("Run complete. Manifest: %s", manifest_path)
@@ -581,4 +787,5 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-companies", type=int, default=None, help="Limit number of companies for development runs")
     parser.add_argument("--dry-run", action="store_true", help="Do not download files")
     parser.add_argument("--force", action="store_true", help="Force re-download and overwrite existing raw files")
+    parser.add_argument("--arelle-mode", default="off", choices=["off", "parse", "parse_validate"], help="Arelle strict mode: off, parse, parse_validate")
     return parser

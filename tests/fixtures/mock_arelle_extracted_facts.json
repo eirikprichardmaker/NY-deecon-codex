@@ -1,0 +1,25 @@
+{
+  "facts": [
+    {
+      "concept": "ifrs-full:Revenue",
+      "value": 1234.0,
+      "decimals": "0",
+      "unit": "iso4217:NOK",
+      "currency": "NOK",
+      "context_ref": "c1",
+      "period_end": "2024-12-31",
+      "entity": "SAMPLE_CO",
+      "dimensions": "{}",
+      "raw_label": "Revenue"
+    }
+  ],
+  "validation": [
+    {
+      "severity": "warning",
+      "code": "mock-code",
+      "message": "mock warning",
+      "location": "report.xhtml",
+      "source_doc_id": "doc1"
+    }
+  ]
+}
