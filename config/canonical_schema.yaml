@@ -2,1078 +2,1347 @@ version: 1
 name: nordic_canonical_schema_v1
 scope: ESEF iXBRL normalization for Nordic listed issuers (NO/SE/DK/FI)
 fields:
-  - field_id: period_end
-    label: Period end date
-    statement: NOTE
-    required_core: true
-    sector: all
-    preferred_unit: ratio
-    sign_convention: not_applicable
-    description: Reporting period end date normalized as YYYY-MM-DD.
-    synonyms: [End of reporting period, Date of financial statements]
-    priority: 1
-  - field_id: fiscal_year
-    label: Fiscal year
-    statement: NOTE
-    required_core: true
-    sector: all
-    preferred_unit: ratio
-    sign_convention: not_applicable
-    description: Fiscal year identifier tied to the reported period.
-    synonyms: [Fiscal year, Reporting year]
-    priority: 2
-  - field_id: reporting_period_type
-    label: Reporting period type
-    statement: NOTE
-    required_core: true
-    sector: all
-    preferred_unit: ratio
-    sign_convention: not_applicable
-    description: Period classification such as FY, H1, Q1, Q3.
-    synonyms: [Type of period, Interim or annual period]
-    priority: 2
-  - field_id: reporting_currency
-    label: Reporting currency
-    statement: NOTE
-    required_core: true
-    sector: all
-    preferred_unit: ratio
-    sign_convention: not_applicable
-    description: ISO currency code of reported facts before conversion.
-    synonyms: [Presentation currency, Functional currency]
-    priority: 1
-  - field_id: shares_outstanding_basic
-    label: Weighted average shares basic
-    statement: SHARES
-    required_core: true
-    sector: all
-    preferred_unit: shares
-    sign_convention: positive
-    description: Weighted average number of ordinary shares outstanding basic.
-    synonyms: [Weighted average number of shares outstanding basic, Basic shares]
-    priority: 1
-  - field_id: shares_outstanding_diluted
-    label: Weighted average shares diluted
-    statement: SHARES
-    required_core: true
-    sector: all
-    preferred_unit: shares
-    sign_convention: positive
-    description: Weighted average number of shares outstanding diluted.
-    synonyms: [Weighted average number of diluted shares, Diluted shares]
-    priority: 2
-  - field_id: treasury_shares
-    label: Treasury shares
-    statement: SHARES
-    required_core: false
-    sector: all
-    preferred_unit: shares
-    sign_convention: positive
-    description: Number of shares repurchased and held in treasury.
-    synonyms: [Treasury shares held, Own shares held]
-    priority: 3
-  - field_id: dividends_paid_total
-    label: Dividends paid
-    statement: CF
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: negative
-    description: Cash outflow related to dividends paid to equity holders.
-    synonyms: [Dividends paid, Dividends paid classified as financing activities]
-    priority: 1
-  - field_id: share_buybacks_paid
-    label: Share buybacks paid
-    statement: CF
-    required_core: false
-    sector: all
-    preferred_unit: currency
-    sign_convention: negative
-    description: Cash used for repurchase of own shares.
-    synonyms: [Purchase of treasury shares, Repurchase of own shares]
-    priority: 2
-
-  - field_id: revenue_total
-    label: Revenue
-    statement: IS
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Total revenue from contracts with customers and similar sales.
-    synonyms: [Revenue, Sales revenue, Revenue from contracts with customers]
-    priority: 1
-  - field_id: revenue_goods
-    label: Revenue from goods
-    statement: IS
-    required_core: false
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Revenue component from sale of goods.
-    synonyms: [Sale of goods, Revenue from sale of goods]
-    priority: 4
-  - field_id: revenue_services
-    label: Revenue from services
-    statement: IS
-    required_core: false
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Revenue component from rendering services.
-    synonyms: [Rendering of services revenue, Service revenue]
-    priority: 4
-  - field_id: cost_of_goods_sold
-    label: Cost of goods sold
-    statement: IS
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: negative
-    description: Cost directly attributable to goods and services sold.
-    synonyms: [Cost of sales, Cost of goods sold]
-    priority: 1
-  - field_id: gross_profit
-    label: Gross profit
-    statement: IS
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Revenue less cost of goods sold.
-    synonyms: [Gross profit, Gross margin amount]
-    priority: 1
-  - field_id: sga_expense
-    label: Selling general and administrative expense
-    statement: IS
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: negative
-    description: Combined sales, marketing, and administrative operating expenses.
-    synonyms: [Administrative expenses, Selling expenses, SG&A]
-    priority: 2
-  - field_id: rd_expense
-    label: Research and development expense
-    statement: IS
-    required_core: false
-    sector: all
-    preferred_unit: currency
-    sign_convention: negative
-    description: Expensed research and development costs recognized in P&L.
-    synonyms: [Research and development expenses, R&D expense]
-    priority: 3
-  - field_id: depreciation_expense
-    label: Depreciation expense
-    statement: IS
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: negative
-    description: Depreciation of property plant and equipment.
-    synonyms: [Depreciation, Depreciation expense]
-    priority: 2
-  - field_id: amortization_expense
-    label: Amortization expense
-    statement: IS
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: negative
-    description: Amortization of intangible assets.
-    synonyms: [Amortisation, Amortization expense]
-    priority: 2
-  - field_id: impairment_expense
-    label: Impairment expense
-    statement: IS
-    required_core: false
-    sector: all
-    preferred_unit: currency
-    sign_convention: negative
-    description: Impairment losses recognized for non-financial assets.
-    synonyms: [Impairment loss, Impairment charges]
-    priority: 3
-  - field_id: operating_income_ebit
-    label: Operating profit EBIT
-    statement: IS
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Earnings before net finance income/expense and tax.
-    synonyms: [Operating profit, EBIT]
-    priority: 1
-  - field_id: ebitda
-    label: EBITDA
-    statement: IS
-    required_core: false
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Operating earnings before depreciation and amortization.
-    synonyms: [EBITDA, Operating profit before depreciation and amortisation]
-    priority: 2
-  - field_id: non_operating_income_expense
-    label: Non-operating income expense
-    statement: IS
-    required_core: false
-    sector: all
-    preferred_unit: currency
-    sign_convention: mixed
-    description: Material non-operating items excluding finance costs.
-    synonyms: [Other gains losses, Non-operating result]
-    priority: 4
-  - field_id: finance_income
-    label: Finance income
-    statement: IS
-    required_core: false
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Interest and other finance income recognized in P&L.
-    synonyms: [Financial income, Interest income]
-    priority: 3
-  - field_id: finance_costs
-    label: Finance costs
-    statement: IS
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: negative
-    description: Interest and other finance costs recognized in P&L.
-    synonyms: [Finance costs, Interest expense]
-    priority: 1
-  - field_id: net_finance_income_expense
-    label: Net finance income expense
-    statement: IS
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: mixed
-    description: Net financial result after finance income and finance costs.
-    synonyms: [Net financial items, Finance income expense net]
-    priority: 1
-  - field_id: profit_before_tax
-    label: Profit before tax
-    statement: IS
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Profit before income tax expense.
-    synonyms: [Profit loss before tax, Earnings before tax]
-    priority: 1
-  - field_id: income_tax_expense
-    label: Income tax expense
-    statement: IS
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: negative
-    description: Total current and deferred income tax expense.
-    synonyms: [Income tax expense, Tax expense]
-    priority: 1
-  - field_id: net_income
-    label: Net income
-    statement: IS
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Profit for the period attributable to owners and non-controlling interests.
-    synonyms: [Profit loss, Net profit]
-    priority: 1
-  - field_id: net_income_attributable_to_parent
-    label: Net income attributable to parent
-    statement: IS
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Profit attributable to owners of the parent.
-    synonyms: [Profit attributable to owners of parent, Net income attributable to shareholders]
-    priority: 1
-  - field_id: minority_interest_income
-    label: Non-controlling interests profit
-    statement: IS
-    required_core: false
-    sector: all
-    preferred_unit: currency
-    sign_convention: mixed
-    description: Portion of profit attributable to non-controlling interests.
-    synonyms: [Profit attributable to non-controlling interests]
-    priority: 4
-
-  - field_id: cash_and_cash_equivalents
-    label: Cash and cash equivalents
-    statement: BS
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Cash and highly liquid short-term investments.
-    synonyms: [Cash and cash equivalents, Cash]
-    priority: 1
-  - field_id: short_term_investments
-    label: Short-term investments
-    statement: BS
-    required_core: false
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Marketable securities and short-term financial assets.
-    synonyms: [Current financial assets, Short-term investments]
-    priority: 3
-  - field_id: accounts_receivable
-    label: Trade and other receivables
-    statement: BS
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Trade receivables and other receivables due within one year.
-    synonyms: [Trade receivables, Accounts receivable]
-    priority: 2
-  - field_id: inventory
-    label: Inventories
-    statement: BS
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Inventories measured under IAS 2.
-    synonyms: [Inventories, Inventory]
-    priority: 2
-  - field_id: other_current_assets
-    label: Other current assets
-    statement: BS
-    required_core: false
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Other current assets not separately identified.
-    synonyms: [Other current assets]
-    priority: 4
-  - field_id: property_plant_equipment
-    label: Property plant and equipment
-    statement: BS
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Net carrying amount of PP&E.
-    synonyms: [Property plant and equipment, PPE]
-    priority: 1
-  - field_id: right_of_use_assets
-    label: Right-of-use assets
-    statement: BS
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Right-of-use assets recognized under IFRS 16.
-    synonyms: [Right-of-use assets, Leased assets]
-    priority: 1
-  - field_id: intangible_assets
-    label: Intangible assets excluding goodwill
-    statement: BS
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Intangible assets excluding goodwill.
-    synonyms: [Intangible assets other than goodwill, Intangibles]
-    priority: 2
-  - field_id: goodwill
-    label: Goodwill
-    statement: BS
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Goodwill recognized in business combinations.
-    synonyms: [Goodwill]
-    priority: 2
-  - field_id: investments_in_associates
-    label: Investments in associates and joint ventures
-    statement: BS
-    required_core: false
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Equity-accounted investments in associates and JVs.
-    synonyms: [Investments accounted for using equity method]
-    priority: 4
-  - field_id: deferred_tax_assets
-    label: Deferred tax assets
-    statement: BS
-    required_core: false
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Deferred tax assets under IAS 12.
-    synonyms: [Deferred tax assets]
-    priority: 4
-  - field_id: total_assets
-    label: Total assets
-    statement: BS
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Total assets at period end.
-    synonyms: [Assets, Total assets]
-    priority: 1
-  - field_id: accounts_payable
-    label: Trade and other payables
-    statement: BS
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Trade and other payables due within one year.
-    synonyms: [Trade payables, Accounts payable]
-    priority: 2
-  - field_id: short_term_debt
-    label: Short-term interest-bearing debt
-    statement: DEBT
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Current portion of interest-bearing borrowings.
-    synonyms: [Short-term borrowings, Current borrowings]
-    priority: 1
-  - field_id: long_term_debt
-    label: Long-term interest-bearing debt
-    statement: DEBT
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Non-current interest-bearing borrowings.
-    synonyms: [Long-term borrowings, Non-current borrowings]
-    priority: 1
-  - field_id: lease_liabilities_current
-    label: Current lease liabilities
-    statement: DEBT
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Current lease liabilities recognized under IFRS 16.
-    synonyms: [Current lease liabilities]
-    priority: 1
-  - field_id: lease_liabilities_noncurrent
-    label: Non-current lease liabilities
-    statement: DEBT
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Non-current lease liabilities recognized under IFRS 16.
-    synonyms: [Non-current lease liabilities]
-    priority: 1
-  - field_id: pension_liabilities
-    label: Pension and post-employment liabilities
-    statement: BS
-    required_core: false
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Defined benefit obligations and similar long-term employee liabilities.
-    synonyms: [Employee benefit liabilities, Pension obligations]
-    priority: 4
-  - field_id: deferred_tax_liabilities
-    label: Deferred tax liabilities
-    statement: BS
-    required_core: false
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Deferred tax liabilities under IAS 12.
-    synonyms: [Deferred tax liabilities]
-    priority: 4
-  - field_id: provisions
-    label: Provisions
-    statement: BS
-    required_core: false
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Provisions recognized under IAS 37.
-    synonyms: [Provisions]
-    priority: 4
-  - field_id: other_liabilities
-    label: Other liabilities
-    statement: BS
-    required_core: false
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Remaining liabilities not separately mapped.
-    synonyms: [Other liabilities]
-    priority: 5
-  - field_id: total_liabilities
-    label: Total liabilities
-    statement: BS
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Total liabilities at period end.
-    synonyms: [Liabilities, Total liabilities]
-    priority: 1
-  - field_id: total_equity
-    label: Total equity
-    statement: BS
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Total equity including non-controlling interests.
-    synonyms: [Equity, Total equity]
-    priority: 1
-  - field_id: equity_attributable_to_parent
-    label: Equity attributable to parent
-    statement: BS
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Equity attributable to owners of the parent.
-    synonyms: [Equity attributable to owners of parent]
-    priority: 1
-
-  - field_id: cfo_before_interest_tax
-    label: Cash flow from operations before interest and taxes
-    statement: CF
-    required_core: false
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Operating cash flow before cash interest and income taxes.
-    synonyms: [Cash generated from operations before tax and interest]
-    priority: 3
-  - field_id: cash_flow_from_operations
-    label: Cash flow from operations
-    statement: CF
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Net cash flow from operating activities.
-    synonyms: [Net cash from operating activities, Operating cash flow]
-    priority: 1
-  - field_id: interest_paid_cash
-    label: Interest paid cash
-    statement: CF
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: negative
-    description: Cash interest paid in period.
-    synonyms: [Interest paid, Cash paid for interest]
-    priority: 2
-  - field_id: income_taxes_paid_cash
-    label: Income taxes paid cash
-    statement: CF
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: negative
-    description: Cash paid for income taxes.
-    synonyms: [Income taxes paid, Cash paid for income taxes]
-    priority: 2
-  - field_id: capex_purchase_ppe
-    label: Capital expenditure PPE
-    statement: CF
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: negative
-    description: Purchase of property plant and equipment.
-    synonyms: [Purchase of property plant and equipment, Capital expenditure]
-    priority: 1
-  - field_id: capex_purchase_intangibles
-    label: Capital expenditure intangibles
-    statement: CF
-    required_core: false
-    sector: all
-    preferred_unit: currency
-    sign_convention: negative
-    description: Purchase of intangible assets.
-    synonyms: [Purchase of intangible assets]
-    priority: 3
-  - field_id: acquisitions_cash_paid
-    label: Acquisitions cash paid
-    statement: CF
-    required_core: false
-    sector: all
-    preferred_unit: currency
-    sign_convention: negative
-    description: Cash consideration paid for acquisitions net of cash acquired.
-    synonyms: [Acquisition of subsidiaries net of cash acquired]
-    priority: 3
-  - field_id: disposals_cash_received
-    label: Disposals cash received
-    statement: CF
-    required_core: false
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Cash proceeds from disposal of subsidiaries or assets.
-    synonyms: [Proceeds from disposals]
-    priority: 4
-  - field_id: cash_flow_from_investing
-    label: Cash flow from investing
-    statement: CF
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: negative
-    description: Net cash flow from investing activities.
-    synonyms: [Net cash from investing activities]
-    priority: 2
-  - field_id: debt_issued_cash_inflow
-    label: Debt issued cash inflow
-    statement: CF
-    required_core: false
-    sector: all
-    preferred_unit: currency
-    sign_convention: positive
-    description: Proceeds from issuance of interest-bearing debt.
-    synonyms: [Proceeds from borrowings]
-    priority: 3
-  - field_id: debt_repaid_cash_outflow
-    label: Debt repaid cash outflow
-    statement: CF
-    required_core: false
-    sector: all
-    preferred_unit: currency
-    sign_convention: negative
-    description: Repayment of interest-bearing debt principal.
-    synonyms: [Repayment of borrowings]
-    priority: 3
-  - field_id: lease_principal_repayments
-    label: Lease principal repayments
-    statement: CF
-    required_core: false
-    sector: all
-    preferred_unit: currency
-    sign_convention: negative
-    description: Principal repayments of lease liabilities.
-    synonyms: [Payments of lease liabilities principal]
-    priority: 3
-  - field_id: cash_flow_from_financing
-    label: Cash flow from financing
-    statement: CF
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: mixed
-    description: Net cash flow from financing activities.
-    synonyms: [Net cash from financing activities]
-    priority: 2
-  - field_id: fx_effect_on_cash
-    label: Effect of exchange rate changes on cash
-    statement: CF
-    required_core: false
-    sector: all
-    preferred_unit: currency
-    sign_convention: mixed
-    description: Foreign exchange impact on cash and cash equivalents.
-    synonyms: [Effect of exchange rate changes on cash]
-    priority: 5
-  - field_id: net_change_in_cash
-    label: Net change in cash
-    statement: CF
-    required_core: true
-    sector: all
-    preferred_unit: currency
-    sign_convention: mixed
-    description: Net increase or decrease in cash and cash equivalents.
-    synonyms: [Net increase decrease in cash and cash equivalents]
-    priority: 2
-
-  - field_id: bank_net_interest_income
-    label: Net interest income
-    statement: IS
-    required_core: true
-    sector: bank
-    preferred_unit: currency
-    sign_convention: positive
-    description: Interest income less interest expense for banking operations.
-    synonyms: [Net interest income]
-    priority: 1
-  - field_id: bank_interest_income
-    label: Gross interest income
-    statement: IS
-    required_core: false
-    sector: bank
-    preferred_unit: currency
-    sign_convention: positive
-    description: Interest income on loans and other financial assets.
-    synonyms: [Interest income calculated using effective interest method]
-    priority: 3
-  - field_id: bank_interest_expense
-    label: Gross interest expense
-    statement: IS
-    required_core: false
-    sector: bank
-    preferred_unit: currency
-    sign_convention: negative
-    description: Interest expense on deposits and debt.
-    synonyms: [Interest expense]
-    priority: 3
-  - field_id: bank_fee_commission_income
-    label: Net fee and commission income
-    statement: IS
-    required_core: true
-    sector: bank
-    preferred_unit: currency
-    sign_convention: positive
-    description: Net fee and commission income from banking services.
-    synonyms: [Fee and commission income net]
-    priority: 2
-  - field_id: bank_trading_income
-    label: Net trading income
-    statement: IS
-    required_core: false
-    sector: bank
-    preferred_unit: currency
-    sign_convention: mixed
-    description: Net gains and losses from trading and fair value activities.
-    synonyms: [Net gains losses on financial instruments held for trading]
-    priority: 3
-  - field_id: bank_other_operating_income
-    label: Other operating income bank
-    statement: IS
-    required_core: false
-    sector: bank
-    preferred_unit: currency
-    sign_convention: mixed
-    description: Other income for banking entities.
-    synonyms: [Other operating income]
-    priority: 4
-  - field_id: bank_operating_expenses
-    label: Operating expenses bank
-    statement: IS
-    required_core: true
-    sector: bank
-    preferred_unit: currency
-    sign_convention: negative
-    description: Operating expenses excluding impairment for banks.
-    synonyms: [Administrative expenses, Operating expenses]
-    priority: 2
-  - field_id: bank_loan_loss_provisions
-    label: Loan loss provisions
-    statement: IS
-    required_core: true
-    sector: bank
-    preferred_unit: currency
-    sign_convention: negative
-    description: Expected credit loss expense on loans and advances.
-    synonyms: [Impairment losses on financial assets, Credit loss expense]
-    priority: 1
-  - field_id: bank_profit_before_tax
-    label: Profit before tax bank
-    statement: IS
-    required_core: true
-    sector: bank
-    preferred_unit: currency
-    sign_convention: positive
-    description: Banking profit before tax.
-    synonyms: [Profit before tax]
-    priority: 1
-  - field_id: bank_net_income
-    label: Net income bank
-    statement: IS
-    required_core: true
-    sector: bank
-    preferred_unit: currency
-    sign_convention: positive
-    description: Net income attributable to banking shareholders.
-    synonyms: [Profit for the year attributable to owners]
-    priority: 1
-  - field_id: bank_total_loans_gross
-    label: Gross loans to customers
-    statement: BS
-    required_core: true
-    sector: bank
-    preferred_unit: currency
-    sign_convention: positive
-    description: Gross carrying amount of loans to customers.
-    synonyms: [Loans and advances to customers gross]
-    priority: 1
-  - field_id: bank_ecl_allowance
-    label: ECL allowance
-    statement: BS
-    required_core: true
-    sector: bank
-    preferred_unit: currency
-    sign_convention: positive
-    description: Loss allowance for expected credit losses.
-    synonyms: [Loss allowance for expected credit losses]
-    priority: 1
-  - field_id: bank_total_loans_net
-    label: Net loans to customers
-    statement: BS
-    required_core: true
-    sector: bank
-    preferred_unit: currency
-    sign_convention: positive
-    description: Loans to customers net of impairment allowances.
-    synonyms: [Loans and advances to customers]
-    priority: 1
-  - field_id: bank_customer_deposits
-    label: Customer deposits
-    statement: BS
-    required_core: true
-    sector: bank
-    preferred_unit: currency
-    sign_convention: positive
-    description: Deposits from customers.
-    synonyms: [Deposits from customers]
-    priority: 1
-  - field_id: bank_total_assets
-    label: Total assets bank
-    statement: BS
-    required_core: true
-    sector: bank
-    preferred_unit: currency
-    sign_convention: positive
-    description: Total assets for banking entities.
-    synonyms: [Assets]
-    priority: 1
-  - field_id: bank_total_equity
-    label: Total equity bank
-    statement: BS
-    required_core: true
-    sector: bank
-    preferred_unit: currency
-    sign_convention: positive
-    description: Total equity for banking entities.
-    synonyms: [Equity]
-    priority: 1
-  - field_id: bank_rwa
-    label: Risk weighted assets
-    statement: NOTE
-    required_core: true
-    sector: bank
-    preferred_unit: currency
-    sign_convention: positive
-    description: Regulatory risk weighted assets.
-    synonyms: [Risk weighted exposure amount, RWA]
-    priority: 1
-  - field_id: bank_cet1_capital
-    label: CET1 capital
-    statement: NOTE
-    required_core: true
-    sector: bank
-    preferred_unit: currency
-    sign_convention: positive
-    description: Common equity tier 1 capital amount.
-    synonyms: [Common equity tier 1 capital]
-    priority: 1
-  - field_id: bank_cet1_ratio
-    label: CET1 ratio
-    statement: NOTE
-    required_core: true
-    sector: bank
-    preferred_unit: percent
-    sign_convention: positive
-    description: CET1 capital ratio.
-    synonyms: [CET1 ratio, Common equity tier 1 ratio]
-    priority: 1
-  - field_id: bank_liquidity_coverage_ratio
-    label: Liquidity coverage ratio
-    statement: NOTE
-    required_core: false
-    sector: bank
-    preferred_unit: percent
-    sign_convention: positive
-    description: Basel liquidity coverage ratio.
-    synonyms: [Liquidity coverage ratio, LCR]
-    priority: 4
-  - field_id: bank_npl_ratio
-    label: Non-performing loan ratio
-    statement: NOTE
-    required_core: false
-    sector: bank
-    preferred_unit: percent
-    sign_convention: negative
-    description: Non-performing loans over gross loans.
-    synonyms: [Non-performing exposure ratio, NPL ratio]
-    priority: 3
-
-  - field_id: ins_gross_written_premiums
-    label: Gross written premiums
-    statement: IS
-    required_core: true
-    sector: insurance
-    preferred_unit: currency
-    sign_convention: positive
-    description: Gross written premiums for insurance contracts.
-    synonyms: [Gross written premiums]
-    priority: 1
-  - field_id: ins_earned_premiums
-    label: Earned premiums
-    statement: IS
-    required_core: true
-    sector: insurance
-    preferred_unit: currency
-    sign_convention: positive
-    description: Insurance revenue or earned premiums for the period.
-    synonyms: [Insurance revenue, Earned premiums]
-    priority: 1
-  - field_id: ins_reinsurance_result
-    label: Reinsurance result
-    statement: IS
-    required_core: false
-    sector: insurance
-    preferred_unit: currency
-    sign_convention: mixed
-    description: Net result from reinsurance held and ceded.
-    synonyms: [Result from reinsurance contracts held]
-    priority: 3
-  - field_id: ins_claims_incurred
-    label: Claims incurred
-    statement: IS
-    required_core: true
-    sector: insurance
-    preferred_unit: currency
-    sign_convention: negative
-    description: Claims and benefits incurred during the period.
-    synonyms: [Insurance service expenses claims incurred]
-    priority: 1
-  - field_id: ins_acquisition_costs
-    label: Insurance acquisition costs
-    statement: IS
-    required_core: false
-    sector: insurance
-    preferred_unit: currency
-    sign_convention: negative
-    description: Insurance acquisition cash flows and amortization in P&L.
-    synonyms: [Insurance acquisition expenses]
-    priority: 3
-  - field_id: ins_operating_expenses
-    label: Insurance operating expenses
-    statement: IS
-    required_core: true
-    sector: insurance
-    preferred_unit: currency
-    sign_convention: negative
-    description: Administrative and operating costs for insurance entities.
-    synonyms: [Insurance administrative expenses, Operating expenses]
-    priority: 2
-  - field_id: ins_underwriting_result
-    label: Underwriting technical result
-    statement: IS
-    required_core: true
-    sector: insurance
-    preferred_unit: currency
-    sign_convention: positive
-    description: Technical underwriting result before investment return.
-    synonyms: [Insurance service result, Technical result]
-    priority: 1
-  - field_id: ins_investment_result
-    label: Investment result insurance
-    statement: IS
-    required_core: true
-    sector: insurance
-    preferred_unit: currency
-    sign_convention: mixed
-    description: Investment income and fair value impacts in insurers.
-    synonyms: [Net investment income]
-    priority: 2
-  - field_id: ins_profit_before_tax
-    label: Profit before tax insurance
-    statement: IS
-    required_core: true
-    sector: insurance
-    preferred_unit: currency
-    sign_convention: positive
-    description: Insurance entity profit before tax.
-    synonyms: [Profit before tax]
-    priority: 1
-  - field_id: ins_net_income
-    label: Net income insurance
-    statement: IS
-    required_core: true
-    sector: insurance
-    preferred_unit: currency
-    sign_convention: positive
-    description: Net income attributable to insurance shareholders.
-    synonyms: [Profit for the year attributable to owners]
-    priority: 1
-  - field_id: ins_insurance_contract_liabilities
-    label: Insurance contract liabilities
-    statement: BS
-    required_core: true
-    sector: insurance
-    preferred_unit: currency
-    sign_convention: positive
-    description: Insurance contract liabilities under IFRS 17.
-    synonyms: [Insurance contract liabilities]
-    priority: 1
-  - field_id: ins_reinsurance_contract_assets
-    label: Reinsurance contract assets
-    statement: BS
-    required_core: false
-    sector: insurance
-    preferred_unit: currency
-    sign_convention: positive
-    description: Reinsurance contract assets under IFRS 17.
-    synonyms: [Reinsurance contract assets]
-    priority: 3
-  - field_id: ins_investment_assets
-    label: Insurance investment assets
-    statement: BS
-    required_core: true
-    sector: insurance
-    preferred_unit: currency
-    sign_convention: positive
-    description: Investment assets backing insurance liabilities.
-    synonyms: [Financial investments, Investment assets]
-    priority: 2
-  - field_id: ins_total_assets
-    label: Total assets insurance
-    statement: BS
-    required_core: true
-    sector: insurance
-    preferred_unit: currency
-    sign_convention: positive
-    description: Total assets for insurance entities.
-    synonyms: [Assets]
-    priority: 1
-  - field_id: ins_total_equity
-    label: Total equity insurance
-    statement: BS
-    required_core: true
-    sector: insurance
-    preferred_unit: currency
-    sign_convention: positive
-    description: Total equity for insurance entities.
-    synonyms: [Equity]
-    priority: 1
-  - field_id: ins_solvency_ratio
-    label: Solvency ratio
-    statement: NOTE
-    required_core: false
-    sector: insurance
-    preferred_unit: percent
-    sign_convention: positive
-    description: Solvency II or equivalent solvency ratio where disclosed.
-    synonyms: [Solvency ratio, SCR coverage ratio]
-    priority: 3
-  - field_id: ins_combined_ratio_reported
-    label: Combined ratio reported
-    statement: NOTE
-    required_core: false
-    sector: insurance
-    preferred_unit: percent
-    sign_convention: negative
-    description: Combined ratio as reported by insurer if explicitly disclosed.
-    synonyms: [Combined ratio]
-    priority: 2
+- field_id: period_end
+  label: Period end date
+  statement: NOTE
+  required_core: true
+  sector: all
+  preferred_unit: ratio
+  sign_convention: not_applicable
+  description: Reporting period end date normalized as YYYY-MM-DD.
+  synonyms:
+  - End of reporting period
+  - Date of financial statements
+  priority: 1
+  name: Period end date
+- field_id: fiscal_year
+  label: Fiscal year
+  statement: NOTE
+  required_core: true
+  sector: all
+  preferred_unit: ratio
+  sign_convention: not_applicable
+  description: Fiscal year identifier tied to the reported period.
+  synonyms:
+  - Fiscal year
+  - Reporting year
+  priority: 2
+  name: Fiscal year
+- field_id: reporting_period_type
+  label: Reporting period type
+  statement: NOTE
+  required_core: true
+  sector: all
+  preferred_unit: ratio
+  sign_convention: not_applicable
+  description: Period classification such as FY, H1, Q1, Q3.
+  synonyms:
+  - Type of period
+  - Interim or annual period
+  priority: 2
+  name: Reporting period type
+- field_id: reporting_currency
+  label: Reporting currency
+  statement: NOTE
+  required_core: true
+  sector: all
+  preferred_unit: ratio
+  sign_convention: not_applicable
+  description: ISO currency code of reported facts before conversion.
+  synonyms:
+  - Presentation currency
+  - Functional currency
+  priority: 1
+  name: Reporting currency
+- field_id: shares_outstanding_basic
+  label: Weighted average shares basic
+  statement: SHARES
+  required_core: true
+  sector: all
+  preferred_unit: shares
+  sign_convention: positive
+  description: Weighted average number of ordinary shares outstanding basic.
+  synonyms:
+  - Weighted average number of shares outstanding basic
+  - Basic shares
+  priority: 1
+  name: Weighted average shares basic
+- field_id: shares_outstanding_diluted
+  label: Weighted average shares diluted
+  statement: SHARES
+  required_core: true
+  sector: all
+  preferred_unit: shares
+  sign_convention: positive
+  description: Weighted average number of shares outstanding diluted.
+  synonyms:
+  - Weighted average number of diluted shares
+  - Diluted shares
+  priority: 2
+  name: Weighted average shares diluted
+- field_id: treasury_shares
+  label: Treasury shares
+  statement: SHARES
+  required_core: false
+  sector: all
+  preferred_unit: shares
+  sign_convention: positive
+  description: Number of shares repurchased and held in treasury.
+  synonyms:
+  - Treasury shares held
+  - Own shares held
+  priority: 3
+  name: Treasury shares
+- field_id: dividends_paid_total
+  label: Dividends paid
+  statement: CF
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: negative
+  description: Cash outflow related to dividends paid to equity holders.
+  synonyms:
+  - Dividends paid
+  - Dividends paid classified as financing activities
+  priority: 1
+  name: Dividends paid
+- field_id: share_buybacks_paid
+  label: Share buybacks paid
+  statement: CF
+  required_core: false
+  sector: all
+  preferred_unit: currency
+  sign_convention: negative
+  description: Cash used for repurchase of own shares.
+  synonyms:
+  - Purchase of treasury shares
+  - Repurchase of own shares
+  priority: 2
+  name: Share buybacks paid
+- field_id: revenue_total
+  label: Revenue
+  statement: IS
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Total revenue from contracts with customers and similar sales.
+  synonyms:
+  - Revenue
+  - Sales revenue
+  - Revenue from contracts with customers
+  priority: 1
+  name: Revenue
+- field_id: revenue_goods
+  label: Revenue from goods
+  statement: IS
+  required_core: false
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Revenue component from sale of goods.
+  synonyms:
+  - Sale of goods
+  - Revenue from sale of goods
+  priority: 4
+  name: Revenue from goods
+- field_id: revenue_services
+  label: Revenue from services
+  statement: IS
+  required_core: false
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Revenue component from rendering services.
+  synonyms:
+  - Rendering of services revenue
+  - Service revenue
+  priority: 4
+  name: Revenue from services
+- field_id: cost_of_goods_sold
+  label: Cost of goods sold
+  statement: IS
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: negative
+  description: Cost directly attributable to goods and services sold.
+  synonyms:
+  - Cost of sales
+  - Cost of goods sold
+  priority: 1
+  name: Cost of goods sold
+- field_id: gross_profit
+  label: Gross profit
+  statement: IS
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Revenue less cost of goods sold.
+  synonyms:
+  - Gross profit
+  - Gross margin amount
+  priority: 1
+  name: Gross profit
+- field_id: sga_expense
+  label: Selling general and administrative expense
+  statement: IS
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: negative
+  description: Combined sales, marketing, and administrative operating expenses.
+  synonyms:
+  - Administrative expenses
+  - Selling expenses
+  - SG&A
+  priority: 2
+  name: Selling general and administrative expense
+- field_id: rd_expense
+  label: Research and development expense
+  statement: IS
+  required_core: false
+  sector: all
+  preferred_unit: currency
+  sign_convention: negative
+  description: Expensed research and development costs recognized in P&L.
+  synonyms:
+  - Research and development expenses
+  - R&D expense
+  priority: 3
+  name: Research and development expense
+- field_id: depreciation_expense
+  label: Depreciation expense
+  statement: IS
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: negative
+  description: Depreciation of property plant and equipment.
+  synonyms:
+  - Depreciation
+  - Depreciation expense
+  priority: 2
+  name: Depreciation expense
+- field_id: amortization_expense
+  label: Amortization expense
+  statement: IS
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: negative
+  description: Amortization of intangible assets.
+  synonyms:
+  - Amortisation
+  - Amortization expense
+  priority: 2
+  name: Amortization expense
+- field_id: impairment_expense
+  label: Impairment expense
+  statement: IS
+  required_core: false
+  sector: all
+  preferred_unit: currency
+  sign_convention: negative
+  description: Impairment losses recognized for non-financial assets.
+  synonyms:
+  - Impairment loss
+  - Impairment charges
+  priority: 3
+  name: Impairment expense
+- field_id: operating_income_ebit
+  label: Operating profit EBIT
+  statement: IS
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Earnings before net finance income/expense and tax.
+  synonyms:
+  - Operating profit
+  - EBIT
+  priority: 1
+  name: Operating profit EBIT
+- field_id: ebitda
+  label: EBITDA
+  statement: IS
+  required_core: false
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Operating earnings before depreciation and amortization.
+  synonyms:
+  - EBITDA
+  - Operating profit before depreciation and amortisation
+  priority: 2
+  name: EBITDA
+- field_id: non_operating_income_expense
+  label: Non-operating income expense
+  statement: IS
+  required_core: false
+  sector: all
+  preferred_unit: currency
+  sign_convention: mixed
+  description: Material non-operating items excluding finance costs.
+  synonyms:
+  - Other gains losses
+  - Non-operating result
+  priority: 4
+  name: Non-operating income expense
+- field_id: finance_income
+  label: Finance income
+  statement: IS
+  required_core: false
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Interest and other finance income recognized in P&L.
+  synonyms:
+  - Financial income
+  - Interest income
+  priority: 3
+  name: Finance income
+- field_id: finance_costs
+  label: Finance costs
+  statement: IS
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: negative
+  description: Interest and other finance costs recognized in P&L.
+  synonyms:
+  - Finance costs
+  - Interest expense
+  priority: 1
+  name: Finance costs
+- field_id: net_finance_income_expense
+  label: Net finance income expense
+  statement: IS
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: mixed
+  description: Net financial result after finance income and finance costs.
+  synonyms:
+  - Net financial items
+  - Finance income expense net
+  priority: 1
+  name: Net finance income expense
+- field_id: profit_before_tax
+  label: Profit before tax
+  statement: IS
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Profit before income tax expense.
+  synonyms:
+  - Profit loss before tax
+  - Earnings before tax
+  priority: 1
+  name: Profit before tax
+- field_id: income_tax_expense
+  label: Income tax expense
+  statement: IS
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: negative
+  description: Total current and deferred income tax expense.
+  synonyms:
+  - Income tax expense
+  - Tax expense
+  priority: 1
+  name: Income tax expense
+- field_id: net_income
+  label: Net income
+  statement: IS
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Profit for the period attributable to owners and non-controlling interests.
+  synonyms:
+  - Profit loss
+  - Net profit
+  priority: 1
+  name: Net income
+- field_id: net_income_attributable_to_parent
+  label: Net income attributable to parent
+  statement: IS
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Profit attributable to owners of the parent.
+  synonyms:
+  - Profit attributable to owners of parent
+  - Net income attributable to shareholders
+  priority: 1
+  name: Net income attributable to parent
+- field_id: minority_interest_income
+  label: Non-controlling interests profit
+  statement: IS
+  required_core: false
+  sector: all
+  preferred_unit: currency
+  sign_convention: mixed
+  description: Portion of profit attributable to non-controlling interests.
+  synonyms:
+  - Profit attributable to non-controlling interests
+  priority: 4
+  name: Non-controlling interests profit
+- field_id: cash_and_cash_equivalents
+  label: Cash and cash equivalents
+  statement: BS
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Cash and highly liquid short-term investments.
+  synonyms:
+  - Cash and cash equivalents
+  - Cash
+  priority: 1
+  name: Cash and cash equivalents
+- field_id: short_term_investments
+  label: Short-term investments
+  statement: BS
+  required_core: false
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Marketable securities and short-term financial assets.
+  synonyms:
+  - Current financial assets
+  - Short-term investments
+  priority: 3
+  name: Short-term investments
+- field_id: accounts_receivable
+  label: Trade and other receivables
+  statement: BS
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Trade receivables and other receivables due within one year.
+  synonyms:
+  - Trade receivables
+  - Accounts receivable
+  priority: 2
+  name: Trade and other receivables
+- field_id: inventory
+  label: Inventories
+  statement: BS
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Inventories measured under IAS 2.
+  synonyms:
+  - Inventories
+  - Inventory
+  priority: 2
+  name: Inventories
+- field_id: other_current_assets
+  label: Other current assets
+  statement: BS
+  required_core: false
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Other current assets not separately identified.
+  synonyms:
+  - Other current assets
+  priority: 4
+  name: Other current assets
+- field_id: property_plant_equipment
+  label: Property plant and equipment
+  statement: BS
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Net carrying amount of PP&E.
+  synonyms:
+  - Property plant and equipment
+  - PPE
+  priority: 1
+  name: Property plant and equipment
+- field_id: right_of_use_assets
+  label: Right-of-use assets
+  statement: BS
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Right-of-use assets recognized under IFRS 16.
+  synonyms:
+  - Right-of-use assets
+  - Leased assets
+  priority: 1
+  name: Right-of-use assets
+- field_id: intangible_assets
+  label: Intangible assets excluding goodwill
+  statement: BS
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Intangible assets excluding goodwill.
+  synonyms:
+  - Intangible assets other than goodwill
+  - Intangibles
+  priority: 2
+  name: Intangible assets excluding goodwill
+- field_id: goodwill
+  label: Goodwill
+  statement: BS
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Goodwill recognized in business combinations.
+  synonyms:
+  - Goodwill
+  priority: 2
+  name: Goodwill
+- field_id: investments_in_associates
+  label: Investments in associates and joint ventures
+  statement: BS
+  required_core: false
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Equity-accounted investments in associates and JVs.
+  synonyms:
+  - Investments accounted for using equity method
+  priority: 4
+  name: Investments in associates and joint ventures
+- field_id: deferred_tax_assets
+  label: Deferred tax assets
+  statement: BS
+  required_core: false
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Deferred tax assets under IAS 12.
+  synonyms:
+  - Deferred tax assets
+  priority: 4
+  name: Deferred tax assets
+- field_id: total_assets
+  label: Total assets
+  statement: BS
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Total assets at period end.
+  synonyms:
+  - Assets
+  - Total assets
+  priority: 1
+  name: Total assets
+- field_id: accounts_payable
+  label: Trade and other payables
+  statement: BS
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Trade and other payables due within one year.
+  synonyms:
+  - Trade payables
+  - Accounts payable
+  priority: 2
+  name: Trade and other payables
+- field_id: short_term_debt
+  label: Short-term interest-bearing debt
+  statement: DEBT
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Current portion of interest-bearing borrowings.
+  synonyms:
+  - Short-term borrowings
+  - Current borrowings
+  priority: 1
+  name: Short-term interest-bearing debt
+- field_id: long_term_debt
+  label: Long-term interest-bearing debt
+  statement: DEBT
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Non-current interest-bearing borrowings.
+  synonyms:
+  - Long-term borrowings
+  - Non-current borrowings
+  priority: 1
+  name: Long-term interest-bearing debt
+- field_id: lease_liabilities_current
+  label: Current lease liabilities
+  statement: DEBT
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Current lease liabilities recognized under IFRS 16.
+  synonyms:
+  - Current lease liabilities
+  priority: 1
+  name: Current lease liabilities
+- field_id: lease_liabilities_noncurrent
+  label: Non-current lease liabilities
+  statement: DEBT
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Non-current lease liabilities recognized under IFRS 16.
+  synonyms:
+  - Non-current lease liabilities
+  priority: 1
+  name: Non-current lease liabilities
+- field_id: pension_liabilities
+  label: Pension and post-employment liabilities
+  statement: BS
+  required_core: false
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Defined benefit obligations and similar long-term employee liabilities.
+  synonyms:
+  - Employee benefit liabilities
+  - Pension obligations
+  priority: 4
+  name: Pension and post-employment liabilities
+- field_id: deferred_tax_liabilities
+  label: Deferred tax liabilities
+  statement: BS
+  required_core: false
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Deferred tax liabilities under IAS 12.
+  synonyms:
+  - Deferred tax liabilities
+  priority: 4
+  name: Deferred tax liabilities
+- field_id: provisions
+  label: Provisions
+  statement: BS
+  required_core: false
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Provisions recognized under IAS 37.
+  synonyms:
+  - Provisions
+  priority: 4
+  name: Provisions
+- field_id: other_liabilities
+  label: Other liabilities
+  statement: BS
+  required_core: false
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Remaining liabilities not separately mapped.
+  synonyms:
+  - Other liabilities
+  priority: 5
+  name: Other liabilities
+- field_id: total_liabilities
+  label: Total liabilities
+  statement: BS
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Total liabilities at period end.
+  synonyms:
+  - Liabilities
+  - Total liabilities
+  priority: 1
+  name: Total liabilities
+- field_id: total_equity
+  label: Total equity
+  statement: BS
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Total equity including non-controlling interests.
+  synonyms:
+  - Equity
+  - Total equity
+  priority: 1
+  name: Total equity
+- field_id: equity_attributable_to_parent
+  label: Equity attributable to parent
+  statement: BS
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Equity attributable to owners of the parent.
+  synonyms:
+  - Equity attributable to owners of parent
+  priority: 1
+  name: Equity attributable to parent
+- field_id: cfo_before_interest_tax
+  label: Cash flow from operations before interest and taxes
+  statement: CF
+  required_core: false
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Operating cash flow before cash interest and income taxes.
+  synonyms:
+  - Cash generated from operations before tax and interest
+  priority: 3
+  name: Cash flow from operations before interest and taxes
+- field_id: cash_flow_from_operations
+  label: Cash flow from operations
+  statement: CF
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Net cash flow from operating activities.
+  synonyms:
+  - Net cash from operating activities
+  - Operating cash flow
+  priority: 1
+  name: Cash flow from operations
+- field_id: interest_paid_cash
+  label: Interest paid cash
+  statement: CF
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: negative
+  description: Cash interest paid in period.
+  synonyms:
+  - Interest paid
+  - Cash paid for interest
+  priority: 2
+  name: Interest paid cash
+- field_id: income_taxes_paid_cash
+  label: Income taxes paid cash
+  statement: CF
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: negative
+  description: Cash paid for income taxes.
+  synonyms:
+  - Income taxes paid
+  - Cash paid for income taxes
+  priority: 2
+  name: Income taxes paid cash
+- field_id: capex_purchase_ppe
+  label: Capital expenditure PPE
+  statement: CF
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: negative
+  description: Purchase of property plant and equipment.
+  synonyms:
+  - Purchase of property plant and equipment
+  - Capital expenditure
+  priority: 1
+  name: Capital expenditure PPE
+- field_id: capex_purchase_intangibles
+  label: Capital expenditure intangibles
+  statement: CF
+  required_core: false
+  sector: all
+  preferred_unit: currency
+  sign_convention: negative
+  description: Purchase of intangible assets.
+  synonyms:
+  - Purchase of intangible assets
+  priority: 3
+  name: Capital expenditure intangibles
+- field_id: acquisitions_cash_paid
+  label: Acquisitions cash paid
+  statement: CF
+  required_core: false
+  sector: all
+  preferred_unit: currency
+  sign_convention: negative
+  description: Cash consideration paid for acquisitions net of cash acquired.
+  synonyms:
+  - Acquisition of subsidiaries net of cash acquired
+  priority: 3
+  name: Acquisitions cash paid
+- field_id: disposals_cash_received
+  label: Disposals cash received
+  statement: CF
+  required_core: false
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Cash proceeds from disposal of subsidiaries or assets.
+  synonyms:
+  - Proceeds from disposals
+  priority: 4
+  name: Disposals cash received
+- field_id: cash_flow_from_investing
+  label: Cash flow from investing
+  statement: CF
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: negative
+  description: Net cash flow from investing activities.
+  synonyms:
+  - Net cash from investing activities
+  priority: 2
+  name: Cash flow from investing
+- field_id: debt_issued_cash_inflow
+  label: Debt issued cash inflow
+  statement: CF
+  required_core: false
+  sector: all
+  preferred_unit: currency
+  sign_convention: positive
+  description: Proceeds from issuance of interest-bearing debt.
+  synonyms:
+  - Proceeds from borrowings
+  priority: 3
+  name: Debt issued cash inflow
+- field_id: debt_repaid_cash_outflow
+  label: Debt repaid cash outflow
+  statement: CF
+  required_core: false
+  sector: all
+  preferred_unit: currency
+  sign_convention: negative
+  description: Repayment of interest-bearing debt principal.
+  synonyms:
+  - Repayment of borrowings
+  priority: 3
+  name: Debt repaid cash outflow
+- field_id: lease_principal_repayments
+  label: Lease principal repayments
+  statement: CF
+  required_core: false
+  sector: all
+  preferred_unit: currency
+  sign_convention: negative
+  description: Principal repayments of lease liabilities.
+  synonyms:
+  - Payments of lease liabilities principal
+  priority: 3
+  name: Lease principal repayments
+- field_id: cash_flow_from_financing
+  label: Cash flow from financing
+  statement: CF
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: mixed
+  description: Net cash flow from financing activities.
+  synonyms:
+  - Net cash from financing activities
+  priority: 2
+  name: Cash flow from financing
+- field_id: fx_effect_on_cash
+  label: Effect of exchange rate changes on cash
+  statement: CF
+  required_core: false
+  sector: all
+  preferred_unit: currency
+  sign_convention: mixed
+  description: Foreign exchange impact on cash and cash equivalents.
+  synonyms:
+  - Effect of exchange rate changes on cash
+  priority: 5
+  name: Effect of exchange rate changes on cash
+- field_id: net_change_in_cash
+  label: Net change in cash
+  statement: CF
+  required_core: true
+  sector: all
+  preferred_unit: currency
+  sign_convention: mixed
+  description: Net increase or decrease in cash and cash equivalents.
+  synonyms:
+  - Net increase decrease in cash and cash equivalents
+  priority: 2
+  name: Net change in cash
+- field_id: bank_net_interest_income
+  label: Net interest income
+  statement: IS
+  required_core: true
+  sector: bank
+  preferred_unit: currency
+  sign_convention: positive
+  description: Interest income less interest expense for banking operations.
+  synonyms:
+  - Net interest income
+  priority: 1
+  name: Net interest income
+- field_id: bank_interest_income
+  label: Gross interest income
+  statement: IS
+  required_core: false
+  sector: bank
+  preferred_unit: currency
+  sign_convention: positive
+  description: Interest income on loans and other financial assets.
+  synonyms:
+  - Interest income calculated using effective interest method
+  priority: 3
+  name: Gross interest income
+- field_id: bank_interest_expense
+  label: Gross interest expense
+  statement: IS
+  required_core: false
+  sector: bank
+  preferred_unit: currency
+  sign_convention: negative
+  description: Interest expense on deposits and debt.
+  synonyms:
+  - Interest expense
+  priority: 3
+  name: Gross interest expense
+- field_id: bank_fee_commission_income
+  label: Net fee and commission income
+  statement: IS
+  required_core: true
+  sector: bank
+  preferred_unit: currency
+  sign_convention: positive
+  description: Net fee and commission income from banking services.
+  synonyms:
+  - Fee and commission income net
+  priority: 2
+  name: Net fee and commission income
+- field_id: bank_trading_income
+  label: Net trading income
+  statement: IS
+  required_core: false
+  sector: bank
+  preferred_unit: currency
+  sign_convention: mixed
+  description: Net gains and losses from trading and fair value activities.
+  synonyms:
+  - Net gains losses on financial instruments held for trading
+  priority: 3
+  name: Net trading income
+- field_id: bank_other_operating_income
+  label: Other operating income bank
+  statement: IS
+  required_core: false
+  sector: bank
+  preferred_unit: currency
+  sign_convention: mixed
+  description: Other income for banking entities.
+  synonyms:
+  - Other operating income
+  priority: 4
+  name: Other operating income bank
+- field_id: bank_operating_expenses
+  label: Operating expenses bank
+  statement: IS
+  required_core: true
+  sector: bank
+  preferred_unit: currency
+  sign_convention: negative
+  description: Operating expenses excluding impairment for banks.
+  synonyms:
+  - Administrative expenses
+  - Operating expenses
+  priority: 2
+  name: Operating expenses bank
+- field_id: bank_loan_loss_provisions
+  label: Loan loss provisions
+  statement: IS
+  required_core: true
+  sector: bank
+  preferred_unit: currency
+  sign_convention: negative
+  description: Expected credit loss expense on loans and advances.
+  synonyms:
+  - Impairment losses on financial assets
+  - Credit loss expense
+  priority: 1
+  name: Loan loss provisions
+- field_id: bank_profit_before_tax
+  label: Profit before tax bank
+  statement: IS
+  required_core: true
+  sector: bank
+  preferred_unit: currency
+  sign_convention: positive
+  description: Banking profit before tax.
+  synonyms:
+  - Profit before tax
+  priority: 1
+  name: Profit before tax bank
+- field_id: bank_net_income
+  label: Net income bank
+  statement: IS
+  required_core: true
+  sector: bank
+  preferred_unit: currency
+  sign_convention: positive
+  description: Net income attributable to banking shareholders.
+  synonyms:
+  - Profit for the year attributable to owners
+  priority: 1
+  name: Net income bank
+- field_id: bank_total_loans_gross
+  label: Gross loans to customers
+  statement: BS
+  required_core: true
+  sector: bank
+  preferred_unit: currency
+  sign_convention: positive
+  description: Gross carrying amount of loans to customers.
+  synonyms:
+  - Loans and advances to customers gross
+  priority: 1
+  name: Gross loans to customers
+- field_id: bank_ecl_allowance
+  label: ECL allowance
+  statement: BS
+  required_core: true
+  sector: bank
+  preferred_unit: currency
+  sign_convention: positive
+  description: Loss allowance for expected credit losses.
+  synonyms:
+  - Loss allowance for expected credit losses
+  priority: 1
+  name: ECL allowance
+- field_id: bank_total_loans_net
+  label: Net loans to customers
+  statement: BS
+  required_core: true
+  sector: bank
+  preferred_unit: currency
+  sign_convention: positive
+  description: Loans to customers net of impairment allowances.
+  synonyms:
+  - Loans and advances to customers
+  priority: 1
+  name: Net loans to customers
+- field_id: bank_customer_deposits
+  label: Customer deposits
+  statement: BS
+  required_core: true
+  sector: bank
+  preferred_unit: currency
+  sign_convention: positive
+  description: Deposits from customers.
+  synonyms:
+  - Deposits from customers
+  priority: 1
+  name: Customer deposits
+- field_id: bank_total_assets
+  label: Total assets bank
+  statement: BS
+  required_core: true
+  sector: bank
+  preferred_unit: currency
+  sign_convention: positive
+  description: Total assets for banking entities.
+  synonyms:
+  - Assets
+  priority: 1
+  name: Total assets bank
+- field_id: bank_total_equity
+  label: Total equity bank
+  statement: BS
+  required_core: true
+  sector: bank
+  preferred_unit: currency
+  sign_convention: positive
+  description: Total equity for banking entities.
+  synonyms:
+  - Equity
+  priority: 1
+  name: Total equity bank
+- field_id: bank_rwa
+  label: Risk weighted assets
+  statement: NOTE
+  required_core: true
+  sector: bank
+  preferred_unit: currency
+  sign_convention: positive
+  description: Regulatory risk weighted assets.
+  synonyms:
+  - Risk weighted exposure amount
+  - RWA
+  priority: 1
+  name: Risk weighted assets
+- field_id: bank_cet1_capital
+  label: CET1 capital
+  statement: NOTE
+  required_core: true
+  sector: bank
+  preferred_unit: currency
+  sign_convention: positive
+  description: Common equity tier 1 capital amount.
+  synonyms:
+  - Common equity tier 1 capital
+  priority: 1
+  name: CET1 capital
+- field_id: bank_cet1_ratio
+  label: CET1 ratio
+  statement: NOTE
+  required_core: true
+  sector: bank
+  preferred_unit: percent
+  sign_convention: positive
+  description: CET1 capital ratio.
+  synonyms:
+  - CET1 ratio
+  - Common equity tier 1 ratio
+  priority: 1
+  name: CET1 ratio
+- field_id: bank_liquidity_coverage_ratio
+  label: Liquidity coverage ratio
+  statement: NOTE
+  required_core: false
+  sector: bank
+  preferred_unit: percent
+  sign_convention: positive
+  description: Basel liquidity coverage ratio.
+  synonyms:
+  - Liquidity coverage ratio
+  - LCR
+  priority: 4
+  name: Liquidity coverage ratio
+- field_id: bank_npl_ratio
+  label: Non-performing loan ratio
+  statement: NOTE
+  required_core: false
+  sector: bank
+  preferred_unit: percent
+  sign_convention: negative
+  description: Non-performing loans over gross loans.
+  synonyms:
+  - Non-performing exposure ratio
+  - NPL ratio
+  priority: 3
+  name: Non-performing loan ratio
+- field_id: ins_gross_written_premiums
+  label: Gross written premiums
+  statement: IS
+  required_core: true
+  sector: insurance
+  preferred_unit: currency
+  sign_convention: positive
+  description: Gross written premiums for insurance contracts.
+  synonyms:
+  - Gross written premiums
+  priority: 1
+  name: Gross written premiums
+- field_id: ins_earned_premiums
+  label: Earned premiums
+  statement: IS
+  required_core: true
+  sector: insurance
+  preferred_unit: currency
+  sign_convention: positive
+  description: Insurance revenue or earned premiums for the period.
+  synonyms:
+  - Insurance revenue
+  - Earned premiums
+  priority: 1
+  name: Earned premiums
+- field_id: ins_reinsurance_result
+  label: Reinsurance result
+  statement: IS
+  required_core: false
+  sector: insurance
+  preferred_unit: currency
+  sign_convention: mixed
+  description: Net result from reinsurance held and ceded.
+  synonyms:
+  - Result from reinsurance contracts held
+  priority: 3
+  name: Reinsurance result
+- field_id: ins_claims_incurred
+  label: Claims incurred
+  statement: IS
+  required_core: true
+  sector: insurance
+  preferred_unit: currency
+  sign_convention: negative
+  description: Claims and benefits incurred during the period.
+  synonyms:
+  - Insurance service expenses claims incurred
+  priority: 1
+  name: Claims incurred
+- field_id: ins_acquisition_costs
+  label: Insurance acquisition costs
+  statement: IS
+  required_core: false
+  sector: insurance
+  preferred_unit: currency
+  sign_convention: negative
+  description: Insurance acquisition cash flows and amortization in P&L.
+  synonyms:
+  - Insurance acquisition expenses
+  priority: 3
+  name: Insurance acquisition costs
+- field_id: ins_operating_expenses
+  label: Insurance operating expenses
+  statement: IS
+  required_core: true
+  sector: insurance
+  preferred_unit: currency
+  sign_convention: negative
+  description: Administrative and operating costs for insurance entities.
+  synonyms:
+  - Insurance administrative expenses
+  - Operating expenses
+  priority: 2
+  name: Insurance operating expenses
+- field_id: ins_underwriting_result
+  label: Underwriting technical result
+  statement: IS
+  required_core: true
+  sector: insurance
+  preferred_unit: currency
+  sign_convention: positive
+  description: Technical underwriting result before investment return.
+  synonyms:
+  - Insurance service result
+  - Technical result
+  priority: 1
+  name: Underwriting technical result
+- field_id: ins_investment_result
+  label: Investment result insurance
+  statement: IS
+  required_core: true
+  sector: insurance
+  preferred_unit: currency
+  sign_convention: mixed
+  description: Investment income and fair value impacts in insurers.
+  synonyms:
+  - Net investment income
+  priority: 2
+  name: Investment result insurance
+- field_id: ins_profit_before_tax
+  label: Profit before tax insurance
+  statement: IS
+  required_core: true
+  sector: insurance
+  preferred_unit: currency
+  sign_convention: positive
+  description: Insurance entity profit before tax.
+  synonyms:
+  - Profit before tax
+  priority: 1
+  name: Profit before tax insurance
+- field_id: ins_net_income
+  label: Net income insurance
+  statement: IS
+  required_core: true
+  sector: insurance
+  preferred_unit: currency
+  sign_convention: positive
+  description: Net income attributable to insurance shareholders.
+  synonyms:
+  - Profit for the year attributable to owners
+  priority: 1
+  name: Net income insurance
+- field_id: ins_insurance_contract_liabilities
+  label: Insurance contract liabilities
+  statement: BS
+  required_core: true
+  sector: insurance
+  preferred_unit: currency
+  sign_convention: positive
+  description: Insurance contract liabilities under IFRS 17.
+  synonyms:
+  - Insurance contract liabilities
+  priority: 1
+  name: Insurance contract liabilities
+- field_id: ins_reinsurance_contract_assets
+  label: Reinsurance contract assets
+  statement: BS
+  required_core: false
+  sector: insurance
+  preferred_unit: currency
+  sign_convention: positive
+  description: Reinsurance contract assets under IFRS 17.
+  synonyms:
+  - Reinsurance contract assets
+  priority: 3
+  name: Reinsurance contract assets
+- field_id: ins_investment_assets
+  label: Insurance investment assets
+  statement: BS
+  required_core: true
+  sector: insurance
+  preferred_unit: currency
+  sign_convention: positive
+  description: Investment assets backing insurance liabilities.
+  synonyms:
+  - Financial investments
+  - Investment assets
+  priority: 2
+  name: Insurance investment assets
+- field_id: ins_total_assets
+  label: Total assets insurance
+  statement: BS
+  required_core: true
+  sector: insurance
+  preferred_unit: currency
+  sign_convention: positive
+  description: Total assets for insurance entities.
+  synonyms:
+  - Assets
+  priority: 1
+  name: Total assets insurance
+- field_id: ins_total_equity
+  label: Total equity insurance
+  statement: BS
+  required_core: true
+  sector: insurance
+  preferred_unit: currency
+  sign_convention: positive
+  description: Total equity for insurance entities.
+  synonyms:
+  - Equity
+  priority: 1
+  name: Total equity insurance
+- field_id: ins_solvency_ratio
+  label: Solvency ratio
+  statement: NOTE
+  required_core: false
+  sector: insurance
+  preferred_unit: percent
+  sign_convention: positive
+  description: Solvency II or equivalent solvency ratio where disclosed.
+  synonyms:
+  - Solvency ratio
+  - SCR coverage ratio
+  priority: 3
+  name: Solvency ratio
+- field_id: ins_combined_ratio_reported
+  label: Combined ratio reported
+  statement: NOTE
+  required_core: false
+  sector: insurance
+  preferred_unit: percent
+  sign_convention: negative
+  description: Combined ratio as reported by insurer if explicitly disclosed.
+  synonyms:
+  - Combined ratio
+  priority: 2
+  name: Combined ratio reported
