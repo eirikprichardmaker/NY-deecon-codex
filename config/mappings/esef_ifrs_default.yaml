@@ -229,3 +229,57 @@ mappings:
     field_id: ins_insurance_contract_liabilities
     confidence: medium
     notes: Insurance liability anchor under IFRS 17.
+
+  # Common IFRS aliases seen in practice
+  - concept: ifrs-full:ProfitLossFromOperatingActivities
+    field_id: operating_income_ebit
+    confidence: high
+    notes: Operating result alias used by several issuers.
+  - concept: ifrs-full:FinanceCosts
+    field_id: finance_costs
+    confidence: high
+    notes: Core finance cost concept.
+  - concept: ifrs-full:FinanceIncomeCost
+    field_id: net_finance_income_expense
+    confidence: high
+    notes: Net finance income/expense combined concept.
+  - concept: ifrs-full:ShorttermBorrowings
+    field_id: short_term_debt
+    confidence: high
+    notes: Alias for current borrowings concept.
+  - concept: ifrs-full:LongtermBorrowings
+    field_id: long_term_debt
+    confidence: high
+    notes: Alias for non-current borrowings concept.
+  - concept: ifrs-full:CurrentLeaseLiabilities
+    field_id: lease_liabilities_current
+    confidence: high
+    notes: Alias for current lease liabilities.
+  - concept: ifrs-full:NoncurrentLeaseLiabilities
+    field_id: lease_liabilities_noncurrent
+    confidence: high
+    notes: Alias for non-current lease liabilities.
+  - concept: ifrs-full:CashFlowsFromUsedInOperatingActivities
+    field_id: cash_flow_from_operations
+    confidence: high
+    notes: Alias for net cash flows from operating activities.
+  - concept: ifrs-full:CashFlowsFromUsedInInvestingActivities
+    field_id: cash_flow_from_investing
+    confidence: high
+    notes: Alias for net cash flows from investing activities.
+  - concept: ifrs-full:CashFlowsFromUsedInFinancingActivities
+    field_id: cash_flow_from_financing
+    confidence: high
+    notes: Alias for net cash flows from financing activities.
+  - concept: ifrs-full:IncomeTaxesPaidClassifiedAsOperatingActivities
+    field_id: income_taxes_paid_cash
+    confidence: medium
+    notes: Alias where refunds are not netted in the concept name.
+  - concept: ifrs-full:DividendsPaidToEquityHoldersOfParentClassifiedAsFinancingActivities
+    field_id: dividends_paid_total
+    confidence: high
+    notes: Preferred dividends paid cash flow for parent owners.
+  - concept: ifrs-full:PurchaseOfPropertyPlantAndEquipmentIntangibleAssetsOtherThanGoodwillInvestmentPropertyAndOtherNoncurrentAssets
+    field_id: capex_purchase_ppe
+    confidence: low
+    notes: Broad capex concept used as fallback when pure PPE purchase is unavailable.

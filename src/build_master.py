@@ -2,9 +2,11 @@
 
 from pathlib import Path
 import re
+from typing import Any
 
 import numpy as np
 import pandas as pd
+import yaml
 
 from src.common.config import resolve_paths
 from src.common.io import read_parquet
@@ -42,6 +44,67 @@ DIVIDEND_FEATURE_COLS = [
     "roa",
     "dividend_yield",
 ]
+
+DEFAULT_FINANCIALS_CORE_FIELDS = [
+    "revenue_total",
+    "cost_of_goods_sold",
+    "gross_profit",
+    "sga_expense",
+    "depreciation_expense",
+    "amortization_expense",
+    "operating_income_ebit",
+    "net_finance_income_expense",
+    "profit_before_tax",
+    "income_tax_expense",
+    "net_income",
+    "net_income_attributable_to_parent",
+    "cash_and_cash_equivalents",
+    "accounts_receivable",
+    "inventory",
+    "property_plant_equipment",
+    "right_of_use_assets",
+    "intangible_assets",
+    "goodwill",
+    "deferred_tax_assets",
+    "total_assets",
+    "accounts_payable",
+    "short_term_debt",
+    "long_term_debt",
+    "lease_liabilities_current",
+    "lease_liabilities_noncurrent",
+    "total_liabilities",
+    "equity_attributable_to_parent",
+    "total_equity",
+    "cash_flow_from_operations",
+    "interest_paid_cash",
+    "income_taxes_paid_cash",
+    "capex_purchase_ppe",
+    "cash_flow_from_investing",
+    "cash_flow_from_financing",
+    "dividends_paid_total",
+    "net_change_in_cash",
+    "fx_effect_on_cash",
+    "shares_outstanding_basic",
+    "shares_outstanding_diluted",
+]
+
+REPORTS_Y_TO_CANONICAL = {
+    "revenues": "revenue_total",
+    "gross_income": "gross_profit",
+    "operating_income": "operating_income_ebit",
+    "profit_before_tax": "profit_before_tax",
+    "profit_to_equity_holders": "net_income_attributable_to_parent",
+    "cash_and_equivalents": "cash_and_cash_equivalents",
+    "intangible_assets": "intangible_assets",
+    "tangible_assets": "property_plant_equipment",
+    "total_assets": "total_assets",
+    "total_equity": "total_equity",
+    "cash_flow_from_operating_activities": "cash_flow_from_operations",
+    "cash_flow_from_investing_activities": "cash_flow_from_investing",
+    "cash_flow_from_financing_activities": "cash_flow_from_financing",
+    "cash_flow_for_the_year": "net_change_in_cash",
+    "number_of_shares": "shares_outstanding_basic",
+}
 
 
 def _quality_write(run_dir, lines: list[str]) -> None:
@@ -245,6 +308,232 @@ def _latest_raw_snapshot_dir(raw_dir: Path, asof: str) -> Path | None:
 
     eligible.sort(key=lambda x: x[0], reverse=True)
     return eligible[0][1]
+
+
+def _latest_raw_snapshot_dir_with_data(raw_dir: Path, asof: str, required_any_subdirs: list[str]) -> Path | None:
+    if not raw_dir.exists():
+        return None
+    asof_dt = pd.to_datetime(asof, errors="coerce")
+    if pd.isna(asof_dt):
+        return None
+
+    rows: list[tuple[pd.Timestamp, Path]] = []
+    for d in raw_dir.iterdir():
+        if not d.is_dir():
+            continue
+        ts = pd.to_datetime(d.name, format="%Y-%m-%d", errors="coerce")
+        if pd.isna(ts) or ts.normalize() > asof_dt.normalize():
+            continue
+        ok = False
+        for sub in required_any_subdirs:
+            if (d / sub).exists():
+                ok = True
+                break
+        if ok:
+            rows.append((ts.normalize(), d))
+    if not rows:
+        return None
+    rows.sort(key=lambda x: x[0], reverse=True)
+    return rows[0][1]
+
+
+def _load_financials_tier_fields(project_root: Path, cfg: dict) -> tuple[list[str], list[str]]:
+    fin_cfg = cfg.get("financials_enrichment", {}) or {}
+    rel = str(fin_cfg.get("tiers_config", "config/financials_field_tiers.yaml"))
+    path = Path(rel)
+    if not path.is_absolute():
+        path = (project_root / rel).resolve()
+    if not path.exists():
+        return DEFAULT_FINANCIALS_CORE_FIELDS, []
+    payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    core = [str(x).strip() for x in payload.get("core_model_input_fields", []) if str(x).strip()]
+    enrich = [str(x).strip() for x in payload.get("enrichment_optional_fields", []) if str(x).strip()]
+    if not core:
+        core = DEFAULT_FINANCIALS_CORE_FIELDS
+    return core, enrich
+
+
+def _build_financials_feature_snapshot(
+    *,
+    project_root: Path,
+    raw_root: Path,
+    processed_root: Path,
+    asof: str,
+    ticker_map: pd.DataFrame,
+    fields: list[str],
+) -> pd.DataFrame:
+    fin_dir = _latest_raw_snapshot_dir(processed_root, asof)
+    if fin_dir is None:
+        return pd.DataFrame(columns=["yahoo_ticker", "financials_period_end"] + fields)
+    wide_path = fin_dir / "financials_wide.parquet"
+    if not wide_path.exists():
+        return pd.DataFrame(columns=["yahoo_ticker", "financials_period_end"] + fields)
+
+    wide = pd.read_parquet(wide_path).copy()
+    if wide.empty or "company_id" not in wide.columns or "period_end" not in wide.columns:
+        return pd.DataFrame(columns=["yahoo_ticker", "financials_period_end"] + fields)
+
+    docs_path = raw_root / fin_dir.name / "download_index.parquet"
+    if docs_path.exists():
+        docs = pd.read_parquet(docs_path)
+    else:
+        docs = pd.DataFrame(columns=["company_id", "ticker", "year"])
+
+    if not docs.empty and "company_id" in docs.columns and "ticker" in docs.columns:
+        for c in ["company_id", "ticker"]:
+            docs[c] = docs[c].astype(str).str.strip()
+        if "year" in docs.columns:
+            docs["year"] = pd.to_numeric(docs["year"], errors="coerce")
+            docs = docs.sort_values(["company_id", "year"], kind="mergesort")
+        docs_map = docs[["company_id", "ticker"]].drop_duplicates(subset=["company_id"], keep="last")
+    else:
+        docs_map = pd.DataFrame({"company_id": wide["company_id"].astype(str).unique(), "ticker": ""})
+
+    tmap = ticker_map.copy() if ticker_map is not None else pd.DataFrame(columns=["ticker_norm", "yahoo_ticker"])
+    tmap["ticker_norm"] = tmap.get("ticker_norm", pd.Series(dtype=object)).astype(str).str.strip()
+    tmap["yahoo_ticker"] = tmap.get("yahoo_ticker", pd.Series(dtype=object)).astype(str).str.strip()
+    norm_to_yahoo = {
+        str(r.ticker_norm): str(r.yahoo_ticker)
+        for r in tmap.itertuples(index=False)
+        if str(getattr(r, "ticker_norm", "")).strip() and str(getattr(r, "yahoo_ticker", "")).strip()
+    }
+
+    docs_map["ticker"] = docs_map["ticker"].astype(str).str.strip().str.upper()
+    docs_map["ticker_norm"] = docs_map["ticker"].map(_norm_ticker)
+    docs_map["yahoo_ticker"] = np.where(
+        docs_map["ticker"].str.contains(r"\."),
+        docs_map["ticker"],
+        docs_map["ticker_norm"].map(lambda x: norm_to_yahoo.get(str(x), "")),
+    )
+    docs_map["yahoo_ticker"] = docs_map["yahoo_ticker"].astype(str).str.strip().str.upper()
+
+    wide["company_id"] = wide["company_id"].astype(str).str.strip()
+    wide["period_end_dt"] = pd.to_datetime(wide["period_end"], errors="coerce")
+    wide = wide.merge(docs_map[["company_id", "yahoo_ticker"]], on="company_id", how="left")
+    wide = wide[wide["yahoo_ticker"].astype(str).str.strip().ne("")].copy()
+    if wide.empty:
+        return pd.DataFrame(columns=["yahoo_ticker", "financials_period_end"] + fields)
+
+    wide = wide.sort_values(["yahoo_ticker", "period_end_dt"], kind="mergesort").drop_duplicates(subset=["yahoo_ticker"], keep="last")
+    if wide["yahoo_ticker"].duplicated().any():
+        dups = wide[wide["yahoo_ticker"].duplicated(keep=False)]["yahoo_ticker"].tolist()
+        raise ValueError(f"financials snapshot has duplicate yahoo_ticker rows: {dups[:10]}")
+
+    keep_cols = ["yahoo_ticker", "period_end"] + [c for c in fields if c in wide.columns]
+    out = wide[keep_cols].copy().rename(columns={"period_end": "financials_period_end"})
+    out["yahoo_ticker"] = out["yahoo_ticker"].astype(str).str.strip().str.upper()
+    out["financials_source"] = "financials_agent"
+    return out
+
+
+def _build_reports_y_feature_snapshot(
+    *,
+    master: pd.DataFrame,
+    raw_snapshot_dir: Path | None,
+    asof_dt: pd.Timestamp,
+    ins_map: pd.DataFrame,
+    fields: list[str],
+) -> pd.DataFrame:
+    cols = ["yahoo_ticker", "financials_period_end", "financials_source"] + fields
+    if raw_snapshot_dir is None or ins_map is None or ins_map.empty or master.empty:
+        return pd.DataFrame(columns=cols)
+
+    work = master[[c for c in ["ticker", "yahoo_ticker"] if c in master.columns]].copy()
+    if "ticker" not in work.columns:
+        work["ticker"] = ""
+    work["ticker_norm"] = work["ticker"].map(_norm_ticker)
+    work["yahoo_ticker"] = work["yahoo_ticker"].astype(str).str.strip().str.upper()
+    work["yahoo_key"] = work["yahoo_ticker"]
+
+    m = work.merge(ins_map, on="yahoo_key", how="left", suffixes=("", "_map"))
+    missing_ins = m["ins_id"].isna() & m["ticker_norm"].ne("")
+    if missing_ins.any():
+        by_ticker = ins_map.dropna(subset=["ticker_norm"]).drop_duplicates(subset=["ticker_norm"], keep="first")
+        by_ticker = by_ticker[["ticker_norm", "ins_id", "market"]].rename(columns={"ins_id": "ins_id_t", "market": "market_t"})
+        m = m.merge(by_ticker, on="ticker_norm", how="left")
+        m.loc[missing_ins, "ins_id"] = m.loc[missing_ins, "ins_id_t"]
+        m.loc[missing_ins, "market"] = m.loc[missing_ins, "market_t"]
+        m = m.drop(columns=[c for c in ["ins_id_t", "market_t"] if c in m.columns])
+
+    market_from_suffix = m["yahoo_ticker"].map(lambda x: MARKET_BY_SUFFIX.get(_suffix_from_symbol(x), ""))
+    m["market"] = m["market"].astype(str)
+    m.loc[m["market"].eq("") | m["market"].eq("nan"), "market"] = market_from_suffix
+
+    m["ins_id"] = pd.to_numeric(m["ins_id"], errors="coerce")
+    m = m[m["ins_id"].notna() & m["market"].astype(str).ne("")].copy()
+    if m.empty:
+        return pd.DataFrame(columns=cols)
+
+    m["ins_id"] = m["ins_id"].astype(int)
+    m = m.drop_duplicates(subset=["yahoo_ticker", "ins_id", "market"], keep="first")
+
+    rows: list[dict[str, Any]] = []
+    for _, r in m.iterrows():
+        market = str(r["market"]).upper()
+        ins_id = int(r["ins_id"])
+        p_y = raw_snapshot_dir / "reports_y" / f"market={market}" / f"ins_id={ins_id}.parquet"
+        if not p_y.exists():
+            continue
+        rep_y = pd.read_parquet(p_y)
+        latest = _pick_latest_row(rep_y, asof_dt=asof_dt)
+        if latest is None:
+            continue
+        latest_d = _canon_cols(pd.DataFrame([latest])).iloc[0]
+        row: dict[str, Any] = {
+            "yahoo_ticker": str(r["yahoo_ticker"]).strip().upper(),
+            "financials_source": "reports_y",
+        }
+        per_end = latest_d.get("report_end_date", latest_d.get("report_date", None))
+        per_end_dt = pd.to_datetime(per_end, errors="coerce")
+        if pd.notna(per_end_dt):
+            row["financials_period_end"] = per_end_dt.date().isoformat()
+        else:
+            yr = pd.to_numeric(pd.Series([latest_d.get("year")]), errors="coerce").iloc[0]
+            row["financials_period_end"] = f"{int(yr)}-12-31" if pd.notna(yr) else None
+
+        # Direct canonical mappings from reports_y
+        for src_col, dst_col in REPORTS_Y_TO_CANONICAL.items():
+            if dst_col not in fields:
+                continue
+            if src_col in latest_d.index:
+                row[dst_col] = pd.to_numeric(pd.Series([latest_d.get(src_col)]), errors="coerce").iloc[0]
+
+        # Additional deterministic derivations from reports_y
+        if "total_liabilities" in fields:
+            total_liab = pd.to_numeric(pd.Series([latest_d.get("total_liabilities_and_equity")]), errors="coerce").iloc[0]
+            total_eq = pd.to_numeric(pd.Series([latest_d.get("total_equity")]), errors="coerce").iloc[0]
+            if pd.notna(total_liab) and pd.notna(total_eq):
+                row["total_liabilities"] = float(total_liab - total_eq)
+            else:
+                ncl = pd.to_numeric(pd.Series([latest_d.get("non_current_liabilities")]), errors="coerce").iloc[0]
+                cl = pd.to_numeric(pd.Series([latest_d.get("current_liabilities")]), errors="coerce").iloc[0]
+                if pd.notna(ncl) and pd.notna(cl):
+                    row["total_liabilities"] = float(ncl + cl)
+
+        if "shares_outstanding_diluted" in fields and pd.notna(row.get("shares_outstanding_basic")):
+            row["shares_outstanding_diluted"] = row.get("shares_outstanding_basic")
+
+        cur = str(latest_d.get("currency", "")).strip().upper()
+        if "reporting_currency" in fields and cur:
+            row["reporting_currency"] = cur
+        if "fiscal_year" in fields:
+            yr = pd.to_numeric(pd.Series([latest_d.get("year")]), errors="coerce").iloc[0]
+            row["fiscal_year"] = yr if pd.notna(yr) else np.nan
+        if "reporting_period_type" in fields:
+            row["reporting_period_type"] = "annual"
+
+        rows.append(row)
+
+    if not rows:
+        return pd.DataFrame(columns=cols)
+
+    out = pd.DataFrame(rows)
+    out = out.sort_values(["yahoo_ticker", "financials_period_end"], kind="mergesort").drop_duplicates(subset=["yahoo_ticker"], keep="last")
+    if out["yahoo_ticker"].duplicated().any():
+        dups = out[out["yahoo_ticker"].duplicated(keep=False)]["yahoo_ticker"].tolist()
+        raise ValueError(f"reports_y snapshot has duplicate yahoo_ticker rows: {dups[:10]}")
+    keep = [c for c in cols if c in out.columns]
+    return out[keep]
 
 
 def _canon_cols(df: pd.DataFrame) -> pd.DataFrame:
@@ -479,6 +768,15 @@ def run(ctx, log) -> int:
     paths = resolve_paths(ctx.cfg, ctx.project_root)
     raw_dir = paths["raw_dir"]
     processed_dir = paths["processed_dir"]
+    financials_info = {
+        "enabled": bool((ctx.cfg.get("financials_enrichment", {}) or {}).get("enabled", True)),
+        "snapshot_date": None,
+        "matched_rows": 0,
+        "matched_agent_rows": 0,
+        "matched_reports_y_rows": 0,
+        "core_coverage": {},
+        "enrich_coverage": {},
+    }
 
     # 1) Base master: prefer raw/master_input if present (som hos deg)
     master_input = raw_dir / "master_input.parquet"
@@ -541,8 +839,123 @@ def run(ctx, log) -> int:
     master = master.merge(snap, on="ticker_norm", how="left")
     master = _coalesce_master_yahoo_ticker(master)
 
+    # 3b) Optional: enrich master with financials-agent snapshot (as-of, latest period per ticker)
+    fin_cfg = ctx.cfg.get("financials_enrichment", {}) or {}
+    if bool(fin_cfg.get("enabled", True)):
+        core_fields, enrich_fields = _load_financials_tier_fields(ctx.project_root, ctx.cfg)
+        requested_fields = core_fields + [f for f in enrich_fields if f not in set(core_fields)]
+        fin_snap = _build_financials_feature_snapshot(
+            project_root=ctx.project_root,
+            raw_root=raw_dir,
+            processed_root=processed_dir,
+            asof=ctx.asof,
+            ticker_map=mapping,
+            fields=requested_fields,
+        )
+        raw_snapshot_dir = _latest_raw_snapshot_dir_with_data(raw_dir, ctx.asof, ["reports_y"])
+        ins_map = _load_insid_mapping(ctx)
+        bridge_enabled = bool(fin_cfg.get("include_reports_y_bridge", True))
+        rep_snap = _build_reports_y_feature_snapshot(
+            master=master,
+            raw_snapshot_dir=raw_snapshot_dir if bridge_enabled else None,
+            asof_dt=asof_dt,
+            ins_map=ins_map if bridge_enabled else pd.DataFrame(),
+            fields=requested_fields,
+        )
+
+        if not fin_snap.empty and fin_snap["yahoo_ticker"].duplicated().any():
+            dups = fin_snap[fin_snap["yahoo_ticker"].duplicated(keep=False)]["yahoo_ticker"].tolist()
+            raise ValueError(f"Financials enrichment duplicate yahoo_ticker rows (agent): {dups[:10]}")
+        if not rep_snap.empty and rep_snap["yahoo_ticker"].duplicated().any():
+            dups = rep_snap[rep_snap["yahoo_ticker"].duplicated(keep=False)]["yahoo_ticker"].tolist()
+            raise ValueError(f"Financials enrichment duplicate yahoo_ticker rows (reports_y): {dups[:10]}")
+
+        combined = pd.DataFrame(columns=["yahoo_ticker", "financials_period_end", "financials_source"] + requested_fields)
+        if not rep_snap.empty and not fin_snap.empty:
+            joined = rep_snap.merge(fin_snap, on="yahoo_ticker", how="outer", suffixes=("_ry", "_fa"), validate="one_to_one")
+            combined["yahoo_ticker"] = joined["yahoo_ticker"]
+            combined["financials_period_end"] = joined["financials_period_end_fa"].where(
+                joined["financials_period_end_fa"].notna(),
+                joined["financials_period_end_ry"],
+            )
+            combined["financials_source"] = np.where(
+                joined["financials_source_fa"].notna(),
+                joined["financials_source_fa"],
+                joined["financials_source_ry"],
+            )
+            for c in requested_fields:
+                c_fa = f"{c}_fa"
+                c_ry = f"{c}_ry"
+                if c_fa in joined.columns and c_ry in joined.columns:
+                    combined[c] = joined[c_fa].where(joined[c_fa].notna(), joined[c_ry])
+                elif c_fa in joined.columns:
+                    combined[c] = joined[c_fa]
+                elif c_ry in joined.columns:
+                    combined[c] = joined[c_ry]
+        elif not fin_snap.empty:
+            combined = fin_snap.copy()
+        elif not rep_snap.empty:
+            combined = rep_snap.copy()
+
+        if not combined.empty:
+            combined["yahoo_ticker"] = combined["yahoo_ticker"].astype(str).str.strip().str.upper()
+            master["yahoo_ticker"] = master["yahoo_ticker"].astype(str).str.strip().str.upper()
+            merged = master.merge(combined, on="yahoo_ticker", how="left", suffixes=("", "_fin"), validate="many_to_one")
+
+            if "financials_period_end_fin" in merged.columns:
+                if "financials_period_end" in merged.columns:
+                    merged["financials_period_end"] = merged["financials_period_end"].where(
+                        merged["financials_period_end"].notna(),
+                        merged["financials_period_end_fin"],
+                    )
+                    merged = merged.drop(columns=["financials_period_end_fin"])
+                else:
+                    merged = merged.rename(columns={"financials_period_end_fin": "financials_period_end"})
+
+            if "financials_source_fin" in merged.columns:
+                if "financials_source" in merged.columns:
+                    merged["financials_source"] = merged["financials_source"].where(
+                        merged["financials_source"].notna(),
+                        merged["financials_source_fin"],
+                    )
+                    merged = merged.drop(columns=["financials_source_fin"])
+                else:
+                    merged = merged.rename(columns={"financials_source_fin": "financials_source"})
+
+            for c in requested_fields:
+                fc = f"{c}_fin"
+                if fc not in merged.columns:
+                    continue
+                if c in merged.columns:
+                    merged[c] = merged[c].where(merged[c].notna(), merged[fc])
+                else:
+                    merged[c] = merged[fc]
+            merged = merged.drop(columns=[c for c in merged.columns if c.endswith("_fin")])
+            master = merged
+
+            financials_info["snapshot_date"] = str(pd.to_datetime(master.get("financials_period_end"), errors="coerce").max().date()) if "financials_period_end" in master.columns else None
+            financials_info["matched_rows"] = int(master["financials_period_end"].notna().sum()) if "financials_period_end" in master.columns else 0
+            financials_info["matched_agent_rows"] = int((master.get("financials_source", pd.Series(dtype=object)) == "financials_agent").sum())
+            financials_info["matched_reports_y_rows"] = int((master.get("financials_source", pd.Series(dtype=object)) == "reports_y").sum())
+            for col in core_fields:
+                if col in master.columns:
+                    financials_info["core_coverage"][col] = float(pd.to_numeric(master[col], errors="coerce").notna().mean())
+            for col in enrich_fields:
+                if col in master.columns:
+                    financials_info["enrich_coverage"][col] = float(pd.to_numeric(master[col], errors="coerce").notna().mean())
+            log.info(
+                "MASTER: financials enrichment matched=%s rows (agent=%s,reports_y=%s); core fields tracked=%s, enrichment fields tracked=%s",
+                financials_info["matched_rows"],
+                financials_info["matched_agent_rows"],
+                financials_info["matched_reports_y_rows"],
+                len(financials_info["core_coverage"]),
+                len(financials_info["enrich_coverage"]),
+            )
+        else:
+            log.info("MASTER: financials enrichment enabled but no financials snapshot found <= asof.")
+
     # 4) Enrich dividend-quality features from raw reports snapshot (as-of)
-    raw_snapshot_dir = _latest_raw_snapshot_dir(raw_dir, ctx.asof)
+    raw_snapshot_dir = _latest_raw_snapshot_dir_with_data(raw_dir, ctx.asof, ["reports_y", "reports_r12"])
     ins_map = _load_insid_mapping(ctx)
     div_snapshot = _build_dividend_feature_snapshot(master=master, raw_snapshot_dir=raw_snapshot_dir, asof_dt=asof_dt, ins_map=ins_map)
     if not div_snapshot.empty:
@@ -632,6 +1045,27 @@ def run(ctx, log) -> int:
             quality_lines.append(f"- {col}: {share:.1%}")
     else:
         quality_lines.append("- none")
+
+    quality_lines.append("")
+    quality_lines.append("## Financials Enrichment Coverage")
+    if not financials_info["enabled"]:
+        quality_lines.append("- disabled")
+    elif not financials_info["core_coverage"] and not financials_info["enrich_coverage"]:
+        quality_lines.append("- no snapshot merged")
+    else:
+        quality_lines.append(f"- matched rows in master: {financials_info['matched_rows']}")
+        quality_lines.append(f"- matched from financials_agent: {financials_info['matched_agent_rows']}")
+        quality_lines.append(f"- matched from reports_y bridge: {financials_info['matched_reports_y_rows']}")
+        if financials_info["snapshot_date"]:
+            quality_lines.append(f"- latest financials_period_end: {financials_info['snapshot_date']}")
+        if financials_info["core_coverage"]:
+            quality_lines.append("- core fields:")
+            for col, share in financials_info["core_coverage"].items():
+                quality_lines.append(f"  - {col}: {share:.1%}")
+        if financials_info["enrich_coverage"]:
+            quality_lines.append("- enrichment fields:")
+            for col, share in financials_info["enrich_coverage"].items():
+                quality_lines.append(f"  - {col}: {share:.1%}")
 
     _quality_write(ctx.run_dir, quality_lines)
 

@@ -1,0 +1,97 @@
+version: 1
+name: financials_field_tiers_v1
+
+# Fields used as stable model inputs when available.
+core_model_input_fields:
+  - revenue_total
+  - cost_of_goods_sold
+  - gross_profit
+  - sga_expense
+  - depreciation_expense
+  - amortization_expense
+  - operating_income_ebit
+  - net_finance_income_expense
+  - profit_before_tax
+  - income_tax_expense
+  - net_income
+  - net_income_attributable_to_parent
+  - cash_and_cash_equivalents
+  - accounts_receivable
+  - inventory
+  - property_plant_equipment
+  - right_of_use_assets
+  - intangible_assets
+  - goodwill
+  - deferred_tax_assets
+  - total_assets
+  - accounts_payable
+  - short_term_debt
+  - long_term_debt
+  - lease_liabilities_current
+  - lease_liabilities_noncurrent
+  - total_liabilities
+  - equity_attributable_to_parent
+  - total_equity
+  - cash_flow_from_operations
+  - interest_paid_cash
+  - income_taxes_paid_cash
+  - capex_purchase_ppe
+  - cash_flow_from_investing
+  - cash_flow_from_financing
+  - dividends_paid_total
+  - net_change_in_cash
+  - fx_effect_on_cash
+  - shares_outstanding_basic
+  - shares_outstanding_diluted
+
+# Optional enrichment fields carried in master for diagnostics/research.
+enrichment_optional_fields:
+  - reporting_currency
+  - fiscal_year
+  - reporting_period_type
+  - rd_expense
+  - ebitda
+  - non_operating_income_expense
+  - deferred_tax_liabilities
+  - short_term_investments
+  - other_current_assets
+  - investments_in_associates
+  - other_non_current_assets
+  - pension_liabilities
+  - provisions
+  - capex_purchase_intangibles
+  - interest_received_cash
+  - share_buybacks_paid
+  - debt_issued_cash_inflow
+  - debt_repaid_cash_outflow
+  - lease_principal_repayments
+  - treasury_shares
+  - impairment_expense
+  - bank_net_interest_income
+  - bank_fee_commission_income
+  - bank_operating_expenses
+  - bank_loan_loss_provisions
+  - bank_total_loans_gross
+  - bank_ecl_allowance
+  - bank_total_loans_net
+  - bank_customer_deposits
+  - bank_total_assets
+  - bank_total_equity
+  - bank_rwa
+  - bank_cet1_capital
+  - bank_cet1_ratio
+  - bank_npl_ratio
+  - bank_liquidity_coverage_ratio
+  - ins_gross_written_premiums
+  - ins_earned_premiums
+  - ins_claims_incurred
+  - ins_operating_expenses
+  - ins_underwriting_result
+  - ins_investment_result
+  - ins_profit_before_tax
+  - ins_net_income
+  - ins_insurance_contract_liabilities
+  - ins_reinsurance_contract_assets
+  - ins_investment_assets
+  - ins_total_assets
+  - ins_total_equity

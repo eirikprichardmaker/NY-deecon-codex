@@ -1,4 +1,4 @@
-report_sources_csv: report_sources.csv
+report_sources_csv: report_sources_verified.csv
 canonical_schema: canonical_schema.yaml
 mapping_default: mappings/esef_ifrs_default.yaml
 mapping_overrides_dir: mappings/company_overrides

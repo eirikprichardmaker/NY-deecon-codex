@@ -46,7 +46,8 @@ def test_arelle_mode_graceful_when_missing_dependency(monkeypatch):
         ]
     )
     facts, issues, val = parse_reports(docs_df, arelle_mode="parse")
-    assert facts.empty
+    assert not facts.empty
+    assert any(x["issue_type"] == "arelle_parse_failed_fallback" for x in issues)
     assert any("Arelle dependency is not installed" in str(x["details"]) for x in issues)
     assert val.empty
 
@@ -73,6 +74,34 @@ def test_filing_resolution_winner_logic():
     resolution_df, winner_long = resolve_conflicting_filings(long_df, docs_df, _cfg())
     assert resolution_df.iloc[0]["doc_id_winner"] == "doc_new"
     assert set(winner_long["source_doc_id"]) == {"doc_new"}
+
+
+def test_filing_resolution_handles_missing_docs_schema():
+    long_df = pd.DataFrame(
+        [
+            {
+                "company_id": "CO1",
+                "period_end": "2024-12-31",
+                "period_type": "annual",
+                "source_doc_id": "doc_a",
+                "field_id": "revenue_total",
+                "value": 100.0,
+            },
+            {
+                "company_id": "CO1",
+                "period_end": "2024-12-31",
+                "period_type": "annual",
+                "source_doc_id": "doc_b",
+                "field_id": "revenue_total",
+                "value": 101.0,
+            },
+        ]
+    )
+    docs_df = pd.DataFrame()
+    resolution_df, winner_long = resolve_conflicting_filings(long_df, docs_df, _cfg())
+    assert len(resolution_df) == 1
+    assert len(winner_long) == 1
+    assert winner_long.iloc[0]["source_doc_id"] in {"doc_a", "doc_b"}
 
 
 def test_currency_unit_checks_raise_issues():

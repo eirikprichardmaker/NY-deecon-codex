@@ -27,3 +27,8 @@ wft_opt_strategy_a:
 decision:
   quality_strategy: baseline
   dividend_min_score: 0
+
+financials_enrichment:
+  enabled: true
+  tiers_config: config/financials_field_tiers.yaml
+  include_reports_y_bridge: true
