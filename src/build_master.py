@@ -106,6 +106,33 @@ REPORTS_Y_TO_CANONICAL = {
     "number_of_shares": "shares_outstanding_basic",
 }
 
+DEFAULT_REPORTS_Y_GUARD_FIELDS = [
+    "revenue_total",
+    "gross_profit",
+    "operating_income_ebit",
+    "profit_before_tax",
+    "net_income_attributable_to_parent",
+    "cash_and_cash_equivalents",
+    "property_plant_equipment",
+    "intangible_assets",
+    "total_assets",
+    "total_equity",
+    "total_liabilities",
+    "cash_flow_from_operations",
+    "cash_flow_from_investing",
+    "cash_flow_from_financing",
+    "net_change_in_cash",
+]
+
+FINANCIALS_GUARD_COLS = [
+    "financials_guard_anomaly",
+    "reason_financials_guard",
+    "financials_guard_changed_fields",
+    "financials_guard_fields",
+    "financials_guard_prev_snapshot",
+    "financials_guard_current_snapshot",
+]
+
 
 def _quality_write(run_dir, lines: list[str]) -> None:
     path = run_dir / "quality.md"
@@ -335,6 +362,139 @@ def _latest_raw_snapshot_dir_with_data(raw_dir: Path, asof: str, required_any_su
         return None
     rows.sort(key=lambda x: x[0], reverse=True)
     return rows[0][1]
+
+
+def _previous_raw_snapshot_dir_with_data(raw_dir: Path, before_date: str, required_any_subdirs: list[str]) -> Path | None:
+    if not raw_dir.exists():
+        return None
+    before_dt = pd.to_datetime(before_date, format="%Y-%m-%d", errors="coerce")
+    if pd.isna(before_dt):
+        return None
+
+    rows: list[tuple[pd.Timestamp, Path]] = []
+    for d in raw_dir.iterdir():
+        if not d.is_dir():
+            continue
+        ts = pd.to_datetime(d.name, format="%Y-%m-%d", errors="coerce")
+        if pd.isna(ts) or ts.normalize() >= before_dt.normalize():
+            continue
+        ok = False
+        for sub in required_any_subdirs:
+            if (d / sub).exists():
+                ok = True
+                break
+        if ok:
+            rows.append((ts.normalize(), d))
+    if not rows:
+        return None
+    rows.sort(key=lambda x: x[0], reverse=True)
+    return rows[0][1]
+
+
+def _apply_reports_y_anomaly_guard(
+    *,
+    current: pd.DataFrame,
+    previous: pd.DataFrame,
+    candidate_fields: list[str],
+    guard_cfg: dict[str, Any],
+    current_snapshot_name: str,
+    previous_snapshot_name: str,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    if current.empty:
+        return (
+            current,
+            pd.DataFrame(columns=["yahoo_ticker"] + FINANCIALS_GUARD_COLS),
+            {"compared_rows": 0, "flagged_rows": 0, "excluded_rows": 0},
+        )
+    if previous.empty:
+        return (
+            current,
+            pd.DataFrame(columns=["yahoo_ticker"] + FINANCIALS_GUARD_COLS),
+            {"compared_rows": 0, "flagged_rows": 0, "excluded_rows": 0},
+        )
+
+    ratio_threshold = float(guard_cfg.get("ratio_threshold", 100.0))
+    min_changed_fields = int(guard_cfg.get("min_changed_fields", 5))
+    min_abs_delta = float(guard_cfg.get("min_abs_delta", 1.0))
+    near_zero_threshold = float(guard_cfg.get("near_zero_threshold", 1e-9))
+    min_abs_level = float(guard_cfg.get("min_abs_level", 1.0))
+    compare_fields = [f for f in candidate_fields if f in set(current.columns) and f in set(previous.columns)]
+    if not compare_fields:
+        return (
+            current,
+            pd.DataFrame(columns=["yahoo_ticker"] + FINANCIALS_GUARD_COLS),
+            {"compared_rows": 0, "flagged_rows": 0, "excluded_rows": 0},
+        )
+
+    ccols = ["yahoo_ticker", "financials_period_end"] + compare_fields
+    pcols = ["yahoo_ticker", "financials_period_end"] + compare_fields
+    cur = current[ccols].copy()
+    prev = previous[pcols].copy()
+    joined = cur.merge(prev, on=["yahoo_ticker", "financials_period_end"], how="left", suffixes=("_cur", "_prev"), validate="one_to_one")
+    if joined.empty:
+        return (
+            current,
+            pd.DataFrame(columns=["yahoo_ticker"] + FINANCIALS_GUARD_COLS),
+            {"compared_rows": 0, "flagged_rows": 0, "excluded_rows": 0},
+        )
+
+    jump_flags = pd.DataFrame(index=joined.index)
+    has_prev = pd.Series(False, index=joined.index, dtype="boolean")
+    for col in compare_fields:
+        s_cur = pd.to_numeric(joined[f"{col}_cur"], errors="coerce")
+        s_prev = pd.to_numeric(joined[f"{col}_prev"], errors="coerce")
+        both = s_cur.notna() & s_prev.notna()
+        has_prev = has_prev | s_prev.notna()
+        abs_cur = s_cur.abs()
+        abs_prev = s_prev.abs()
+        abs_delta = (s_cur - s_prev).abs()
+
+        ratio_up = abs_cur / abs_prev.replace(0.0, np.nan)
+        ratio_down = abs_prev / abs_cur.replace(0.0, np.nan)
+        ratio_jump = ratio_up.ge(ratio_threshold) | ratio_down.ge(ratio_threshold)
+        zero_jump = ((abs_prev <= near_zero_threshold) & (abs_cur >= min_abs_level)) | (
+            (abs_cur <= near_zero_threshold) & (abs_prev >= min_abs_level)
+        )
+        significant = abs_delta.ge(min_abs_delta) & (np.maximum(abs_cur, abs_prev) >= min_abs_level)
+        jump_flags[col] = both & significant & (ratio_jump | zero_jump)
+
+    if jump_flags.empty:
+        return (
+            current,
+            pd.DataFrame(columns=["yahoo_ticker"] + FINANCIALS_GUARD_COLS),
+            {"compared_rows": int(has_prev.sum()), "flagged_rows": 0, "excluded_rows": 0},
+        )
+
+    changed_count = jump_flags.sum(axis=1).astype(int)
+    anomaly_mask = has_prev & changed_count.ge(min_changed_fields)
+    if not bool(anomaly_mask.any()):
+        return (
+            current,
+            pd.DataFrame(columns=["yahoo_ticker"] + FINANCIALS_GUARD_COLS),
+            {"compared_rows": int(has_prev.sum()), "flagged_rows": 0, "excluded_rows": 0},
+        )
+
+    fields_series = jump_flags.apply(lambda r: ",".join([c for c, v in r.items() if bool(v)]), axis=1)
+    reason = f"reports_y_scale_jump_vs_prev_snapshot:{previous_snapshot_name}->{current_snapshot_name}"
+    flagged = joined.loc[anomaly_mask, ["yahoo_ticker"]].copy()
+    flagged["financials_guard_anomaly"] = True
+    flagged["reason_financials_guard"] = reason
+    flagged["financials_guard_changed_fields"] = changed_count.loc[anomaly_mask].astype(float)
+    flagged["financials_guard_fields"] = fields_series.loc[anomaly_mask]
+    flagged["financials_guard_prev_snapshot"] = previous_snapshot_name
+    flagged["financials_guard_current_snapshot"] = current_snapshot_name
+    flagged = flagged.drop_duplicates(subset=["yahoo_ticker"], keep="first")
+
+    kept = current[~current["yahoo_ticker"].isin(set(flagged["yahoo_ticker"]))].copy()
+    return (
+        kept,
+        flagged,
+        {
+            "compared_rows": int(has_prev.sum()),
+            "flagged_rows": int(len(flagged)),
+            "excluded_rows": int(len(flagged)),
+        },
+    )
 
 
 def _load_financials_tier_fields(project_root: Path, cfg: dict) -> tuple[list[str], list[str]]:
@@ -645,6 +805,165 @@ def _safe_ratio(num: float, den: float) -> float:
     return float(num / den)
 
 
+def _derive_tier23_financial_metrics(master: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, float]]:
+    out = master.copy()
+    idx = out.index
+
+    def num(col: str) -> pd.Series:
+        if col in out.columns:
+            return pd.to_numeric(out[col], errors="coerce")
+        return pd.Series(np.nan, index=idx, dtype="float64")
+
+    def sum_any(parts: list[pd.Series]) -> pd.Series:
+        if not parts:
+            return pd.Series(np.nan, index=idx, dtype="float64")
+        total = pd.Series(0.0, index=idx, dtype="float64")
+        mask = pd.Series(False, index=idx, dtype="boolean")
+        for p in parts:
+            pp = pd.to_numeric(p, errors="coerce")
+            total = total + pp.fillna(0.0)
+            mask = mask | pp.notna()
+        return total.where(mask, np.nan)
+
+    def first_valid(candidates: list[tuple[str, pd.Series]]) -> tuple[pd.Series, pd.Series]:
+        value = pd.Series(np.nan, index=idx, dtype="float64")
+        method = pd.Series("", index=idx, dtype="object")
+        for name, s in candidates:
+            ss = pd.to_numeric(s, errors="coerce")
+            use = value.isna() & ss.notna()
+            value = value.where(~use, ss)
+            method = method.where(~use, name)
+        return value, method
+
+    coverage: dict[str, float] = {}
+
+    def set_metric(name: str, value: pd.Series, method: pd.Series) -> None:
+        v = pd.to_numeric(value, errors="coerce")
+        out[name] = v
+        out[f"{name}_derived_from"] = method.where(v.notna(), "")
+        coverage[name] = float(v.notna().mean())
+
+    revenue = num("revenue_total")
+    ebit = num("operating_income_ebit")
+    pbt = num("profit_before_tax")
+    tax = num("income_tax_expense")
+    ni_parent = num("net_income_attributable_to_parent")
+    ni = num("net_income")
+    cfo = num("cash_flow_from_operations")
+    gross = num("gross_profit")
+    finance_costs = num("finance_costs")
+    interest_paid = num("interest_paid_cash")
+    total_assets = num("total_assets")
+    total_equity = num("total_equity")
+    total_liabilities = num("total_liabilities")
+
+    # Tier-2
+    etr = (tax / pbt).where(pbt.notna() & pbt.ne(0.0), np.nan)
+    set_metric("t2_effective_tax_rate", etr, pd.Series("income_tax_expense/profit_before_tax", index=idx))
+
+    dep = num("depreciation_expense").abs()
+    amort = num("amortization_expense").abs()
+    ebitda_reported = num("ebitda")
+    ebitda_fallback = (ebit + dep.fillna(0.0) + amort.fillna(0.0)).where(ebit.notna() & (dep.notna() | amort.notna()), np.nan)
+    ebitda_used, ebitda_used_m = first_valid(
+        [
+            ("reported:ebitda", ebitda_reported),
+            ("fallback:operating_income_ebit+abs(depreciation_expense)+abs(amortization_expense)", ebitda_fallback),
+        ]
+    )
+    set_metric("t2_ebitda_used", ebitda_used, ebitda_used_m)
+
+    gross_margin = (gross / revenue).where(revenue.notna() & revenue.ne(0.0), np.nan)
+    set_metric("t2_gross_margin", gross_margin, pd.Series("gross_profit/revenue_total", index=idx))
+
+    ebit_margin = (ebit / revenue).where(revenue.notna() & revenue.ne(0.0), np.nan)
+    set_metric("t2_ebit_margin", ebit_margin, pd.Series("operating_income_ebit/revenue_total", index=idx))
+
+    ebitda_margin = (ebitda_used / revenue).where(revenue.notna() & revenue.ne(0.0), np.nan)
+    set_metric("t2_ebitda_margin", ebitda_margin, ebitda_used_m.where(ebitda_margin.notna(), "") + "/revenue_total")
+
+    net_margin_parent, net_margin_parent_m = first_valid(
+        [
+            ("net_income_attributable_to_parent/revenue_total", (ni_parent / revenue).where(revenue.notna() & revenue.ne(0.0), np.nan)),
+            ("fallback:net_income/revenue_total", (ni / revenue).where(revenue.notna() & revenue.ne(0.0), np.nan)),
+        ]
+    )
+    set_metric("t2_net_margin", net_margin_parent, net_margin_parent_m)
+
+    cfo_margin = (cfo / revenue).where(revenue.notna() & revenue.ne(0.0), np.nan)
+    set_metric("t2_cfo_margin", cfo_margin, pd.Series("cash_flow_from_operations/revenue_total", index=idx))
+
+    capex_ppe = num("capex_purchase_ppe").abs()
+    capex_int = num("capex_purchase_intangibles").abs()
+    capex_total = sum_any([capex_ppe, capex_int])
+    fcf_strict = (cfo - capex_total).where(cfo.notna() & capex_total.notna(), np.nan)
+    fcf_used, fcf_used_m = first_valid(
+        [
+            ("cash_flow_from_operations-abs(capex_purchase_ppe)-abs(capex_purchase_intangibles)", fcf_strict),
+            ("fallback:cash_flow_from_operations", cfo),
+        ]
+    )
+    set_metric("t2_fcf_simple", fcf_used, fcf_used_m)
+    fcf_margin = (fcf_used / revenue).where(revenue.notna() & revenue.ne(0.0), np.nan)
+    set_metric("t2_fcf_margin", fcf_margin, fcf_used_m.where(fcf_margin.notna(), "") + "/revenue_total")
+
+    debt_total = sum_any([num("short_term_debt"), num("long_term_debt")])
+    lease_total = sum_any([num("lease_liabilities_current"), num("lease_liabilities_noncurrent")])
+    liquidity_total = sum_any([num("cash_and_cash_equivalents"), num("short_term_investments")])
+    net_debt_excl = (debt_total - liquidity_total).where(debt_total.notna() & liquidity_total.notna(), np.nan)
+    set_metric("t2_net_debt_excl_leases", net_debt_excl, pd.Series("(short_term_debt+long_term_debt)-(cash_and_cash_equivalents+short_term_investments)", index=idx))
+    net_debt_incl, net_debt_incl_m = first_valid(
+        [
+            ("(short_term_debt+long_term_debt+lease_liabilities_current+lease_liabilities_noncurrent)-(cash_and_cash_equivalents+short_term_investments)", (debt_total + lease_total - liquidity_total).where(debt_total.notna() & lease_total.notna() & liquidity_total.notna(), np.nan)),
+            ("fallback:t2_net_debt_excl_leases", net_debt_excl),
+        ]
+    )
+    set_metric("t2_net_debt_incl_leases", net_debt_incl, net_debt_incl_m)
+
+    nd_ebitda_excl = (net_debt_excl / ebitda_used).where(ebitda_used.notna() & ebitda_used.ne(0.0), np.nan)
+    set_metric("t2_nd_ebitda_excl_leases", nd_ebitda_excl, pd.Series("t2_net_debt_excl_leases/t2_ebitda_used", index=idx))
+    nd_ebitda_incl = (net_debt_incl / ebitda_used).where(ebitda_used.notna() & ebitda_used.ne(0.0), np.nan)
+    set_metric("t2_nd_ebitda_incl_leases", nd_ebitda_incl, pd.Series("t2_net_debt_incl_leases/t2_ebitda_used", index=idx))
+
+    interest_cov, interest_cov_m = first_valid(
+        [
+            ("operating_income_ebit/abs(finance_costs)", (ebit / finance_costs.abs()).where(ebit.notna() & finance_costs.abs().gt(0.0), np.nan)),
+            ("fallback:operating_income_ebit/abs(interest_paid_cash)", (ebit / interest_paid.abs()).where(ebit.notna() & interest_paid.abs().gt(0.0), np.nan)),
+        ]
+    )
+    set_metric("t2_interest_coverage", interest_cov, interest_cov_m)
+
+    # Tier-3
+    ar = num("accounts_receivable")
+    inv = num("inventory")
+    ap = num("accounts_payable")
+    wc = (ar + inv - ap).where(ar.notna() & inv.notna() & ap.notna(), np.nan)
+    set_metric("t3_working_capital", wc, pd.Series("accounts_receivable+inventory-accounts_payable", index=idx))
+    wc_rev = (wc / revenue).where(revenue.notna() & revenue.ne(0.0), np.nan)
+    set_metric("t3_working_capital_to_revenue", wc_rev, pd.Series("t3_working_capital/revenue_total", index=idx))
+
+    roa_used, roa_m = first_valid(
+        [
+            ("net_income_attributable_to_parent/total_assets", (ni_parent / total_assets).where(total_assets.notna() & total_assets.ne(0.0), np.nan)),
+            ("fallback:net_income/total_assets", (ni / total_assets).where(total_assets.notna() & total_assets.ne(0.0), np.nan)),
+        ]
+    )
+    set_metric("t3_roa", roa_used, roa_m)
+
+    lev = (total_liabilities / total_equity).where(total_equity.notna() & total_equity.ne(0.0), np.nan)
+    set_metric("t3_liabilities_to_equity", lev, pd.Series("total_liabilities/total_equity", index=idx))
+
+    cash_conv, cash_conv_m = first_valid(
+        [
+            ("cash_flow_from_operations/net_income_attributable_to_parent", (cfo / ni_parent).where(ni_parent.notna() & ni_parent.ne(0.0), np.nan)),
+            ("fallback:cash_flow_from_operations/net_income", (cfo / ni).where(ni.notna() & ni.ne(0.0), np.nan)),
+        ]
+    )
+    set_metric("t3_cash_conversion", cash_conv, cash_conv_m)
+
+    return out, coverage
+
+
 def _derive_dividend_features(reports_y: pd.DataFrame, reports_r12: pd.DataFrame, asof_dt: pd.Timestamp) -> dict[str, float]:
     out: dict[str, float] = {k: float("nan") for k in DIVIDEND_FEATURE_COLS}
 
@@ -776,7 +1095,14 @@ def run(ctx, log) -> int:
         "matched_reports_y_rows": 0,
         "core_coverage": {},
         "enrich_coverage": {},
+        "guard_enabled": False,
+        "guard_current_snapshot": None,
+        "guard_previous_snapshot": None,
+        "guard_compared_rows": 0,
+        "guard_flagged_rows": 0,
+        "guard_excluded_rows": 0,
     }
+    tier23_coverage: dict[str, float] = {}
 
     # 1) Base master: prefer raw/master_input if present (som hos deg)
     master_input = raw_dir / "master_input.parquet"
@@ -842,8 +1168,11 @@ def run(ctx, log) -> int:
     # 3b) Optional: enrich master with financials-agent snapshot (as-of, latest period per ticker)
     fin_cfg = ctx.cfg.get("financials_enrichment", {}) or {}
     if bool(fin_cfg.get("enabled", True)):
+        guard_flags = pd.DataFrame(columns=["yahoo_ticker"] + FINANCIALS_GUARD_COLS)
         core_fields, enrich_fields = _load_financials_tier_fields(ctx.project_root, ctx.cfg)
         requested_fields = core_fields + [f for f in enrich_fields if f not in set(core_fields)]
+        guard_cfg = fin_cfg.get("anomaly_guard", {}) or {}
+        financials_info["guard_enabled"] = bool(guard_cfg.get("enabled", True))
         fin_snap = _build_financials_feature_snapshot(
             project_root=ctx.project_root,
             raw_root=raw_dir,
@@ -862,6 +1191,40 @@ def run(ctx, log) -> int:
             ins_map=ins_map if bridge_enabled else pd.DataFrame(),
             fields=requested_fields,
         )
+        if bridge_enabled and financials_info["guard_enabled"] and raw_snapshot_dir is not None and not rep_snap.empty:
+            prev_raw_snapshot_dir = _previous_raw_snapshot_dir_with_data(raw_dir, raw_snapshot_dir.name, ["reports_y"])
+            if prev_raw_snapshot_dir is not None:
+                rep_snap_prev = _build_reports_y_feature_snapshot(
+                    master=master,
+                    raw_snapshot_dir=prev_raw_snapshot_dir,
+                    asof_dt=asof_dt,
+                    ins_map=ins_map,
+                    fields=requested_fields,
+                )
+                guard_fields = [f for f in DEFAULT_REPORTS_Y_GUARD_FIELDS if f in requested_fields]
+                rep_snap, guard_flags, guard_stats = _apply_reports_y_anomaly_guard(
+                    current=rep_snap,
+                    previous=rep_snap_prev,
+                    candidate_fields=guard_fields,
+                    guard_cfg=guard_cfg,
+                    current_snapshot_name=raw_snapshot_dir.name,
+                    previous_snapshot_name=prev_raw_snapshot_dir.name,
+                )
+                financials_info["guard_current_snapshot"] = raw_snapshot_dir.name
+                financials_info["guard_previous_snapshot"] = prev_raw_snapshot_dir.name
+                financials_info["guard_compared_rows"] = int(guard_stats.get("compared_rows", 0))
+                financials_info["guard_flagged_rows"] = int(guard_stats.get("flagged_rows", 0))
+                financials_info["guard_excluded_rows"] = int(guard_stats.get("excluded_rows", 0))
+                if financials_info["guard_excluded_rows"] > 0:
+                    log.info(
+                        "MASTER: reports_y anomaly guard excluded=%s rows (compared=%s, prev=%s, curr=%s)",
+                        financials_info["guard_excluded_rows"],
+                        financials_info["guard_compared_rows"],
+                        financials_info["guard_previous_snapshot"],
+                        financials_info["guard_current_snapshot"],
+                    )
+            else:
+                log.info("MASTER: reports_y anomaly guard skipped (no previous reports_y snapshot).")
 
         if not fin_snap.empty and fin_snap["yahoo_ticker"].duplicated().any():
             dups = fin_snap[fin_snap["yahoo_ticker"].duplicated(keep=False)]["yahoo_ticker"].tolist()
@@ -954,6 +1317,21 @@ def run(ctx, log) -> int:
         else:
             log.info("MASTER: financials enrichment enabled but no financials snapshot found <= asof.")
 
+        if not guard_flags.empty:
+            guard_flags["yahoo_ticker"] = guard_flags["yahoo_ticker"].astype(str).str.strip().str.upper()
+            master["yahoo_ticker"] = master["yahoo_ticker"].astype(str).str.strip().str.upper()
+            master = master.merge(guard_flags, on="yahoo_ticker", how="left", validate="many_to_one")
+        for col in FINANCIALS_GUARD_COLS:
+            if col not in master.columns:
+                if col == "financials_guard_anomaly":
+                    master[col] = False
+                elif col == "financials_guard_changed_fields":
+                    master[col] = np.nan
+                else:
+                    master[col] = ""
+        master["financials_guard_anomaly"] = np.where(master["financials_guard_anomaly"].isna(), False, master["financials_guard_anomaly"]).astype(bool)
+        master["reason_financials_guard"] = master["reason_financials_guard"].fillna("").astype(str)
+
     # 4) Enrich dividend-quality features from raw reports snapshot (as-of)
     raw_snapshot_dir = _latest_raw_snapshot_dir_with_data(raw_dir, ctx.asof, ["reports_y", "reports_r12"])
     ins_map = _load_insid_mapping(ctx)
@@ -979,6 +1357,11 @@ def run(ctx, log) -> int:
                 merged[c] = merged[dc]
         merged = merged.drop(columns=[c for c in merged.columns if c.endswith("_derived")])
         master = merged
+
+    master, tier23_coverage = _derive_tier23_financial_metrics(master)
+    if tier23_coverage:
+        nonzero = sum(1 for v in tier23_coverage.values() if v > 0.0)
+        log.info("MASTER: tier2/tier3 derived metrics computed=%s, with_nonzero_coverage=%s", len(tier23_coverage), nonzero)
 
     price_s = pd.to_numeric(master.get("adj_close"), errors="coerce")
     ma200_s = pd.to_numeric(master.get("ma200"), errors="coerce")
@@ -1066,6 +1449,37 @@ def run(ctx, log) -> int:
             quality_lines.append("- enrichment fields:")
             for col, share in financials_info["enrich_coverage"].items():
                 quality_lines.append(f"  - {col}: {share:.1%}")
+
+    quality_lines.append("")
+    quality_lines.append("## Financials Anomaly Guard")
+    if not financials_info["enabled"]:
+        quality_lines.append("- skipped (financials enrichment disabled)")
+    elif not financials_info["guard_enabled"]:
+        quality_lines.append("- disabled")
+    else:
+        quality_lines.append(f"- compared rows: {financials_info['guard_compared_rows']}")
+        quality_lines.append(f"- flagged rows: {financials_info['guard_flagged_rows']}")
+        quality_lines.append(f"- excluded rows from reports_y enrichment: {financials_info['guard_excluded_rows']}")
+        if financials_info["guard_previous_snapshot"] and financials_info["guard_current_snapshot"]:
+            quality_lines.append(
+                f"- compared snapshots: {financials_info['guard_previous_snapshot']} -> {financials_info['guard_current_snapshot']}"
+            )
+        reason_counts = master.get("reason_financials_guard", pd.Series(dtype=str))
+        reason_counts = reason_counts[reason_counts.astype(str).str.strip().ne("")]
+        if len(reason_counts) == 0:
+            quality_lines.append("- reasons: none")
+        else:
+            quality_lines.append("- reasons:")
+            for reason, count in reason_counts.value_counts().head(5).items():
+                quality_lines.append(f"  - {reason}: {int(count)}")
+
+    quality_lines.append("")
+    quality_lines.append("## Financials Tier2/Tier3 Derived Coverage")
+    if not tier23_coverage:
+        quality_lines.append("- none")
+    else:
+        for col, share in tier23_coverage.items():
+            quality_lines.append(f"- {col}: {share:.1%}")
 
     _quality_write(ctx.run_dir, quality_lines)
 

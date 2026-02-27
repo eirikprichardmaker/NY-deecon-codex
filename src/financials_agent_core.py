@@ -963,6 +963,184 @@ def augment_wide_with_derived_fields(
     return out
 
 
+def _build_raw_fact_lookup(raw_facts_df: pd.DataFrame | None) -> dict[tuple[Any, Any, str], float]:
+    if raw_facts_df is None or raw_facts_df.empty:
+        return {}
+    raw = raw_facts_df.copy()
+    raw["value"] = pd.to_numeric(raw.get("value"), errors="coerce")
+    raw = raw[raw["value"].notna()].copy()
+    if raw.empty:
+        return {}
+    raw["_has_dimensions"] = raw.get("dimensions", pd.Series(["" for _ in range(len(raw))], index=raw.index)).fillna("").astype(str).str.strip().ne("")
+    raw["_abs_value"] = raw["value"].abs()
+    raw["_context_ref"] = raw.get("context_ref", pd.Series(["" for _ in range(len(raw))], index=raw.index)).fillna("").astype(str)
+    raw = raw.sort_values(
+        ["company_id", "period_end", "concept", "_has_dimensions", "_abs_value", "_context_ref", "source_doc_id"],
+        ascending=[True, True, True, True, False, True, True],
+        kind="mergesort",
+    ).drop_duplicates(subset=["company_id", "period_end", "concept"], keep="first")
+    return {
+        (r.company_id, r.period_end, str(r.concept)): float(r.value)
+        for r in raw.itertuples(index=False)
+        if str(getattr(r, "concept", "")).strip()
+    }
+
+
+def build_borsdata_compat_wide(
+    wide_df: pd.DataFrame,
+    raw_facts_df: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    cols = [
+        "company_id",
+        "period_end",
+        "revenues",
+        "gross_income",
+        "operating_income",
+        "profit_before_tax",
+        "profit_to_equity_holders",
+        "earnings_per_share",
+        "number_of_shares",
+        "intangible_assets",
+        "intangible_assets_derived_from",
+        "tangible_assets",
+        "tangible_assets_derived_from",
+        "cash_and_equivalents",
+        "total_assets",
+        "total_equity",
+        "total_liabilities_and_equity",
+        "net_debt",
+        "net_debt_derived_from",
+        "cash_flow_from_operating_activities",
+        "cash_flow_from_investing_activities",
+        "cash_flow_from_financing_activities",
+        "cash_flow_for_the_year",
+        "free_cash_flow",
+        "free_cash_flow_derived_from",
+        "currency",
+        "report_end_date",
+        "compat_definition_version",
+    ]
+    if wide_df.empty:
+        return pd.DataFrame(columns=cols)
+
+    out = pd.DataFrame()
+    out["company_id"] = wide_df.get("company_id", pd.Series(dtype=object))
+    out["period_end"] = wide_df.get("period_end", pd.Series(dtype=object))
+
+    def _num_from_wide(name: str) -> pd.Series:
+        if name in wide_df.columns:
+            return pd.to_numeric(wide_df[name], errors="coerce")
+        return pd.Series(np.nan, index=wide_df.index, dtype="float64")
+
+    out["revenues"] = _num_from_wide("revenue_total")
+    out["gross_income"] = _num_from_wide("gross_profit")
+    out["operating_income"] = _num_from_wide("operating_income_ebit")
+    out["profit_before_tax"] = _num_from_wide("profit_before_tax")
+    out["profit_to_equity_holders"] = _num_from_wide("net_income_attributable_to_parent")
+    out["cash_and_equivalents"] = _num_from_wide("cash_and_cash_equivalents")
+    out["total_assets"] = _num_from_wide("total_assets")
+    out["total_equity"] = _num_from_wide("total_equity")
+
+    ppe = _num_from_wide("property_plant_equipment")
+    rou = _num_from_wide("right_of_use_assets")
+    out["tangible_assets"] = ppe
+    out["tangible_assets_derived_from"] = np.where(ppe.notna(), "property_plant_equipment", "")
+    mask_tangible = ppe.notna() & rou.notna()
+    out.loc[mask_tangible, "tangible_assets"] = (ppe + rou)[mask_tangible]
+    out.loc[mask_tangible, "tangible_assets_derived_from"] = "property_plant_equipment+right_of_use_assets"
+
+    intang = _num_from_wide("intangible_assets")
+    goodwill = _num_from_wide("goodwill")
+    out["intangible_assets"] = intang
+    out["intangible_assets_derived_from"] = np.where(intang.notna(), "intangible_assets", "")
+    mask_intang = intang.notna() & goodwill.notna()
+    out.loc[mask_intang, "intangible_assets"] = (intang + goodwill)[mask_intang]
+    out.loc[mask_intang, "intangible_assets_derived_from"] = "intangible_assets+goodwill"
+
+    total_liabilities = _num_from_wide("total_liabilities")
+    out["total_liabilities_and_equity"] = out["total_assets"]
+    mask_tle = out["total_assets"].isna() & total_liabilities.notna() & out["total_equity"].notna()
+    out.loc[mask_tle, "total_liabilities_and_equity"] = (total_liabilities + out["total_equity"])[mask_tle]
+
+    st_debt = _num_from_wide("short_term_debt")
+    lt_debt = _num_from_wide("long_term_debt")
+    lease_cur = _num_from_wide("lease_liabilities_current")
+    lease_non = _num_from_wide("lease_liabilities_noncurrent")
+    cash = _num_from_wide("cash_and_cash_equivalents")
+    debt_total = st_debt.fillna(0.0) + lt_debt.fillna(0.0) + lease_cur.fillna(0.0) + lease_non.fillna(0.0)
+    has_any_debt = st_debt.notna() | lt_debt.notna() | lease_cur.notna() | lease_non.notna()
+    out["net_debt"] = np.where(has_any_debt, debt_total - cash.fillna(0.0), np.nan)
+    out["net_debt_derived_from"] = np.where(
+        has_any_debt,
+        "short_term_debt+long_term_debt+lease_liabilities_current+lease_liabilities_noncurrent-cash_and_cash_equivalents",
+        "",
+    )
+
+    cfo = _num_from_wide("cash_flow_from_operations")
+    cfi = _num_from_wide("cash_flow_from_investing")
+    cff = _num_from_wide("cash_flow_from_financing")
+    d_cash = _num_from_wide("net_change_in_cash")
+    out["cash_flow_from_operating_activities"] = cfo
+    out["cash_flow_from_investing_activities"] = cfi
+    out["cash_flow_from_financing_activities"] = cff
+    out["cash_flow_for_the_year"] = d_cash
+
+    capex_ppe = _num_from_wide("capex_purchase_ppe")
+    capex_int = _num_from_wide("capex_purchase_intangibles")
+    fcf_cfo_cfi = cfo + cfi
+    fcf_capex = cfo - capex_ppe.fillna(0.0) - capex_int.fillna(0.0)
+    out["free_cash_flow"] = np.where(cfo.notna() & cfi.notna(), fcf_cfo_cfi, np.where(cfo.notna(), fcf_capex, np.nan))
+    out["free_cash_flow_derived_from"] = np.where(
+        cfo.notna() & cfi.notna(),
+        "cash_flow_from_operations+cash_flow_from_investing",
+        np.where(cfo.notna(), "cash_flow_from_operations-capex_purchase_ppe-capex_purchase_intangibles", ""),
+    )
+
+    out["currency"] = wide_df.get("reporting_currency", pd.Series("", index=wide_df.index)).fillna("").astype(str)
+    out["report_end_date"] = wide_df.get("period_end", pd.Series(dtype=object))
+
+    eps = pd.Series(np.nan, index=wide_df.index, dtype="float64")
+    shares = _num_from_wide("shares_outstanding_basic")
+    shares_src = pd.Series(np.where(shares.notna(), "shares_outstanding_basic", ""), index=wide_df.index, dtype=object)
+    raw_lookup = _build_raw_fact_lookup(raw_facts_df)
+    if raw_lookup:
+        raw_eps = []
+        raw_shares = []
+        for r in wide_df.itertuples(index=False):
+            key = (getattr(r, "company_id"), getattr(r, "period_end"))
+            e = raw_lookup.get((key[0], key[1], "ifrs-full:BasicEarningsLossPerShare"))
+            s = raw_lookup.get((key[0], key[1], "ifrs-full:WeightedAverageNumberOfSharesOutstandingBasic"))
+            raw_eps.append(float(e) if e is not None else np.nan)
+            raw_shares.append(float(s) if s is not None else np.nan)
+        raw_eps_s = pd.Series(raw_eps, index=wide_df.index, dtype="float64")
+        raw_shares_s = pd.Series(raw_shares, index=wide_df.index, dtype="float64")
+        eps = raw_eps_s
+        shares = shares.where(raw_shares_s.isna(), raw_shares_s)
+        shares_src = shares_src.where(raw_shares_s.isna(), "ifrs-full:WeightedAverageNumberOfSharesOutstandingBasic")
+
+    share_from_eps = shares.isna() & out["profit_to_equity_holders"].notna() & eps.notna() & eps.ne(0.0)
+    shares = shares.where(~share_from_eps, out["profit_to_equity_holders"] / eps)
+    shares_src = shares_src.where(~share_from_eps, "profit_to_equity_holders/ifrs-full:BasicEarningsLossPerShare")
+
+    out["number_of_shares"] = shares
+    out["earnings_per_share"] = eps
+    mask_eps_fallback = out["earnings_per_share"].isna() & out["profit_to_equity_holders"].notna() & out["number_of_shares"].notna() & out["number_of_shares"].ne(0.0)
+    out.loc[mask_eps_fallback, "earnings_per_share"] = (out.loc[mask_eps_fallback, "profit_to_equity_holders"] / out.loc[mask_eps_fallback, "number_of_shares"]).astype(float)
+    out["number_of_shares_derived_from"] = shares_src
+    out["earnings_per_share_derived_from"] = np.where(
+        eps.notna(),
+        "ifrs-full:BasicEarningsLossPerShare",
+        np.where(mask_eps_fallback, "profit_to_equity_holders/number_of_shares", ""),
+    )
+
+    out["compat_definition_version"] = "borsdata_compat_v1"
+
+    for c in cols:
+        if c not in out.columns:
+            out[c] = np.nan if c not in {"company_id", "period_end", "currency", "report_end_date", "compat_definition_version", "intangible_assets_derived_from", "tangible_assets_derived_from", "net_debt_derived_from", "free_cash_flow_derived_from"} else ""
+    return out[cols + ["number_of_shares_derived_from", "earnings_per_share_derived_from"]]
+
+
 def validate_financials(long_df: pd.DataFrame, wide_df: pd.DataFrame, cfg: AgentConfig) -> pd.DataFrame:
     issues: list[dict[str, Any]] = []
     if wide_df.empty:
@@ -1113,6 +1291,7 @@ def export_outputs(
     exports_dir: Path,
     long_df: pd.DataFrame,
     wide_df: pd.DataFrame,
+    borsdata_compat_df: pd.DataFrame,
     issues_df: pd.DataFrame,
     filing_resolution_df: pd.DataFrame | None = None,
     arelle_validation_df: pd.DataFrame | None = None,
@@ -1121,6 +1300,7 @@ def export_outputs(
     exports_dir.mkdir(parents=True, exist_ok=True)
     long_path = processed_dir / "financials_long.parquet"
     wide_path = processed_dir / "financials_wide.parquet"
+    borsdata_compat_path = processed_dir / "financials_wide_borsdata_compat.parquet"
     issues_path = processed_dir / "issues.parquet"
     resolution_path = processed_dir / "filing_resolution.parquet"
     arelle_validation_path = processed_dir / "arelle_validation.parquet"
@@ -1130,6 +1310,7 @@ def export_outputs(
 
     long_df.to_parquet(long_path, index=False)
     wide_df.to_parquet(wide_path, index=False)
+    borsdata_compat_df.to_parquet(borsdata_compat_path, index=False)
     issues_df.to_parquet(issues_path, index=False)
     filing_resolution_df.to_parquet(resolution_path, index=False)
     arelle_validation_df.to_parquet(arelle_validation_path, index=False)
@@ -1138,11 +1319,13 @@ def export_outputs(
     with pd.ExcelWriter(xlsx_path, engine="openpyxl") as writer:
         long_df.to_excel(writer, sheet_name="financials_long", index=False)
         wide_df.to_excel(writer, sheet_name="financials_wide", index=False)
+        borsdata_compat_df.to_excel(writer, sheet_name="financials_wide_borsdata_compat", index=False)
         issues_df.to_excel(writer, sheet_name="issues", index=False)
 
     return {
         "financials_long": str(long_path),
         "financials_wide": str(wide_path),
+        "financials_wide_borsdata_compat": str(borsdata_compat_path),
         "issues": str(issues_path),
         "filing_resolution": str(resolution_path),
         "arelle_validation": str(arelle_validation_path),
@@ -1204,6 +1387,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
     facts_df = pd.DataFrame(columns=RAW_FACT_COLUMNS)
     long_df = pd.DataFrame(columns=LONG_COLUMNS)
     wide_df = pd.DataFrame()
+    borsdata_compat_df = pd.DataFrame()
     winner_long_df = pd.DataFrame(columns=LONG_COLUMNS)
     filing_resolution_df = pd.DataFrame(columns=["company_id", "period_end", "doc_id_winner", "doc_ids_all", "reasons", "stats"])
     arelle_validation_df = pd.DataFrame(columns=ARELLE_VALIDATION_COLUMNS)
@@ -1246,9 +1430,11 @@ def run_pipeline(args: argparse.Namespace) -> None:
         filing_resolution_df, winner_long_df = resolve_conflicting_filings(long_df, docs_df, cfg)
         wide_df = build_wide(winner_long_df)
         wide_df = augment_wide_with_derived_fields(wide_df, winner_long_df, raw_facts_df=facts_df)
+        borsdata_compat_df = build_borsdata_compat_wide(wide_df, raw_facts_df=facts_df)
     elif {"validate", "export"} & selected_steps:
         long_path = processed_dir / "financials_long.parquet"
         wide_path = processed_dir / "financials_wide.parquet"
+        borsdata_compat_path = processed_dir / "financials_wide_borsdata_compat.parquet"
         resolution_path = processed_dir / "filing_resolution.parquet"
         if long_path.exists():
             long_df = pd.read_parquet(long_path)
@@ -1276,6 +1462,10 @@ def run_pipeline(args: argparse.Namespace) -> None:
                     "details": str(wide_path),
                 }
             )
+        if borsdata_compat_path.exists():
+            borsdata_compat_df = pd.read_parquet(borsdata_compat_path)
+        else:
+            borsdata_compat_df = build_borsdata_compat_wide(wide_df, raw_facts_df=facts_df)
         if resolution_path.exists():
             filing_resolution_df = pd.read_parquet(resolution_path)
 
@@ -1288,7 +1478,19 @@ def run_pipeline(args: argparse.Namespace) -> None:
 
     outputs: dict[str, str] = {}
     if "export" in selected_steps:
-        outputs = export_outputs(asof, processed_dir, exports_dir, long_df, wide_df, issues_df, filing_resolution_df=filing_resolution_df, arelle_validation_df=arelle_validation_df)
+        if borsdata_compat_df.empty and not wide_df.empty:
+            borsdata_compat_df = build_borsdata_compat_wide(wide_df, raw_facts_df=facts_df)
+        outputs = export_outputs(
+            asof,
+            processed_dir,
+            exports_dir,
+            long_df,
+            wide_df,
+            borsdata_compat_df,
+            issues_df,
+            filing_resolution_df=filing_resolution_df,
+            arelle_validation_df=arelle_validation_df,
+        )
 
     manifest_path = write_manifest(asof, processed_dir, docs_df, facts_df, long_df, wide_df, issues_df, outputs, started)
     LOGGER.info("Run complete. Manifest: %s", manifest_path)

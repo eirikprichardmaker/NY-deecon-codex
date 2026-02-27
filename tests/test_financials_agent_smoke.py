@@ -16,6 +16,7 @@ from src.financials_agent_core import (
     _extract_ixbrl_facts_from_text,
     _parse_esef_file,
     augment_wide_with_derived_fields,
+    build_borsdata_compat_wide,
     export_outputs,
     filter_sources_by_mode,
     load_merged_mapping,
@@ -106,12 +107,13 @@ def test_validation_rules_on_synthetic_dataset():
 def test_export_creates_expected_excel_sheets(tmp_path: Path):
     long_df = pd.DataFrame([{"company_id": "A", "period_end": "2024-12-31", "statement": "IS", "field_id": "revenue_total", "value": 1.0, "unit": "", "currency": "NOK", "source_doc_id": "d1", "confidence": "high", "raw_tag": "ifrs-full:Revenue", "raw_label": "Revenue"}])
     wide_df = pd.DataFrame([{"company_id": "A", "period_end": "2024-12-31", "revenue_total": 1.0}])
+    compat_df = build_borsdata_compat_wide(wide_df)
     issues_df = pd.DataFrame([{"severity": "warning", "issue_type": "x", "company_id": "A", "period_end": "2024-12-31", "field_id": "revenue_total", "details": "d"}])
 
-    export_outputs("2026-01-01", tmp_path / "processed", tmp_path / "exports", long_df, wide_df, issues_df)
+    export_outputs("2026-01-01", tmp_path / "processed", tmp_path / "exports", long_df, wide_df, compat_df, issues_df)
     xlsx = tmp_path / "exports" / "financials.xlsx"
     wb = pd.ExcelFile(xlsx)
-    assert set(wb.sheet_names) == {"financials_long", "financials_wide", "issues"}
+    assert set(wb.sheet_names) == {"financials_long", "financials_wide", "financials_wide_borsdata_compat", "issues"}
 
 
 def test_parse_esef_mock_zip_and_map_to_canonical(tmp_path: Path):
@@ -332,6 +334,70 @@ def test_augment_wide_derives_required_core_from_raw_facts():
     assert r["amortization_expense"] == 0.0
     assert abs(r["shares_outstanding_basic"] - (18336.0 / 13.32)) < 1e-9
     assert r["shares_outstanding_diluted"] == r["shares_outstanding_basic"]
+
+
+def test_build_borsdata_compat_wide_derivations():
+    wide = pd.DataFrame(
+        [
+            {
+                "company_id": "TEL",
+                "period_end": "2024-12-31",
+                "revenue_total": 79928.0,
+                "gross_profit": 62197.0,
+                "operating_income_ebit": 18623.0,
+                "profit_before_tax": 23834.0,
+                "net_income_attributable_to_parent": 18336.0,
+                "cash_and_cash_equivalents": 10380.0,
+                "property_plant_equipment": 54678.0,
+                "right_of_use_assets": 26120.0,
+                "intangible_assets": 9542.0,
+                "goodwill": 26319.0,
+                "total_assets": 228808.0,
+                "total_equity": 81772.0,
+                "total_liabilities": 147036.0,
+                "short_term_debt": 11350.0,
+                "long_term_debt": 72730.0,
+                "lease_liabilities_current": 3844.0,
+                "lease_liabilities_noncurrent": 13697.0,
+                "cash_flow_from_operations": 31481.0,
+                "cash_flow_from_investing": -11486.0,
+                "cash_flow_from_financing": -29391.0,
+                "net_change_in_cash": -9474.0,
+                "reporting_currency": "NOK",
+            }
+        ]
+    )
+    raw_facts = pd.DataFrame(
+        [
+            {
+                "source_doc_id": "d1",
+                "company_id": "TEL",
+                "ticker": "TEL",
+                "period_end": "2024-12-31",
+                "concept": "ifrs-full:BasicEarningsLossPerShare",
+                "value": 13.32,
+                "decimals": "2",
+                "unit": "iso4217:NOK*xbrli:shares",
+                "currency": "NOK",
+                "context_ref": "c1",
+                "entity": "TEL",
+                "dimensions": "",
+                "taxonomy_ref": "",
+                "raw_label": "",
+                "source_type": "esef_zip",
+            }
+        ]
+    )
+    out = build_borsdata_compat_wide(wide, raw_facts_df=raw_facts)
+    r = out.iloc[0]
+    assert r["revenues"] == 79928.0
+    assert r["tangible_assets"] == 80798.0
+    assert r["intangible_assets"] == 35861.0
+    assert r["total_liabilities_and_equity"] == 228808.0
+    assert r["free_cash_flow"] == (31481.0 - 11486.0)
+    assert abs(r["number_of_shares"] - (18336.0 / 13.32)) < 1e-9
+    assert r["earnings_per_share"] == 13.32
+    assert r["compat_definition_version"] == "borsdata_compat_v1"
 
 
 def test_map_to_canonical_does_not_sum_duplicate_facts():

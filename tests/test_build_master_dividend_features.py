@@ -11,13 +11,16 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.build_master import (
+    _apply_reports_y_anomaly_guard,
     _build_financials_feature_snapshot,
     _build_reports_y_feature_snapshot,
     _build_dividend_feature_snapshot,
+    _derive_tier23_financial_metrics,
     _derive_dividend_features,
     _load_financials_tier_fields,
     _latest_raw_snapshot_dir,
     _latest_raw_snapshot_dir_with_data,
+    _previous_raw_snapshot_dir_with_data,
 )
 
 
@@ -51,6 +54,23 @@ def test_latest_raw_snapshot_dir_with_data_filters_on_subdirs(tmp_path: Path):
     got_any = _latest_raw_snapshot_dir_with_data(raw, "2026-02-26", ["reports_y", "reports_r12"])
     assert got_any is not None
     assert got_any.name == "2026-02-25"
+
+
+def test_previous_raw_snapshot_dir_with_data_filters_on_subdirs(tmp_path: Path):
+    raw = tmp_path / "raw"
+    d1 = raw / "2026-02-16"
+    d2 = raw / "2026-02-23"
+    d3 = raw / "2026-02-25"
+    (d1 / "reports_y").mkdir(parents=True)
+    (d2 / "reports_y").mkdir(parents=True)
+    (d3 / "reports_y").mkdir(parents=True)
+
+    got_prev = _previous_raw_snapshot_dir_with_data(raw, "2026-02-25", ["reports_y"])
+    assert got_prev is not None
+    assert got_prev.name == "2026-02-23"
+
+    no_prev = _previous_raw_snapshot_dir_with_data(raw, "2026-02-16", ["reports_y"])
+    assert no_prev is None
 
 
 def test_derive_dividend_features_from_reports():
@@ -283,3 +303,189 @@ def test_build_reports_y_feature_snapshot_maps_to_canonical(tmp_path: Path):
     assert float(r["shares_outstanding_diluted"]) == 1398.403
     assert float(r["total_liabilities"]) == (229580.0 - 82544.0)
     assert str(r["reporting_currency"]) == "NOK"
+
+
+def test_derive_tier23_financial_metrics_with_fallbacks():
+    master = pd.DataFrame(
+        [
+            {
+                "revenue_total": 100.0,
+                "gross_profit": 40.0,
+                "operating_income_ebit": 20.0,
+                "profit_before_tax": 15.0,
+                "income_tax_expense": 3.0,
+                "net_income_attributable_to_parent": 10.0,
+                "net_income": 11.0,
+                "cash_flow_from_operations": 18.0,
+                "capex_purchase_ppe": 4.0,
+                "capex_purchase_intangibles": np.nan,
+                "depreciation_expense": 5.0,
+                "amortization_expense": 1.0,
+                "finance_costs": -4.0,
+                "short_term_debt": 8.0,
+                "long_term_debt": 22.0,
+                "lease_liabilities_current": 3.0,
+                "lease_liabilities_noncurrent": 7.0,
+                "cash_and_cash_equivalents": 5.0,
+                "short_term_investments": 2.0,
+                "accounts_receivable": 12.0,
+                "inventory": 9.0,
+                "accounts_payable": 6.0,
+                "total_assets": 120.0,
+                "total_equity": 50.0,
+                "total_liabilities": 70.0,
+            },
+            {
+                "revenue_total": 80.0,
+                "gross_profit": 20.0,
+                "operating_income_ebit": 8.0,
+                "profit_before_tax": 6.0,
+                "income_tax_expense": 1.2,
+                "net_income": 4.0,
+                "cash_flow_from_operations": 5.0,
+                "interest_paid_cash": 2.0,
+                "short_term_debt": 4.0,
+                "long_term_debt": 6.0,
+                "cash_and_cash_equivalents": 3.0,
+                "accounts_receivable": 4.0,
+                "inventory": 3.0,
+                "accounts_payable": 2.0,
+                "total_assets": 40.0,
+                "total_equity": 20.0,
+                "total_liabilities": 20.0,
+            },
+        ]
+    )
+    out, cov = _derive_tier23_financial_metrics(master)
+    r1 = out.iloc[0]
+    r2 = out.iloc[1]
+
+    assert abs(float(r1["t2_effective_tax_rate"]) - 0.2) < 1e-12
+    assert abs(float(r1["t2_ebitda_used"]) - 26.0) < 1e-12
+    assert abs(float(r1["t2_gross_margin"]) - 0.4) < 1e-12
+    assert abs(float(r1["t2_fcf_simple"]) - 14.0) < 1e-12
+    assert abs(float(r1["t2_net_debt_excl_leases"]) - 23.0) < 1e-12
+    assert abs(float(r1["t2_net_debt_incl_leases"]) - 33.0) < 1e-12
+    assert abs(float(r1["t2_interest_coverage"]) - 5.0) < 1e-12
+    assert abs(float(r1["t3_working_capital"]) - 15.0) < 1e-12
+    assert abs(float(r1["t3_liabilities_to_equity"]) - 1.4) < 1e-12
+    assert str(r1["t2_ebitda_used_derived_from"]).startswith("fallback:")
+
+    assert abs(float(r2["t2_interest_coverage"]) - 4.0) < 1e-12
+    assert str(r2["t2_interest_coverage_derived_from"]).startswith("fallback:")
+    assert str(r2["t2_net_margin_derived_from"]).startswith("fallback:")
+
+    assert "t2_effective_tax_rate" in cov
+    assert cov["t2_effective_tax_rate"] > 0.0
+
+
+def test_apply_reports_y_anomaly_guard_flags_scale_jump():
+    current = pd.DataFrame(
+        [
+            {
+                "yahoo_ticker": "TRMED.OL",
+                "financials_period_end": "2024-12-31",
+                "revenue_total": 120.0,
+                "gross_profit": 60.0,
+                "operating_income_ebit": -43.9,
+                "profit_before_tax": -42.6,
+                "net_income_attributable_to_parent": -42.6,
+                "cash_and_cash_equivalents": 123.4,
+                "total_assets": 414.4,
+                "total_equity": 337.1,
+                "total_liabilities": 77.3,
+                "cash_flow_from_operations": -64.1,
+                "cash_flow_from_investing": 6.3,
+                "cash_flow_from_financing": 104.0,
+                "net_change_in_cash": 81.6,
+            },
+            {
+                "yahoo_ticker": "TEL.OL",
+                "financials_period_end": "2024-12-31",
+                "revenue_total": 100.0,
+                "gross_profit": 40.0,
+                "operating_income_ebit": 20.0,
+                "profit_before_tax": 18.0,
+                "net_income_attributable_to_parent": 14.0,
+                "cash_and_cash_equivalents": 10.0,
+                "total_assets": 200.0,
+                "total_equity": 100.0,
+                "total_liabilities": 100.0,
+                "cash_flow_from_operations": 22.0,
+                "cash_flow_from_investing": -8.0,
+                "cash_flow_from_financing": -6.0,
+                "net_change_in_cash": 8.0,
+            },
+        ]
+    )
+    previous = pd.DataFrame(
+        [
+            {
+                "yahoo_ticker": "TRMED.OL",
+                "financials_period_end": "2024-12-31",
+                "revenue_total": 0.12,
+                "gross_profit": 0.06,
+                "operating_income_ebit": -0.0439,
+                "profit_before_tax": -0.0426,
+                "net_income_attributable_to_parent": -0.0426,
+                "cash_and_cash_equivalents": 0.1234,
+                "total_assets": 0.4144,
+                "total_equity": 0.3371,
+                "total_liabilities": 0.0773,
+                "cash_flow_from_operations": -0.0641,
+                "cash_flow_from_investing": 0.0063,
+                "cash_flow_from_financing": 0.104,
+                "net_change_in_cash": 0.0816,
+            },
+            {
+                "yahoo_ticker": "TEL.OL",
+                "financials_period_end": "2024-12-31",
+                "revenue_total": 100.0,
+                "gross_profit": 40.0,
+                "operating_income_ebit": 20.0,
+                "profit_before_tax": 18.0,
+                "net_income_attributable_to_parent": 14.0,
+                "cash_and_cash_equivalents": 10.0,
+                "total_assets": 200.0,
+                "total_equity": 100.0,
+                "total_liabilities": 100.0,
+                "cash_flow_from_operations": 22.0,
+                "cash_flow_from_investing": -8.0,
+                "cash_flow_from_financing": -6.0,
+                "net_change_in_cash": 8.0,
+            },
+        ]
+    )
+    kept, flagged, stats = _apply_reports_y_anomaly_guard(
+        current=current,
+        previous=previous,
+        candidate_fields=[
+            "revenue_total",
+            "gross_profit",
+            "operating_income_ebit",
+            "profit_before_tax",
+            "net_income_attributable_to_parent",
+            "cash_and_cash_equivalents",
+            "total_assets",
+            "total_equity",
+            "total_liabilities",
+            "cash_flow_from_operations",
+            "cash_flow_from_investing",
+            "cash_flow_from_financing",
+            "net_change_in_cash",
+        ],
+        guard_cfg={"ratio_threshold": 100.0, "min_changed_fields": 5, "min_abs_delta": 1.0},
+        current_snapshot_name="2026-02-26",
+        previous_snapshot_name="2026-02-25",
+    )
+
+    assert len(kept) == 1
+    assert kept.iloc[0]["yahoo_ticker"] == "TEL.OL"
+    assert len(flagged) == 1
+    assert flagged.iloc[0]["yahoo_ticker"] == "TRMED.OL"
+    assert bool(flagged.iloc[0]["financials_guard_anomaly"]) is True
+    assert "reports_y_scale_jump_vs_prev_snapshot:2026-02-25->2026-02-26" in str(
+        flagged.iloc[0]["reason_financials_guard"]
+    )
+    assert int(stats["flagged_rows"]) == 1
+    assert int(stats["excluded_rows"]) == 1
