@@ -25,6 +25,54 @@ Alternativ strategi (graham strategy) er tilgjengelig via egen config:
 python -m src.run_weekly --asof 2026-02-16 --config ./config/config_graham.yaml --steps valuation,decision
 ```
 
+## Automatisk overvåkning av kvartalsrapporter
+Kjor lett watcher som:
+- leser forventede rapportdatoer fra `config/report_watch_sources.csv`
+- oppdager datoendringer og logger disse i SQLite
+- sjekker IR-rapportside rundt forventet dato
+- laster ned nye rapportfiler automatisk (idempotent)
+
+```bash
+python -m src.report_watch --sources-csv config/report_watch_sources.csv
+```
+
+Nyttige argumenter:
+- `--db data/processed/report_watch/report_watch.db`
+- `--downloads-dir data/raw/ir_auto`
+- `--watch-days-before 5 --watch-days-after 5`
+- `--no-download` (kun oppdagelse + logging)
+
+Valider og foresla bedre kilder:
+
+```bash
+python -m src.report_watch_validate --input config/report_watch_sources.csv --output tmp/report_watch_sources_validated.csv
+```
+
+## Daglig oppdatering av aksjekurser (hovedmodell)
+Oppdater `data/processed/prices.parquet` og as-of kopi i `data/raw/<asof>/prices.parquet`:
+
+```bash
+python -m src.refresh_prices_daily --asof 2026-02-27 --config config/config.yaml --require-fresh-days 3
+```
+
+Anbefalt daglig (Windows Task Scheduler):
+
+```powershell
+python -m src.refresh_prices_daily --asof (Get-Date -Format yyyy-MM-dd) --config config/config.yaml --require-fresh-days 3
+```
+
+Ferdig daglig jobbscript (priser + report watcher, valgfritt weekly decision):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_daily_automation.ps1 -RunWeeklyDecision
+```
+
+Registrer to daglige Task Scheduler-jobber (morgen + kveld):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/register_daily_tasks.ps1 -RunWeeklyDecisionInEvening
+```
+
 ## Import-manifest (forventet innhold fra Børsdata)
 - `src/`
 - `tools/`
