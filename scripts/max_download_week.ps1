@@ -77,7 +77,7 @@ function Run-Day2 {
 
 function Run-Day3 {
     $asof = Get-DailyAsOf 2
-    Invoke-LoggedCommand "python tools/borsdata_freeze.py --asof $asof --ids-csv $IdsCsv --ids-col $IdsCol --out-root $OutRoot --only reports,reports_pi,prices_last,holdings --reports-per-instrument --reports-pi-maxcount 20"
+    Invoke-LoggedCommand "python tools/borsdata_freeze.py --asof $asof --ids-csv $IdsCsv --ids-col $IdsCol --out-root $OutRoot --only reports,reports_pi,prices_last,holdings --reports-per-instrument --reports-pi-maxcount 20 --holdings"
 }
 
 function Run-Day4 {
@@ -93,7 +93,7 @@ function Run-Day5 {
 
 function Run-Day6 {
     $asof = Get-DailyAsOf 5
-    Invoke-LoggedCommand "python tools/borsdata_freeze.py --asof $asof --ids-csv $IdsCsv --ids-col $IdsCol --out-root $OutRoot --only reports,reports_pi,prices_last,holdings --reports-per-instrument --reports-pi-maxcount 20"
+    Invoke-LoggedCommand "python tools/borsdata_freeze.py --asof $asof --ids-csv $IdsCsv --ids-col $IdsCol --out-root $OutRoot --only reports,reports_pi,prices_last,holdings --reports-per-instrument --reports-pi-maxcount 20 --holdings"
 }
 
 function Run-Day7 {
