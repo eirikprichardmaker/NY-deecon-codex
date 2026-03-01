@@ -1,0 +1,19 @@
+version: 1
+description: Candidate KPI ID sets for controlled expansion and ablation.
+
+sets:
+  # Current global history set already captured in this session (year/r12 mean).
+  current_21:
+    ids: [37, 42, 49, 50, 53, 55, 56, 57, 58, 60, 61, 62, 63, 64, 65, 66, 94, 96, 97, 98, 100]
+
+  # Legacy Nordic-heavy set used earlier in this repo.
+  legacy_16:
+    ids: [10, 23, 33, 37, 42, 49, 50, 54, 55, 57, 60, 63, 68, 71, 73, 135]
+
+  # Practical "26 KPI" set: legacy_16 + 10 non-overlapping fundamentals/growth.
+  core_26:
+    ids: [10, 23, 33, 37, 42, 49, 50, 54, 55, 56, 57, 58, 60, 61, 62, 63, 64, 65, 66, 68, 71, 73, 94, 96, 97, 100]
+
+  # Superset if you also want price/operating momentum growth signal 98 retained.
+  extended_27:
+    ids: [10, 23, 33, 37, 42, 49, 50, 54, 55, 56, 57, 58, 60, 61, 62, 63, 64, 65, 66, 68, 71, 73, 94, 96, 97, 98, 100]
