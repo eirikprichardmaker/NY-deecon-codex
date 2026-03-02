@@ -1,6 +1,13 @@
 ﻿from __future__ import annotations
 
+import json
 import re
+import urllib.error
+import urllib.parse
+import urllib.request
+import xml.etree.ElementTree as ET
+from datetime import datetime
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Optional
 
@@ -14,6 +21,42 @@ from src.common.utils import safe_div, zscore
 
 REASON_DATA_MISSING_MA200 = "DATA_MISSING_MA200"
 REASON_DATA_MISSING_BENCHMARK = "DATA_MISSING_BENCHMARK"
+REASON_DATA_NOT_SUFFICIENT = "DATA_NOT_SUFFICIENT_FOR_EVALUATION"
+
+DEFAULT_CANDIDATE_REQUIRED_FIELDS = [
+    "intrinsic_value",
+    "market_cap",
+    "mos",
+    "mos_req",
+    "quality_score",
+    "roic_wacc_spread",
+    "adj_close",
+    "ma200",
+    "mad",
+    "index_price",
+    "index_ma200",
+]
+
+DEFAULT_MEDIA_RED_FLAG_TERMS = [
+    "bankrupt",
+    "bankruptcy",
+    "insolvency",
+    "investigation",
+    "fraud",
+    "lawsuit",
+    "warning",
+    "profit warning",
+    "guidance cut",
+    "downgrade",
+    "delisting",
+    "rights issue",
+    "dilution",
+    "loss",
+    "operating loss",
+    "covenant breach",
+    "liquidity crisis",
+    "accounting",
+]
 
 DIVIDEND_CRITERIA = [
     ("dividend_history", "Dividend History"),
@@ -84,7 +127,7 @@ def _md_table(df: pd.DataFrame, max_rows: int = 10) -> str:
     if df is None or df.empty:
         return "_(ingen)_"
     d = df.head(max_rows).copy()
-    d = d.where(d.notna(), "")
+    d = d.astype(object).where(d.notna(), "")
     for c in d.columns:
         if pd.api.types.is_numeric_dtype(d[c]):
             d[c] = d[c].map(
@@ -98,6 +141,295 @@ def _md_table(df: pd.DataFrame, max_rows: int = 10) -> str:
     sep = "| " + " | ".join(["---"] * len(cols)) + " |"
     rows = ["| " + " | ".join(d.iloc[i].tolist()) + " |" for i in range(len(d))]
     return "\n".join([header, sep] + rows)
+
+
+def _to_bool(x) -> bool:
+    if pd.isna(x):
+        return False
+    if isinstance(x, (bool, np.bool_)):
+        return bool(x)
+    s = str(x).strip().lower()
+    return s in {"1", "true", "t", "yes", "y"}
+
+
+def _series_has_value(s: pd.Series) -> pd.Series:
+    if pd.api.types.is_numeric_dtype(s) or pd.api.types.is_bool_dtype(s):
+        return s.notna()
+    t = s.astype(str).str.strip()
+    return t.ne("") & t.ne("nan") & t.ne("None")
+
+
+def _candidate_data_sufficiency(
+    df: pd.DataFrame,
+    dec_cfg: dict,
+) -> tuple[pd.DataFrame, list[str], int, float]:
+    raw = dec_cfg.get("candidate_required_fields", DEFAULT_CANDIDATE_REQUIRED_FIELDS)
+    if isinstance(raw, str):
+        required = [x.strip() for x in raw.split(",") if x.strip()]
+    elif isinstance(raw, list):
+        required = [str(x).strip() for x in raw if str(x).strip()]
+    else:
+        required = list(DEFAULT_CANDIDATE_REQUIRED_FIELDS)
+    if not required:
+        required = list(DEFAULT_CANDIDATE_REQUIRED_FIELDS)
+
+    min_count_default = max(1, int(round(len(required) * 0.75)))
+    min_count = int(dec_cfg.get("candidate_min_required_fields", min_count_default))
+    min_ratio = float(dec_cfg.get("candidate_min_required_ratio", 0.75))
+    if min_count < 1:
+        min_count = 1
+    if min_ratio < 0:
+        min_ratio = 0.0
+    if min_ratio > 1:
+        min_ratio = 1.0
+
+    out = pd.DataFrame(index=df.index)
+    available_cols: list[pd.Series] = []
+    for col in required:
+        if col in df.columns:
+            available_cols.append(_series_has_value(df[col]))
+        else:
+            available_cols.append(pd.Series(False, index=df.index, dtype=bool))
+
+    if available_cols:
+        avail_mat = pd.concat(available_cols, axis=1)
+        avail_mat.columns = required
+        avail_count = avail_mat.sum(axis=1).astype(int)
+    else:
+        avail_mat = pd.DataFrame(index=df.index)
+        avail_count = pd.Series(0, index=df.index, dtype=int)
+
+    required_count = int(len(required))
+    ratio = avail_count / float(required_count) if required_count > 0 else pd.Series(1.0, index=df.index)
+    out["candidate_required_fields_count"] = required_count
+    out["candidate_available_fields_count"] = avail_count
+    out["candidate_data_coverage_ratio"] = ratio.astype(float)
+    out["candidate_data_ok"] = (avail_count >= min_count) & (ratio >= min_ratio)
+
+    if required:
+        missing_fields = []
+        for i in df.index:
+            miss = [c for c in required if not bool(avail_mat.loc[i, c])]
+            missing_fields.append(", ".join(miss))
+        out["candidate_data_missing_fields"] = pd.Series(missing_fields, index=df.index, dtype=object)
+    else:
+        out["candidate_data_missing_fields"] = ""
+
+    return out, required, min_count, min_ratio
+
+
+def _decision_schema_rows(
+    pick: pd.Series,
+    mos_min: float,
+    mos_high: float,
+    mad_min: float,
+    max_price_age_days: int,
+    required_fields: list[str],
+    min_count: int,
+    min_ratio: float,
+) -> pd.DataFrame:
+    rows: list[dict[str, str]] = []
+
+    def add(parameter: str, value: str, threshold: str, status: bool, comment: str = "") -> None:
+        rows.append(
+            {
+                "parameter": parameter,
+                "value": value,
+                "threshold": threshold,
+                "status": "OK" if bool(status) else "FAIL",
+                "comment": comment,
+            }
+        )
+
+    high_risk = int(pd.to_numeric(pd.Series([pick.get("high_risk_flag", 0)]), errors="coerce").fillna(0).iloc[0]) == 1
+    mos_req = float(pd.to_numeric(pd.Series([pick.get("mos_req")]), errors="coerce").fillna(np.nan).iloc[0])
+    mos = float(pd.to_numeric(pd.Series([pick.get("mos")]), errors="coerce").fillna(np.nan).iloc[0])
+    add(
+        "MoS",
+        f"{mos:.1%}" if np.isfinite(mos) else "n/a",
+        f">= {mos_req:.0%}" if np.isfinite(mos_req) else (f">= {mos_high:.0%}" if high_risk else f">= {mos_min:.0%}"),
+        bool(np.isfinite(mos) and np.isfinite(mos_req) and mos >= mos_req),
+        f"basis={pick.get('mos_basis', '')}",
+    )
+
+    price_age = pd.to_numeric(pd.Series([pick.get("stock_price_age_days")]), errors="coerce").iloc[0]
+    add(
+        "Aksjekurs ferskhet",
+        f"{int(price_age)} dager" if np.isfinite(price_age) else "n/a",
+        f"<= {max_price_age_days} dager",
+        bool(_to_bool(pick.get("stock_price_stale")) is False),
+        f"dato={pick.get('date', '')}",
+    )
+
+    idx_age = pd.to_numeric(pd.Series([pick.get("index_price_age_days")]), errors="coerce").iloc[0]
+    add(
+        "Indeks ferskhet",
+        f"{int(idx_age)} dager" if np.isfinite(idx_age) else "n/a",
+        f"<= {max_price_age_days} dager",
+        bool(_to_bool(pick.get("index_price_stale")) is False),
+        f"index={pick.get('relevant_index_symbol', '')}",
+    )
+
+    add(
+        "Verdiskaping (ROIC-WACC 3y)",
+        f"{float(pd.to_numeric(pd.Series([pick.get('roic_wacc_spread')]), errors='coerce').iloc[0]):.3%}" if np.isfinite(pd.to_numeric(pd.Series([pick.get("roic_wacc_spread")]), errors="coerce").iloc[0]) else "n/a",
+        "> 0 i 3 år (konservativ bane)",
+        _to_bool(pick.get("value_creation_ok")),
+        "",
+    )
+
+    add(
+        "Kvalitetsgate",
+        f"weak_count={int(pd.to_numeric(pd.Series([pick.get('quality_weak_count')]), errors='coerce').fillna(-1).iloc[0])}",
+        "< 2 svake indikatorer",
+        _to_bool(pick.get("quality_gate_ok")),
+        "",
+    )
+
+    add(
+        "Teknisk gate",
+        f"stock_ma200={_to_bool(pick.get('stock_ma200_ok'))}, index_ma200={_to_bool(pick.get('index_ma200_ok'))}, mad_ok={_to_bool(pick.get('stock_mad_ok'))}",
+        "må bestå valgt teknisk regel",
+        _to_bool(pick.get("technical_ok")),
+        "",
+    )
+
+    avail_count = int(pd.to_numeric(pd.Series([pick.get("candidate_available_fields_count")]), errors="coerce").fillna(0).iloc[0])
+    req_count = int(pd.to_numeric(pd.Series([pick.get("candidate_required_fields_count")]), errors="coerce").fillna(len(required_fields)).iloc[0])
+    cov_ratio = pd.to_numeric(pd.Series([pick.get("candidate_data_coverage_ratio")]), errors="coerce").iloc[0]
+    add(
+        "Datatilstrekkelighet",
+        f"{avail_count}/{req_count} ({(float(cov_ratio) if np.isfinite(cov_ratio) else 0.0):.0%})",
+        f">= {min_count} felt og >= {min_ratio:.0%} dekning",
+        _to_bool(pick.get("candidate_data_ok")),
+        f"mangler={pick.get('candidate_data_missing_fields', '')}",
+    )
+
+    add(
+        "Fundamental gate total",
+        str(_to_bool(pick.get("fundamental_ok"))),
+        "True",
+        _to_bool(pick.get("fundamental_ok")),
+        str(pick.get("reason_fundamental_fail", "")),
+    )
+    add(
+        "Total eligibility",
+        str(_to_bool(pick.get("eligible"))),
+        "True",
+        _to_bool(pick.get("eligible")),
+        str(pick.get("reason_technical_fail", "")),
+    )
+    return pd.DataFrame(rows)
+
+
+def _fetch_google_news_rss(
+    query: str,
+    timeout_sec: int = 20,
+    hl: str = "en-US",
+    gl: str = "US",
+    ceid: str = "US:en",
+) -> list[dict[str, str]]:
+    q = urllib.parse.quote_plus(query)
+    url = f"https://news.google.com/rss/search?q={q}&hl={urllib.parse.quote_plus(hl)}&gl={urllib.parse.quote_plus(gl)}&ceid={urllib.parse.quote_plus(ceid)}"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+        xml_text = resp.read().decode("utf-8", errors="ignore")
+    root = ET.fromstring(xml_text)
+    out: list[dict[str, str]] = []
+    for item in root.findall(".//item"):
+        title = (item.findtext("title") or "").strip()
+        link = (item.findtext("link") or "").strip()
+        pub_date = (item.findtext("pubDate") or "").strip()
+        source = ""
+        src_node = item.find("{http://search.yahoo.com/mrss/}source")
+        if src_node is not None and src_node.text:
+            source = src_node.text.strip()
+        if title and link:
+            out.append({"title": title, "link": link, "pub_date": pub_date, "source": source})
+    return out
+
+
+def _run_media_red_flag_scan(
+    asof: str,
+    ticker: str,
+    company: str,
+    dec_cfg: dict,
+) -> dict:
+    mcfg = (dec_cfg.get("media_red_flags") or {})
+    enabled = bool(mcfg.get("enabled", True))
+    if not enabled:
+        return {"enabled": False, "status": "disabled", "headlines_checked": 0, "red_flag_count": 0, "red_flags": []}
+
+    days_back = int(mcfg.get("days_back", 30))
+    max_headlines = int(mcfg.get("max_headlines", 30))
+    terms_raw = mcfg.get("terms", DEFAULT_MEDIA_RED_FLAG_TERMS)
+    terms = [str(x).strip().lower() for x in (terms_raw if isinstance(terms_raw, list) else DEFAULT_MEDIA_RED_FLAG_TERMS) if str(x).strip()]
+    queries = []
+    if company:
+        queries.append(f'"{company}" aksje OR stock')
+    if ticker:
+        queries.append(f'"{ticker}" stock')
+    if not queries:
+        queries.append("stock warning")
+
+    asof_dt = pd.to_datetime(asof, errors="coerce")
+    seen: set[tuple[str, str]] = set()
+    all_rows: list[dict[str, str]] = []
+    try:
+        locales = [("en-US", "US", "US:en"), ("sv", "SE", "SE:sv")]
+        for q in queries:
+            for hl, gl, ceid in locales:
+                rows = _fetch_google_news_rss(q, hl=hl, gl=gl, ceid=ceid)
+                for r in rows:
+                    key = (r.get("title", ""), r.get("link", ""))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    all_rows.append(r)
+        all_rows = all_rows[:max_headlines]
+    except (urllib.error.URLError, TimeoutError, ET.ParseError, ValueError) as exc:
+        return {
+            "enabled": True,
+            "status": "error",
+            "error": str(exc),
+            "headlines_checked": 0,
+            "red_flag_count": 0,
+            "red_flags": [],
+        }
+
+    cutoff = None
+    if pd.notna(asof_dt):
+        cutoff = asof_dt.normalize() - pd.Timedelta(days=max(days_back, 1))
+
+    red_flags: list[dict[str, str]] = []
+    for row in all_rows:
+        title = str(row.get("title", ""))
+        ttl_l = title.lower()
+        matched = [t for t in terms if t in ttl_l]
+        if not matched:
+            continue
+        pub_raw = row.get("pub_date", "")
+        keep = True
+        if cutoff is not None and pub_raw:
+            try:
+                dt = parsedate_to_datetime(pub_raw)
+                dt_naive = dt.replace(tzinfo=None)
+                keep = pd.Timestamp(dt_naive).normalize() >= cutoff
+            except Exception:
+                keep = True
+        if not keep:
+            continue
+        rec = dict(row)
+        rec["matched_terms"] = ", ".join(matched)
+        red_flags.append(rec)
+
+    return {
+        "enabled": True,
+        "status": "ok",
+        "headlines_checked": len(all_rows),
+        "red_flag_count": len(red_flags),
+        "red_flags": red_flags,
+    }
 
 
 def _atomic_write_text(path: Path, text: str) -> None:
@@ -600,9 +932,18 @@ def _apply_index_technical_filter(df: pd.DataFrame, prices_df: pd.DataFrame, aso
 
     require_index_ma200 = bool(dec_cfg.get("require_index_ma200", True))
     require_index_mad = bool(dec_cfg.get("require_index_mad", False))
+    max_price_age_days = int(dec_cfg.get("max_price_age_days", 7))
+    if max_price_age_days < 0:
+        max_price_age_days = 0
     idx_price = pd.to_numeric(out.get("index_price"), errors="coerce")
     idx_ma200 = pd.to_numeric(out.get("index_ma200"), errors="coerce")
     idx_mad = pd.to_numeric(out.get("index_mad"), errors="coerce")
+    idx_price_date = pd.to_datetime(out.get("index_price_date", pd.Series(pd.NaT, index=out.index)), errors="coerce")
+    asof_dt = pd.to_datetime(asof, errors="coerce")
+    if pd.isna(asof_dt):
+        asof_dt = pd.Timestamp(datetime.utcnow().date())
+    idx_age_days = pd.to_numeric((asof_dt.normalize() - idx_price_date.dt.normalize()).dt.days, errors="coerce")
+    idx_price_stale = idx_price_date.isna() | idx_age_days.gt(max_price_age_days)
     idx_has_price_ma = idx_price.notna() & idx_ma200.notna()
     idx_has_mad = idx_mad.notna()
     idx_above = idx_price > idx_ma200
@@ -612,7 +953,9 @@ def _apply_index_technical_filter(df: pd.DataFrame, prices_df: pd.DataFrame, aso
         index=out.index,
         dtype="boolean",
     )
-    out["index_data_ok"] = out["relevant_index_key"].astype(str).ne("") & idx_has_price_ma
+    out["index_price_age_days"] = idx_age_days
+    out["index_price_stale"] = idx_price_stale
+    out["index_data_ok"] = out["relevant_index_key"].astype(str).ne("") & idx_has_price_ma & ~idx_price_stale
     out["index_ma200_ok"] = np.where(
         require_index_ma200,
         idx_has_price_ma & idx_above,
@@ -766,10 +1109,17 @@ def run(ctx, log) -> int:
 
     # --- thresholds ---
     dec_cfg = (ctx.cfg.get("decision") or {})
+    asof_dt = pd.to_datetime(ctx.asof, errors="coerce")
+    if pd.isna(asof_dt):
+        raise SchemaError(f"decision: invalid asof '{ctx.asof}'")
     mos_min = float(dec_cfg.get("mos_min", 0.30))
     mos_high = float(dec_cfg.get("mos_high_uncertainty", 0.40))
     require_above_ma200 = bool(dec_cfg.get("require_above_ma200", True))
     mad_min = float(dec_cfg.get("mad_min", -0.05))
+    min_fresh_price_coverage = float(dec_cfg.get("min_fresh_price_coverage", 0.50))
+    max_price_age_days = int(dec_cfg.get("max_price_age_days", 7))
+    if max_price_age_days < 0:
+        max_price_age_days = 0
     technical_gate_mode = str(dec_cfg.get("technical_gate_mode", "two_of_three_index_primary")).strip().lower()
     top_n = int(dec_cfg.get("top_n", 25))
     if technical_gate_mode == "strict":
@@ -799,18 +1149,34 @@ def run(ctx, log) -> int:
     # --- technical filter ---
     stock_price = _as_num_series(df, ["adj_close", "close", "price", "last"])
     stock_ma200 = _as_num_series(df, ["ma200"])
+    stock_price_date = pd.to_datetime(df.get("date", pd.Series(pd.NaT, index=df.index)), errors="coerce")
+    stock_price_age_days = pd.to_numeric((asof_dt.normalize() - stock_price_date.dt.normalize()).dt.days, errors="coerce")
+    stock_price_stale = stock_price_date.isna() | stock_price_age_days.gt(max_price_age_days)
+    fresh_stock_mask = stock_price.notna() & ~stock_price_stale
+    fresh_stock_coverage = float(fresh_stock_mask.mean()) if len(df) > 0 else 0.0
+    global_price_data_ok = bool(fresh_stock_coverage >= min_fresh_price_coverage)
+    if not global_price_data_ok:
+        log.info(
+            "decision: fresh stock price coverage %.3f is below min_fresh_price_coverage %.3f",
+            fresh_stock_coverage,
+            min_fresh_price_coverage,
+        )
     mad_s = _as_num_series(df, ["mad"])
     stock_has_price_ma = stock_price.notna() & stock_ma200.notna()
     stock_above_ma200 = stock_price > stock_ma200
-    stock_data_ok = stock_has_price_ma
+    stock_data_ok = stock_has_price_ma & ~stock_price_stale
 
     above_ma200_series = pd.Series(
-        np.where(stock_has_price_ma, stock_above_ma200, pd.NA),
+        np.where(stock_data_ok, stock_above_ma200, pd.NA),
         index=df.index,
         dtype="boolean",
     )
     df["above_ma200"] = above_ma200_series
     df["stock_data_ok"] = stock_data_ok
+    df["stock_price_age_days"] = stock_price_age_days
+    df["stock_price_stale"] = stock_price_stale
+    df["fresh_stock_price_coverage"] = fresh_stock_coverage
+    df["global_price_data_ok"] = global_price_data_ok
 
     stock_ma200_ok = pd.Series(True, index=df.index)
     if require_above_ma200:
@@ -829,7 +1195,7 @@ def run(ctx, log) -> int:
         df["tech_signal_index_trend"].astype(int) +
         df["tech_signal_mad"].astype(int)
     )
-    tech_data_ready = df["stock_data_ok"].astype(bool) & df["index_data_ok"].astype(bool)
+    tech_data_ready = df["stock_data_ok"].astype(bool) & df["index_data_ok"].astype(bool) & bool(global_price_data_ok)
 
     if technical_gate_mode == "strict":
         df["tech_ok"] = (
@@ -867,6 +1233,11 @@ def run(ctx, log) -> int:
         df[c] = value_gate[c]
     for c in quality_gate.columns:
         df[c] = quality_gate[c]
+    sufficiency_block, candidate_required_fields, candidate_min_count, candidate_min_ratio = _candidate_data_sufficiency(
+        df, dec_cfg
+    )
+    for c in sufficiency_block.columns:
+        df[c] = sufficiency_block[c]
 
     df["fundamental_ok"] = (
         df["mos"].notna() &
@@ -874,7 +1245,8 @@ def run(ctx, log) -> int:
         df["value_creation_ok"].fillna(False) &
         df["quality_gate_ok"].fillna(False) &
         df["dividend_min_score_ok"].fillna(True) &
-        df["graham_min_score_ok"].fillna(True)
+        df["graham_min_score_ok"].fillna(True) &
+        df["candidate_data_ok"].fillna(False)
     )
     df["technical_ok"] = df["tech_ok"]
 
@@ -885,6 +1257,7 @@ def run(ctx, log) -> int:
     q_fail = ~df["quality_gate_ok"].fillna(False)
     div_fail = ~df["dividend_min_score_ok"].fillna(True)
     graham_fail = ~df["graham_min_score_ok"].fillna(True)
+    suff_fail = ~df["candidate_data_ok"].fillna(False)
 
     df.loc[mos_fail, "reason_fundamental_fail"] = "mos_below_required"
     df.loc[vc_fail, "reason_fundamental_fail"] = df.loc[vc_fail, "reason_fundamental_fail"].map(
@@ -924,10 +1297,23 @@ def run(ctx, log) -> int:
             lambda r: _join_reasons([r["reason_fundamental_fail"], str(r["quality_gate_reason"])]),
             axis=1,
         )
+    if "candidate_data_missing_fields" in df.columns:
+        df.loc[suff_fail, "reason_fundamental_fail"] = df.loc[suff_fail].apply(
+            lambda r: _join_reasons(
+                [
+                    r["reason_fundamental_fail"],
+                    REASON_DATA_NOT_SUFFICIENT,
+                    f"missing_fields={str(r.get('candidate_data_missing_fields', ''))}",
+                ]
+            ),
+            axis=1,
+        )
 
     df["reason_technical_fail"] = ""
     missing_stock_ma200 = stock_ma200.isna()
     missing_stock_tech = stock_price.isna() & ~missing_stock_ma200
+    stale_stock_price = df["stock_price_stale"].astype(bool)
+    stale_index_price = df.get("index_price_stale", pd.Series(False, index=df.index)).astype(bool)
     stock_below_ma200 = df["stock_data_ok"].astype(bool) & ~df["stock_ma200_ok"].astype(bool)
     bad_mad = df["stock_data_ok"].astype(bool) & mad_s.notna() & ~df["stock_mad_ok"].astype(bool)
 
@@ -936,6 +1322,12 @@ def run(ctx, log) -> int:
     )
     df.loc[missing_stock_tech, "reason_technical_fail"] = df.loc[missing_stock_tech, "reason_technical_fail"].map(
         lambda x: _join_reasons([x, "missing_stock_technical_data"])
+    )
+    df.loc[stale_stock_price, "reason_technical_fail"] = df.loc[stale_stock_price, "reason_technical_fail"].map(
+        lambda x: _join_reasons([x, f"stale_price_data_gt_{max_price_age_days}d"])
+    )
+    df.loc[stale_index_price, "reason_technical_fail"] = df.loc[stale_index_price, "reason_technical_fail"].map(
+        lambda x: _join_reasons([x, f"stale_benchmark_price_gt_{max_price_age_days}d"])
     )
     df.loc[stock_below_ma200, "reason_technical_fail"] = df.loc[stock_below_ma200, "reason_technical_fail"].map(
         lambda x: _join_reasons([x, "below_ma200"])
@@ -963,6 +1355,12 @@ def run(ctx, log) -> int:
     df.loc[idx_mad_below, "reason_technical_fail"] = df.loc[idx_mad_below, "reason_technical_fail"].map(
         lambda x: _join_reasons([x, "index_mad_below_min"])
     )
+    if not global_price_data_ok:
+        df["reason_technical_fail"] = df["reason_technical_fail"].map(
+            lambda x: _join_reasons(
+                [x, f"fresh_price_coverage_below_{min_fresh_price_coverage:.2f}"]
+            )
+        )
     df.loc[df["technical_ok"].astype(bool), "reason_technical_fail"] = ""
 
     df["eligible"] = df["technical_ok"] & df["fundamental_ok"]
@@ -1003,8 +1401,10 @@ def run(ctx, log) -> int:
         "fundamental_ok", "technical_ok", "reason_fundamental_fail", "reason_technical_fail",
         "value_creation_ok", "roic_wacc_spread", "roic_wacc_spread_y3", "value_creation_reason",
         "quality_gate_ok", "quality_weak_count", "quality_gate_reason",
+        "candidate_data_ok", "candidate_available_fields_count", "candidate_required_fields_count", "candidate_data_coverage_ratio", "candidate_data_missing_fields",
+        "date", "adj_close", "stock_price_age_days", "stock_price_stale", "fresh_stock_price_coverage", "global_price_data_ok",
         "stock_ma200_ok", "stock_mad_ok", "ma200_ok",
-        "relevant_index_symbol", "relevant_index_key", "index_price_date", "index_price", "index_ma200", "index_mad", "index_above_ma200",
+        "relevant_index_symbol", "relevant_index_key", "index_price_date", "index_price_age_days", "index_price_stale", "index_price", "index_ma200", "index_mad", "index_above_ma200",
         "index_data_ok", "index_ma200_ok", "index_mad_ok", "index_tech_ok",
         "mad", "ma21", "ma200", "above_ma200", "quality_score"
     ] + strategy_screen_cols if c in df.columns]
@@ -1036,8 +1436,10 @@ def run(ctx, log) -> int:
         "beta", "coe_used", "wacc_used",
         "value_creation_ok", "roic_wacc_spread", "roic_wacc_spread_y1", "roic_wacc_spread_y2", "roic_wacc_spread_y3", "value_creation_reason",
         "quality_gate_ok", "quality_weak_count", "quality_gate_reason",
+        "candidate_data_ok", "candidate_available_fields_count", "candidate_required_fields_count", "candidate_data_coverage_ratio", "candidate_data_missing_fields",
+        "date", "adj_close", "stock_price_age_days", "stock_price_stale", "fresh_stock_price_coverage", "global_price_data_ok",
         "above_ma200", "mad", "ma21", "ma200", "stock_ma200_ok", "stock_mad_ok",
-        "relevant_index_symbol", "relevant_index_key", "index_price_date", "index_price", "index_ma200", "index_mad", "index_above_ma200",
+        "relevant_index_symbol", "relevant_index_key", "index_price_date", "index_price_age_days", "index_price_stale", "index_price", "index_ma200", "index_mad", "index_above_ma200",
         "index_data_ok", "ma200_ok", "index_ma200_ok", "index_mad_ok", "index_tech_ok", "high_risk_flag",
         "fundamental_ok", "technical_ok", "reason_fundamental_fail", "reason_technical_fail",
         "model", "reason",
@@ -1068,10 +1470,35 @@ def run(ctx, log) -> int:
             (f"- Dividend minimum score: {dividend_min_score}/11" if use_dividend_strategy else "- Dividend minimum score: ikke aktiv"),
             (f"- Graham minimum score: {graham_min_score}/7" if use_graham_strategy else "- Graham minimum score: ikke aktiv"),
             f"- {tech_rule_text}",
+            f"- Aksjekurs må være maks {max_price_age_days} dager gammel relativt til asof.",
+            f"- Min andel ferske aksjekurser i universet: {min_fresh_price_coverage:.0%} (nå: {fresh_stock_coverage:.1%})",
+            f"- Datatilstrekkelighet for kandidat: minst {candidate_min_count}/{len(candidate_required_fields)} felt og >= {candidate_min_ratio:.0%} dekning",
+            "",
+            ("## Klar beskjed" if (not global_price_data_ok) else "## Klar beskjed"),
+            (
+                f"- CASH fordi oppdaterte kurser er utilstrekkelige: fersk dekning {fresh_stock_coverage:.1%} < krav {min_fresh_price_coverage:.0%}."
+                if not global_price_data_ok
+                else "- Ingen kandidat passerte alle krav (inkludert datatilstrekkelighet)."
+            ),
             "",
             "## Topp (diagnostikk – før filter)",
             _md_table(diag[out_cols], max_rows=10),
         ]
+        _atomic_write_csv(ctx.run_dir / "decision_schema.csv", pd.DataFrame(columns=["parameter", "value", "threshold", "status", "comment"]))
+        _atomic_write_text(
+            ctx.run_dir / "media_red_flags.json",
+            json.dumps(
+                {
+                    "enabled": False,
+                    "status": "not_run_no_candidate",
+                    "headlines_checked": 0,
+                    "red_flag_count": 0,
+                    "red_flags": [],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+        )
         _atomic_write_text(out_md, "\n".join(md))
         log.info(f"decision: wrote {out_csv}")
         log.info(f"decision: wrote {out_md}")
@@ -1100,6 +1527,15 @@ def run(ctx, log) -> int:
     if use_graham_strategy and np.isfinite(pick.get("graham_score", np.nan)):
         md.append(f"- Graham score: {int(pick['graham_score'])}/7")
         md.append(f"- Graham criteria available: {int(pick.get('graham_criteria_available_count', 0))}/7")
+    if np.isfinite(pick.get("fresh_stock_price_coverage", np.nan)):
+        md.append(
+            f"- Fersk prisdekning i universet: {float(pick.get('fresh_stock_price_coverage')):.1%} (krav >= {min_fresh_price_coverage:.0%})"
+        )
+    if np.isfinite(pick.get("candidate_data_coverage_ratio", np.nan)):
+        md.append(
+            f"- Datadekning for kandidat: {int(pick.get('candidate_available_fields_count', 0))}/{int(pick.get('candidate_required_fields_count', len(candidate_required_fields)))} "
+            f"({float(pick.get('candidate_data_coverage_ratio')):.0%})"
+        )
     md.append("")
     md.append("## Årsaker (5-10 punkter)")
     md.append(f"- Krav MoS >= {mos_min:.0%} (høy risiko: {mos_high:.0%})")
@@ -1114,6 +1550,7 @@ def run(ctx, log) -> int:
         md.append(f"- Minst {graham_min_score} av 7 kriterier kreves")
         md.append("- Kriterier: Size, Financial strength, Earning stability, Dividend History, Profit Growth, Moderate P/E ratio, Moderate Equity Price")
     md.append(f"- {tech_rule_text}")
+    md.append(f"- Aksjekurs må være maks {max_price_age_days} dager gammel relativt til asof.")
     md.append(f"- Valgt ticker har MoS {float(pick['mos']):.1%} og quality_score {float(pick.get('quality_score', 0.0)):.3f}")
     if np.isfinite(pick.get("roic_wacc_spread", np.nan)):
         md.append(f"- ROIC-WACC spread (normalisert): {float(pick.get('roic_wacc_spread')):.3%}")
@@ -1121,6 +1558,14 @@ def run(ctx, log) -> int:
         md.append(f"- Svekkede kvalitetsindikatorer: {int(pick.get('quality_weak_count'))}")
     if "ma200" in pick.index and np.isfinite(pick.get("ma200", np.nan)):
         md.append(f"- Teknisk: pris over MA200={bool(pick.get('above_ma200', False))}, MA200={float(pick.get('ma200')):.3g}")
+    if "adj_close" in pick.index and np.isfinite(pick.get("adj_close", np.nan)):
+        pick_px_date = pd.to_datetime(pick.get("date"), errors="coerce")
+        pick_px_date_txt = str(pick_px_date.date()) if pd.notna(pick_px_date) else "ukjent"
+        if np.isfinite(pick.get("stock_price_age_days", np.nan)):
+            pick_age_txt = f"{int(pick.get('stock_price_age_days'))} dager"
+        else:
+            pick_age_txt = "ukjent alder"
+        md.append(f"- Siste aksjekurs (adj_close): {float(pick.get('adj_close')):.4g} (dato {pick_px_date_txt}, {pick_age_txt})")
     if "mad" in pick.index and np.isfinite(pick.get("mad", np.nan)):
         md.append(f"- Momentum (MAD)={float(pick.get('mad')):.3f}, terskel={mad_min:.3f}")
     if str(pick.get("relevant_index_symbol", "")):
@@ -1132,6 +1577,44 @@ def run(ctx, log) -> int:
     if not worst.empty:
         md.append(f"- Worst-case kandidat nå: {worst.iloc[0].get('ticker','')} med MoS={float(worst.iloc[0].get('mos', float('nan'))):.1%}")
     md.append("- Break-case: Hvis valgt aksje faller under MA200 eller MOS < krav ved neste kjøring => gå til CASH.")
+    md.append("")
+    md.append("## Beslutningsskjema")
+    schema_df = _decision_schema_rows(
+        pick=pick,
+        mos_min=mos_min,
+        mos_high=mos_high,
+        mad_min=mad_min,
+        max_price_age_days=max_price_age_days,
+        required_fields=candidate_required_fields,
+        min_count=candidate_min_count,
+        min_ratio=candidate_min_ratio,
+    )
+    _atomic_write_csv(ctx.run_dir / "decision_schema.csv", schema_df)
+    md.append(_md_table(schema_df, max_rows=50))
+    md.append("")
+    media_scan = _run_media_red_flag_scan(
+        asof=ctx.asof,
+        ticker=str(pick.get("ticker", "")),
+        company=str(pick.get("company", "")),
+        dec_cfg=dec_cfg,
+    )
+    _atomic_write_text(ctx.run_dir / "media_red_flags.json", json.dumps(media_scan, ensure_ascii=False, indent=2))
+    md.append("## Media Red Flag")
+    md.append(f"- Status: {media_scan.get('status', 'unknown')}")
+    md.append(f"- Headline-sjekk: {int(media_scan.get('headlines_checked', 0))}")
+    md.append(f"- Potensielle red flags: {int(media_scan.get('red_flag_count', 0))}")
+    if media_scan.get("status") == "error":
+        md.append(f"- Feil under mediesjekk: {media_scan.get('error', '')}")
+    else:
+        red_flags = media_scan.get("red_flags", []) or []
+        if red_flags:
+            md.append("- Treff:")
+            for item in red_flags[:5]:
+                md.append(
+                    f"  - {item.get('title', '')} | terms={item.get('matched_terms', '')} | source={item.get('source', '')}"
+                )
+        else:
+            md.append("- Ingen tydelige red-flag nøkkelord i sjekkede overskrifter.")
     md.append("")
     md.append("## Topp 10 (eligible)")
     md.append(_md_table(eligible[out_cols], max_rows=10))

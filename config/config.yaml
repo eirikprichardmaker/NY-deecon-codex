@@ -27,6 +27,50 @@ wft_opt_strategy_a:
 decision:
   quality_strategy: baseline
   dividend_min_score: 0
+  max_price_age_days: 7
+  min_fresh_price_coverage: 0.50
+  candidate_required_fields:
+    - intrinsic_value
+    - market_cap
+    - mos
+    - mos_req
+    - quality_score
+    - roic_wacc_spread
+    - adj_close
+    - ma200
+    - mad
+    - index_price
+    - index_ma200
+  candidate_min_required_fields: 8
+  candidate_min_required_ratio: 0.75
+  media_red_flags:
+    enabled: true
+    days_back: 30
+    max_headlines: 30
+    terms:
+      - bankrupt
+      - bankruptcy
+      - insolvency
+      - investigation
+      - fraud
+      - lawsuit
+      - warning
+      - profit warning
+      - guidance cut
+      - downgrade
+      - delisting
+      - rights issue
+      - dilution
+      - loss
+      - operating loss
+      - covenant breach
+      - liquidity crisis
+      - accounting
+
+refresh_prices_daily:
+  min_universe_coverage: 0.60
+  min_relative_coverage_vs_existing: 0.80
+  max_absolute_coverage_drop_vs_existing: 0.15
 
 financials_enrichment:
   enabled: true

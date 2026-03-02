@@ -65,7 +65,7 @@ def test_apply_index_filter_passes_when_index_above_ma200_and_mad_ok():
         base,
         prices_df=prices,
         asof="2026-02-16",
-        dec_cfg={"require_index_ma200": True, "require_index_mad": True},
+        dec_cfg={"require_index_ma200": True, "require_index_mad": True, "max_price_age_days": 9999},
         mad_min=-0.05,
     )
 
@@ -90,7 +90,7 @@ def test_apply_index_filter_blocks_when_index_trend_is_weak():
         base,
         prices_df=prices,
         asof="2026-02-16",
-        dec_cfg={"require_index_ma200": True, "require_index_mad": True},
+        dec_cfg={"require_index_ma200": True, "require_index_mad": True, "max_price_age_days": 9999},
         mad_min=-0.05,
     )
 
