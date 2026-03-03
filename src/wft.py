@@ -15,6 +15,7 @@ import pandas as pd
 import yaml
 
 from src.common.config import load_config, project_root_from_file, resolve_paths
+from src.common.data_quality import apply_data_quality, dq_config_from_cfg
 
 COUNTRY_FROM_SUFFIX = {
     "OL": "NO",
@@ -561,8 +562,16 @@ def _load_monthly_panel(prices_path: Path, static_universe: pd.DataFrame) -> pd.
     return panel.sort_values(["month", "k"]).reset_index(drop=True)
 
 
-def _apply_filters(month_df: pd.DataFrame, params: WFTParams) -> pd.DataFrame:
+def _apply_filters(month_df: pd.DataFrame, params: WFTParams, dq_cfg=None) -> pd.DataFrame:
     d = month_df.copy()
+
+    dq_cfg = dq_cfg or dq_config_from_cfg({})
+    asof = ""
+    if "month" in d.columns and len(d) > 0:
+        asof = str(pd.to_datetime(d["month"].iloc[0], errors="coerce").date())
+    dq_flags, _dq_audit = apply_data_quality(d, cfg=dq_cfg, asof=asof, require_intrinsic=False)
+    for c in dq_flags.columns:
+        d[c] = dq_flags[c]
 
     base_mos = float(params.mos_threshold)
     mos_req = np.where(d["high_risk_flag"].fillna(False), np.maximum(0.40, base_mos), base_mos)
@@ -577,7 +586,8 @@ def _apply_filters(month_df: pd.DataFrame, params: WFTParams) -> pd.DataFrame:
     d["fundamental_ok"] = (
         d["mos_ok"] &
         d["value_creation_ok"] &
-        d["quality_ok"]
+        d["quality_ok"] &
+        ~d["dq_blocked"].fillna(False)
     )
 
     stock_price = _to_num(d.get("adj_close", pd.Series(np.nan, index=d.index)))
@@ -641,6 +651,27 @@ def _apply_filters(month_df: pd.DataFrame, params: WFTParams) -> pd.DataFrame:
     return d
 
 
+def _collect_wft_dq_audit(window_df: pd.DataFrame, params: WFTParams, dq_cfg, fold_year: int, mode: str) -> pd.DataFrame:
+    if window_df.empty or "month" not in window_df.columns:
+        return pd.DataFrame()
+    audits: list[pd.DataFrame] = []
+    for m in sorted(window_df["month"].dropna().unique().tolist()):
+        cur = window_df[window_df["month"] == m].copy()
+        asof = str(pd.to_datetime(m, errors="coerce").date())
+        _, audit = apply_data_quality(
+            cur,
+            cfg=dq_cfg,
+            asof=asof,
+            require_intrinsic=False,
+            context={"fold": int(fold_year), "mode": str(mode), "month": str(pd.Timestamp(m).date())},
+        )
+        if not audit.empty:
+            audits.append(audit)
+    if not audits:
+        return pd.DataFrame()
+    return pd.concat(audits, ignore_index=True)
+
+
 def _cash_decision_reasons(d: pd.DataFrame) -> str:
     if d.empty:
         return "datamangler|ingen kandidat"
@@ -688,8 +719,8 @@ def _cash_decision_reasons(d: pd.DataFrame) -> str:
     return _collect_decision_reasons(pd.Series(["|".join(reasons)]))
 
 
-def _pick_ticker_with_reason(month_df: pd.DataFrame, params: WFTParams) -> tuple[str, str]:
-    d = _apply_filters(month_df, params)
+def _pick_ticker_with_reason(month_df: pd.DataFrame, params: WFTParams, dq_cfg=None) -> tuple[str, str]:
+    d = _apply_filters(month_df, params, dq_cfg=dq_cfg)
     elig = d[d["eligible"]].copy()
     if elig.empty:
         return "CASH", _cash_decision_reasons(d)
@@ -707,12 +738,12 @@ def _pick_ticker_with_reason(month_df: pd.DataFrame, params: WFTParams) -> tuple
     return str(elig.iloc[0]["k"]), ""
 
 
-def _pick_ticker(month_df: pd.DataFrame, params: WFTParams) -> str:
-    pos, _reason = _pick_ticker_with_reason(month_df, params)
+def _pick_ticker(month_df: pd.DataFrame, params: WFTParams, dq_cfg=None) -> str:
+    pos, _reason = _pick_ticker_with_reason(month_df, params, dq_cfg=dq_cfg)
     return pos
 
 
-def _simulate_window(window_df: pd.DataFrame, params: WFTParams) -> pd.DataFrame:
+def _simulate_window(window_df: pd.DataFrame, params: WFTParams, dq_cfg=None) -> pd.DataFrame:
     months = sorted(window_df["month"].dropna().unique().tolist())
     if len(months) < 2:
         return pd.DataFrame(columns=["month", "position", "ret", "decision_reasons"])
@@ -724,7 +755,7 @@ def _simulate_window(window_df: pd.DataFrame, params: WFTParams) -> pd.DataFrame
         cur = window_df[window_df["month"] == m]
         nxt = window_df[window_df["month"] == n]
 
-        pos, decision_reasons = _pick_ticker_with_reason(cur, params)
+        pos, decision_reasons = _pick_ticker_with_reason(cur, params, dq_cfg=dq_cfg)
         if pos == "CASH":
             ret = 0.0
         else:
@@ -816,13 +847,14 @@ def tune_params(
     baseline: WFTParams,
     seed: int = 42,
     overfit_guard_eps: float = 0.02,
+    dq_cfg=None,
 ) -> tuple[WFTParams, pd.DataFrame]:
     if not grid:
         raise ValueError("grid empty")
 
     rows = []
     for p in grid:
-        trades = _simulate_window(train_df, p)
+        trades = _simulate_window(train_df, p, dq_cfg=dq_cfg)
         m = _window_metrics(trades)
         rows.append(
             {
@@ -871,11 +903,12 @@ def run_fold(
     grid: list[WFTParams],
     baseline: WFTParams,
     seed: int,
+    dq_cfg=None,
 ) -> tuple[WFTParams, dict, dict, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    chosen, diag = tune_params(train_df, grid, baseline=baseline, seed=seed)
+    chosen, diag = tune_params(train_df, grid, baseline=baseline, seed=seed, dq_cfg=dq_cfg)
 
-    tuned_trades = _simulate_window(test_df, chosen)
-    base_trades = _simulate_window(test_df, baseline)
+    tuned_trades = _simulate_window(test_df, chosen, dq_cfg=dq_cfg)
+    base_trades = _simulate_window(test_df, baseline, dq_cfg=dq_cfg)
 
     tuned_metrics = _window_metrics(tuned_trades)
     base_metrics = _window_metrics(base_trades)
@@ -966,6 +999,7 @@ def run_wft(
     prices_path: Path | None = None,
 ) -> tuple[Path, Path, Path]:
     cfg = load_config(config_path)
+    dq_cfg = dq_config_from_cfg(cfg)
     paths = resolve_paths(cfg, project_root)
 
     if master_path is None:
@@ -1000,6 +1034,7 @@ def run_wft(
 
     rows: list[dict] = []
     perf_rows: list[dict] = []
+    dq_rows: list[pd.DataFrame] = []
 
     for i, fold in enumerate(folds):
         train_df = panel[(panel["month"] >= fold["train_start"]) & (panel["month"] <= fold["train_end"])].copy()
@@ -1011,7 +1046,11 @@ def run_wft(
             grid=grid,
             baseline=baseline,
             seed=seed + i,
+            dq_cfg=dq_cfg,
         )
+
+        dq_rows.append(_collect_wft_dq_audit(test_df, baseline, dq_cfg=dq_cfg, fold_year=int(fold["test_year"]), mode="baseline"))
+        dq_rows.append(_collect_wft_dq_audit(test_df, chosen, dq_cfg=dq_cfg, fold_year=int(fold["test_year"]), mode="tuned"))
 
         for mode, p, metrics, trades in [
             ("baseline", baseline, base_metrics, base_trades),
@@ -1085,6 +1124,29 @@ def run_wft(
 
     wft_summary_path = run_dir / "wft_summary.md"
     _write_summary_md(wft_summary_path, baseline=base_agg, tuned=tuned_agg, n_folds=len(folds))
+
+    dq_audit = pd.concat([x for x in dq_rows if not x.empty], ignore_index=True) if dq_rows else pd.DataFrame()
+    dq_audit_path = run_dir / "wft_data_quality_audit.csv"
+    dq_audit.to_csv(dq_audit_path, index=False)
+
+    dq_report_path = run_dir / "wft_data_quality_report.md"
+    if dq_audit.empty:
+        dq_report_path.write_text("# WFT Data Quality Report\n\nNo DQ events recorded.\n", encoding="utf-8")
+    else:
+        by_rule = dq_audit.groupby(["rule_id", "severity"]).size().reset_index(name="count").sort_values("count", ascending=False).head(20)
+        by_month = dq_audit.groupby(["month", "severity"]).size().unstack(fill_value=0).reset_index().sort_values(["FAIL", "WARN"], ascending=[False, False])
+        lines = [
+            "# WFT Data Quality Report",
+            "",
+            f"Total events: {len(dq_audit)}",
+            "",
+            "## Top rules",
+            by_rule.to_csv(index=False),
+            "",
+            "## Months with most WARN/FAIL",
+            by_month.head(20).to_csv(index=False),
+        ]
+        dq_report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     chosen_global, rationale = _choose_global_tuned_params(results_df, baseline=baseline)
     tuned_cfg = {

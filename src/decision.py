@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 
 from src.common.config import resolve_paths
+from src.common.data_quality import apply_data_quality, dq_config_from_cfg
 from src.common.errors import SchemaError
 from src.common.io import read_parquet
 from src.common.utils import safe_div, zscore
@@ -764,140 +765,14 @@ def _field_source(field: str) -> str:
 
 
 def _run_data_quality_checks(df: pd.DataFrame, dec_cfg: dict, asof: str) -> tuple[pd.DataFrame, pd.DataFrame]:
-    dq_cfg = dec_cfg.get("data_quality", {}) or {}
-    critical_fields = dq_cfg.get("critical_fields", DEFAULT_CANDIDATE_REQUIRED_FIELDS)
-    if isinstance(critical_fields, str):
-        critical_fields = [x.strip() for x in critical_fields.split(",") if x.strip()]
-    critical_fields = [str(x).strip() for x in critical_fields if str(x).strip()]
-
-    specs_by_col = {str(spec.get("col")): spec for spec in DEFAULT_VALUE_QC_SPECS}
-    outlier_z_warn = float(dq_cfg.get("outlier_z_warn", 4.0))
-    outlier_z_fail = float(dq_cfg.get("outlier_z_fail", 8.0))
-    outlier_min_samples = int(dq_cfg.get("outlier_min_samples", 15))
-
-    audit_rows: list[dict] = []
-
-    for i, row in df.iterrows():
-        ticker = str(row.get("ticker", row.get("yahoo_ticker", "")))
-        ins_id = row.get("ins_id", "")
-        row_date = row.get("date", "")
-
-        for field in critical_fields:
-            value = row.get(field, np.nan)
-            val = _to_float(value)
-            if (field not in df.columns) or (not np.isfinite(val)):
-                audit_rows.append(
-                    {
-                        "row_index": i,
-                        "ticker": ticker,
-                        "ins_id": ins_id,
-                        "asof": asof,
-                        "date": row_date,
-                        "rule_id": f"DQ_CRITICAL_PRESENT_{field}",
-                        "severity": "FAIL",
-                        "field": field,
-                        "value": value,
-                        "source": _field_source(field),
-                        "reason": f"missing_or_non_finite:{field}",
-                    }
-                )
-
-        for field, spec in specs_by_col.items():
-            if field not in df.columns:
-                continue
-            value = row.get(field, np.nan)
-            val = _to_float(value)
-            if not np.isfinite(val):
-                continue
-            lo = spec.get("hard_min")
-            hi = spec.get("hard_max")
-            if lo is not None and np.isfinite(float(lo)) and val < float(lo):
-                audit_rows.append(
-                    {
-                        "row_index": i,
-                        "ticker": ticker,
-                        "ins_id": ins_id,
-                        "asof": asof,
-                        "date": row_date,
-                        "rule_id": f"DQ_RANGE_MIN_{field}",
-                        "severity": "FAIL",
-                        "field": field,
-                        "value": val,
-                        "source": _field_source(field),
-                        "reason": f"value_below_hard_min:{lo}",
-                    }
-                )
-            if hi is not None and np.isfinite(float(hi)) and val > float(hi):
-                audit_rows.append(
-                    {
-                        "row_index": i,
-                        "ticker": ticker,
-                        "ins_id": ins_id,
-                        "asof": asof,
-                        "date": row_date,
-                        "rule_id": f"DQ_RANGE_MAX_{field}",
-                        "severity": "FAIL",
-                        "field": field,
-                        "value": val,
-                        "source": _field_source(field),
-                        "reason": f"value_above_hard_max:{hi}",
-                    }
-                )
-
-    for field in specs_by_col.keys():
-        if field not in df.columns:
-            continue
-        s_field = pd.to_numeric(df[field], errors="coerce")
-        finite = s_field[np.isfinite(s_field)]
-        if finite.shape[0] < outlier_min_samples:
-            continue
-        mu = float(finite.mean())
-        sigma = float(finite.std(ddof=0))
-        if not np.isfinite(sigma) or sigma <= 0:
-            continue
-        z = ((s_field - mu) / sigma).abs()
-        warn_idx = z[(z >= outlier_z_warn)].index
-        fail_idx = set(z[(z >= outlier_z_fail)].index.tolist())
-        for i in warn_idx:
-            severity = "FAIL" if i in fail_idx else "WARN"
-            audit_rows.append(
-                {
-                    "row_index": i,
-                    "ticker": str(df.loc[i].get("ticker", df.loc[i].get("yahoo_ticker", ""))),
-                    "ins_id": df.loc[i].get("ins_id", ""),
-                    "asof": asof,
-                    "date": df.loc[i].get("date", ""),
-                    "rule_id": f"DQ_OUTLIER_Z_{field}",
-                    "severity": severity,
-                    "field": field,
-                    "value": _to_float(df.loc[i, field]),
-                    "source": _field_source(field),
-                    "reason": f"abs_z={float(z.loc[i]):.3f} warn>={outlier_z_warn} fail>={outlier_z_fail}",
-                }
-            )
-
-    audit = pd.DataFrame(audit_rows)
-    flags = pd.DataFrame(index=df.index)
-    flags["data_quality_fail_count"] = 0
-    flags["data_quality_warn_count"] = 0
-    flags["data_quality_fail"] = False
-    flags["data_quality_fail_reasons"] = ""
-    flags["data_quality_warn_reasons"] = ""
-
-    if audit.empty:
-        return flags, audit
-
-    fail_counts = audit[audit["severity"] == "FAIL"].groupby("row_index").size()
-    warn_counts = audit[audit["severity"] == "WARN"].groupby("row_index").size()
-    fail_reasons = audit[audit["severity"] == "FAIL"].groupby("row_index")["reason"].apply(lambda x: "; ".join(sorted(set(x.astype(str)))))
-    warn_reasons = audit[audit["severity"] == "WARN"].groupby("row_index")["reason"].apply(lambda x: "; ".join(sorted(set(x.astype(str)))))
-
-    flags["data_quality_fail_count"] = fail_counts.reindex(df.index).fillna(0).astype(int)
-    flags["data_quality_warn_count"] = warn_counts.reindex(df.index).fillna(0).astype(int)
-    flags["data_quality_fail"] = flags["data_quality_fail_count"] > 0
-    flags["data_quality_fail_reasons"] = fail_reasons.reindex(df.index).fillna("")
-    flags["data_quality_warn_reasons"] = warn_reasons.reindex(df.index).fillna("")
-    return flags, audit
+    merged_cfg = {"decision": {"data_quality": dec_cfg.get("data_quality", {})}}
+    dq_cfg = dq_config_from_cfg(merged_cfg)
+    return apply_data_quality(
+        df=df,
+        cfg=dq_cfg,
+        asof=asof,
+        require_intrinsic=True,
+    )
 
 
 def _as_num_series(df: pd.DataFrame, aliases: list[str]) -> pd.Series:
@@ -1790,7 +1665,12 @@ def run(ctx, log) -> int:
         )
     df.loc[df["technical_ok"].astype(bool), "reason_technical_fail"] = ""
     df["decision_reasons"] = df.apply(
-        lambda r: _join_reasons([str(r.get("reason_fundamental_fail", "")), str(r.get("reason_technical_fail", ""))]),
+        lambda r: _join_reasons([
+            str(r.get("reason_fundamental_fail", "")),
+            str(r.get("reason_technical_fail", "")),
+            str(r.get("dq_fail_reasons", "")),
+            str(r.get("dq_warn_reasons", "")),
+        ]),
         axis=1,
     )
 
@@ -1832,6 +1712,7 @@ def run(ctx, log) -> int:
     screen_cols = [c for c in [
         "ticker", "company", "market_cap", "intrinsic_value", "mos", "mos_req",
         "fundamental_ok", "technical_ok", "reason_fundamental_fail", "reason_technical_fail", "decision_reasons",
+        "dq_blocked", "dq_fail_count", "dq_warn_count", "dq_fail_reasons", "dq_warn_reasons", "dq_group_key", "dq_group_n", "dq_bucket_method",
         "data_quality_fail", "data_quality_fail_count", "data_quality_warn_count", "data_quality_fail_reasons", "data_quality_warn_reasons",
         "value_creation_ok", "roic_wacc_spread", "roic_wacc_spread_y3", "value_creation_reason",
         "quality_gate_ok", "quality_weak_count", "quality_gate_reason",
@@ -1854,6 +1735,7 @@ def run(ctx, log) -> int:
             if sev not in by_ticker.columns:
                 by_ticker[sev] = 0
         by_ticker = by_ticker.sort_values(["FAIL", "WARN"], ascending=[False, False])
+        _atomic_write_csv(ctx.run_dir / "data_quality_by_ticker.csv", by_ticker)
         blocked = df[df["data_quality_fail"].fillna(False)]["ticker"].astype(str).tolist()
         top20 = dq_audit.groupby(["rule_id", "severity", "field"]).size().reset_index(name="count").sort_values("count", ascending=False).head(20)
         dq_lines.extend([
@@ -1866,6 +1748,8 @@ def run(ctx, log) -> int:
             "## Blokkerte tickere",
             ", ".join(blocked) if blocked else "_(ingen)_",
         ])
+    if dq_audit.empty:
+        _atomic_write_csv(ctx.run_dir / "data_quality_by_ticker.csv", pd.DataFrame(columns=["ticker", "FAIL", "WARN"]))
     _atomic_write_text(ctx.run_dir / "data_quality_report.md", "\n".join(dq_lines))
 
     eligible = df[df["eligible"]].copy()
@@ -1901,6 +1785,7 @@ def run(ctx, log) -> int:
         "relevant_index_symbol", "relevant_index_key", "index_price_date", "index_price_age_days", "index_price_stale", "index_price", "index_ma200", "index_mad", "index_above_ma200",
         "index_data_ok", "ma200_ok", "index_ma200_ok", "index_mad_ok", "index_tech_ok", "high_risk_flag",
         "fundamental_ok", "technical_ok", "reason_fundamental_fail", "reason_technical_fail", "decision_reasons",
+        "dq_blocked", "dq_fail_count", "dq_warn_count", "dq_fail_reasons", "dq_warn_reasons", "dq_group_key", "dq_group_n", "dq_bucket_method",
         "data_quality_fail", "data_quality_fail_count", "data_quality_warn_count", "data_quality_fail_reasons", "data_quality_warn_reasons",
         "model", "reason",
     ] if c in df.columns]

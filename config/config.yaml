@@ -70,6 +70,14 @@ decision:
       - covenant breach
       - liquidity crisis
       - accounting
+  data_quality:
+    dq_min_group_n: 8
+    dq_outlier_method: IQR
+    dq_iqr_multiplier: 3.0
+    dq_warn_metrics:
+      - fcf_yield
+      - roic
+      - roe
 
 refresh_prices_daily:
   min_universe_coverage: 0.60
