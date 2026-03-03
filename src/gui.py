@@ -362,6 +362,70 @@ def build_result_preview(path: Path, max_chars: int = 120_000) -> str:
     return f"File: {path}\nModified: {mtime}\n\n{txt}"
 
 
+def extract_decision_sections_from_markdown(text: str) -> Dict[str, str]:
+    raw = text or ""
+    lines = raw.splitlines()
+    headings: List[Tuple[int, str]] = []
+    for i, line in enumerate(lines):
+        m = re.match(r"^\s*##\s+(.+?)\s*$", line)
+        if m:
+            headings.append((i, m.group(1).strip()))
+
+    sections: Dict[str, str] = {}
+    if not headings:
+        return {
+            "all": raw.strip(),
+            "overview": raw.strip(),
+            "fundamental": "",
+            "stock": "",
+            "products": "",
+            "media": "",
+            "quality": "",
+            "schema": "",
+        }
+
+    def _slice(start_idx: int, end_idx: int) -> str:
+        if start_idx < 0 or end_idx <= start_idx:
+            return ""
+        return "\n".join(lines[start_idx:end_idx]).strip()
+
+    intro = _slice(0, headings[0][0])
+    blocks: Dict[str, str] = {}
+    for j, (line_idx, heading) in enumerate(headings):
+        end_line = headings[j + 1][0] if j + 1 < len(headings) else len(lines)
+        block = _slice(line_idx, end_line)
+        h = heading.lower()
+        key = heading
+        if "1)" in h and "fundamental" in h:
+            key = "fundamental"
+        elif "2)" in h and "aksje" in h:
+            key = "stock"
+        elif "3)" in h and ("produkt" in h or "marked" in h):
+            key = "products"
+        elif "4)" in h and ("nyhet" in h or "media" in h):
+            key = "media"
+        elif "beslutningsskjema" in h:
+            key = "schema"
+        elif "kvalitetssikring" in h or "quality" in h:
+            key = "quality"
+        elif "beslutningskommentar" in h:
+            key = "overview"
+        elif "oversikt" in h:
+            key = "overview"
+        blocks[key] = (blocks.get(key, "").strip() + "\n\n" + block).strip()
+
+    overview_parts = [p for p in [intro, blocks.get("overview", "")] if p.strip()]
+    sections["all"] = raw.strip()
+    sections["overview"] = "\n\n".join(overview_parts).strip() if overview_parts else raw.strip()
+    sections["fundamental"] = blocks.get("fundamental", "")
+    sections["stock"] = blocks.get("stock", "")
+    sections["products"] = blocks.get("products", "")
+    sections["media"] = blocks.get("media", "")
+    sections["quality"] = blocks.get("quality", "")
+    sections["schema"] = blocks.get("schema", "")
+    return sections
+
+
 def extract_pytest_summary(output: str) -> str:
     lines = [line.strip() for line in (output or "").splitlines() if line.strip()]
     if not lines:
@@ -472,6 +536,9 @@ class DeeconGui:
         self.result_pages: Dict[str, "ttk.Frame"] = {}
         self.section_path_vars: Dict[str, "tk.StringVar"] = {}
         self.section_text_widgets: Dict[str, "tk.Text"] = {}
+        self.decision_sections: Dict[str, str] = {}
+        self.decision_section_var = tk.StringVar(value="overview")
+        self.decision_section_buttons: Dict[str, "ttk.Button"] = {}
 
         self._configure_styles()
         self._build_layout()
@@ -789,6 +856,77 @@ class DeeconGui:
         var.set(str(path))
         self._set_text_widget_text(txt, build_result_preview(path))
 
+    def _resolve_decision_markdown_path(self, artifact_path: Path) -> Path:
+        p = Path(artifact_path)
+        if p.name.lower() == "decision.md":
+            return p
+        sibling_md = p.with_name("decision.md")
+        if sibling_md.exists():
+            return sibling_md
+        return p
+
+    def _load_decision_sections(self, artifact_path: Path) -> None:
+        src = self._resolve_decision_markdown_path(artifact_path)
+        try:
+            if src.exists():
+                raw = src.read_text(encoding="utf-8")
+            else:
+                raw = ""
+        except UnicodeDecodeError:
+            raw = src.read_text(encoding="latin-1", errors="replace") if src.exists() else ""
+        except Exception:
+            raw = ""
+
+        if src.suffix.lower() == ".md" and raw.strip():
+            sections = extract_decision_sections_from_markdown(raw)
+            self.decision_sections = sections
+            text = sections.get(self.decision_section_var.get(), "") or sections.get("overview", "") or sections.get("all", "")
+            if not text:
+                text = raw
+            var = self.section_path_vars.get("decision")
+            txt_widget = self.section_text_widgets.get("decision")
+            if var is not None:
+                var.set(f"{src} | {self.decision_section_var.get()}")
+            if txt_widget is not None:
+                self._set_text_widget_text(txt_widget, text)
+        else:
+            self.decision_sections = {"all": build_result_preview(artifact_path)}
+            var = self.section_path_vars.get("decision")
+            txt_widget = self.section_text_widgets.get("decision")
+            if var is not None:
+                var.set(str(artifact_path))
+            if txt_widget is not None:
+                self._set_text_widget_text(txt_widget, self.decision_sections["all"])
+
+        self._show_decision_subsection(self.decision_section_var.get(), silent=True)
+
+    def _show_decision_subsection(self, key: str, silent: bool = False) -> None:
+        key_norm = str(key).strip().lower()
+        if key_norm not in {"overview", "fundamental", "stock", "products", "media", "quality", "schema", "all"}:
+            key_norm = "overview"
+        self.decision_section_var.set(key_norm)
+        for btn_key, btn in self.decision_section_buttons.items():
+            btn.configure(style="NavActive.TButton" if btn_key == key_norm else "Nav.TButton")
+
+        txt_widget = self.section_text_widgets.get("decision")
+        var = self.section_path_vars.get("decision")
+        if txt_widget is None or var is None:
+            return
+
+        if not self.decision_sections:
+            if not silent:
+                self._set_text_widget_text(txt_widget, "Ingen decision-data lastet enda.")
+            return
+
+        text = self.decision_sections.get(key_norm, "").strip()
+        if not text:
+            fallback = self.decision_sections.get("overview", "").strip() or self.decision_sections.get("all", "").strip()
+            text = fallback or "(Tom seksjon)"
+
+        current_path = var.get().split(" | ")[0].strip() if var.get().strip() else "decision"
+        var.set(f"{current_path} | section={key_norm}")
+        self._set_text_widget_text(txt_widget, text)
+
     def _build_results_tab(self, tab: "ttk.Frame") -> None:
         splitter = ttk.Panedwindow(tab, orient="horizontal")
         splitter.pack(fill="both", expand=True)
@@ -849,14 +987,30 @@ class DeeconGui:
         decision = ttk.Frame(pages_root, style="Card.TFrame", padding=8)
         self.result_pages["decision"] = decision
         ttk.Label(decision, text="Decision Side", style="Info.TLabel").pack(anchor="w")
-        ttk.Label(decision, text="Viser nyeste decision-artifakt.", style="Muted.TLabel").pack(anchor="w", pady=(2, 0))
+        ttk.Label(decision, text="Egne undersider for decision-seksjoner.", style="Muted.TLabel").pack(anchor="w", pady=(2, 0))
         decision_btns = ttk.Frame(decision, style="Card.TFrame")
         decision_btns.pack(fill="x", pady=(8, 0))
         ttk.Button(decision_btns, text="Latest decision", style="Secondary.TButton", command=self._show_latest_decision_in_gui).pack(side="left")
         ttk.Button(decision_btns, text="Refresh list", style="Secondary.TButton", command=self._refresh_results).pack(side="left", padx=(8, 0))
+        subsection_row = ttk.Frame(decision, style="Card.TFrame")
+        subsection_row.pack(fill="x", pady=(8, 0))
+        subsection_items = [
+            ("overview", "Oversikt"),
+            ("fundamental", "Fundamental"),
+            ("stock", "Aksje"),
+            ("products", "Produkter"),
+            ("media", "Media"),
+            ("quality", "Vurdering"),
+            ("schema", "Skjema"),
+        ]
+        for key, label in subsection_items:
+            btn = ttk.Button(subsection_row, text=label, style="Nav.TButton", command=lambda k=key: self._show_decision_subsection(k))
+            btn.pack(side="left", padx=(0, 6))
+            self.decision_section_buttons[key] = btn
         decision_wrap = ttk.LabelFrame(decision, text="Decision Preview", padding=10, style="Section.TLabelframe")
         decision_wrap.pack(fill="both", expand=True, pady=(10, 0))
         self._build_section_preview_widget(decision_wrap, key="decision")
+        self._show_decision_subsection("overview", silent=True)
 
         # Tests page
         tests = ttk.Frame(pages_root, style="Card.TFrame", padding=8)
@@ -1102,7 +1256,7 @@ class DeeconGui:
         if not found:
             self.preview_path_var.set(str(latest))
             self._set_preview_text(build_result_preview(latest))
-        self._set_section_preview("decision", latest)
+        self._load_decision_sections(latest)
         try:
             self.tabs.select(1)
         except Exception:
@@ -1231,6 +1385,9 @@ class DeeconGui:
         self.preview_path_var.set(str(path))
         self._set_preview_text(build_result_preview(path))
         self._set_section_preview("overview", path)
+        name = path.name.lower()
+        if name in {"decision.md", "decision_report.html"}:
+            self._load_decision_sections(path)
 
     def _select_result_path(self, path: Path) -> bool:
         try:

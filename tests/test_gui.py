@@ -6,6 +6,7 @@ from src.gui import (
     build_run_weekly_command,
     build_result_preview,
     build_test_result_html,
+    extract_decision_sections_from_markdown,
     extract_pytest_summary,
     find_result_highlight_spans,
     find_latest_result_file,
@@ -234,3 +235,23 @@ def test_find_result_highlight_spans_suppresses_green_on_red_line():
     assert first_line_red is True
     assert first_line_green is False
     assert second_line_green is True
+
+
+def test_extract_decision_sections_from_markdown_splits_main_sections():
+    md = (
+        "# Decision\n\n"
+        "## Oversikt\nx\n\n"
+        "## 1) Fundamental analyse\nf\n\n"
+        "## 2) Aksje analyse\na\n\n"
+        "## 3) Produkter og markedsforventning\np\n\n"
+        "## 4) Nyheter og vurdering\nm\n\n"
+        "## Beslutningsskjema\ns\n\n"
+        "## Kvalitetssikring Av Verdier\nq\n"
+    )
+    out = extract_decision_sections_from_markdown(md)
+    assert "Fundamental" in out["fundamental"]
+    assert "Aksje" in out["stock"]
+    assert "Produkter" in out["products"]
+    assert "Nyheter" in out["media"]
+    assert "Beslutningsskjema" in out["schema"]
+    assert "Kvalitetssikring" in out["quality"]
