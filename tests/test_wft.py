@@ -364,6 +364,164 @@ def test_apply_filters_two_of_three_blocks_when_only_index_trend_passes():
     assert bool(out.loc[0, "technical_ok"]) is False
 
 
+def test_apply_filters_dq_fail_blocks_eligibility():
+    params = wft.WFTParams(mos_threshold=0.30, mad_min=-0.05, weakness_rule_variant="baseline")
+    month_df = pd.DataFrame(
+        {
+            "ticker": ["AAA.OL"],
+            "k": ["AAA"],
+            "mos": [0.50],
+            "high_risk_flag": [False],
+            "value_creation_ok_base": [True],
+            "quality_weak_count": [0],
+            "adj_close": [110.0],
+            "ma200": [100.0],
+            "mad": [0.02],
+            "index_price": [1100.0],
+            "index_ma200": [1000.0],
+            "index_mad": [0.02],
+            "roic": [0.10],
+            "fcf_yield": [0.05],
+            "market_cap": [10_000_000_000.0],
+            "dq_blocked": [True],
+            "dq_fail_count": [1],
+            "dq_fail_reasons": ["DQ_PRICE_NON_POSITIVE"],
+            "dq_warn_count": [0],
+            "dq_warn_reasons": [""],
+        }
+    )
+
+    out = wft._apply_filters(month_df, params)
+    assert bool(out.loc[0, "fundamental_ok"]) is True
+    assert bool(out.loc[0, "technical_ok"]) is True
+    assert bool(out.loc[0, "dq_blocked"]) is True
+    assert bool(out.loc[0, "eligible"]) is False
+
+
+def test_apply_filters_warn_does_not_block_eligibility():
+    params = wft.WFTParams(mos_threshold=0.30, mad_min=-0.05, weakness_rule_variant="baseline")
+    month_df = pd.DataFrame(
+        {
+            "ticker": ["AAA.OL"],
+            "k": ["AAA"],
+            "mos": [0.50],
+            "high_risk_flag": [False],
+            "value_creation_ok_base": [True],
+            "quality_weak_count": [0],
+            "adj_close": [110.0],
+            "ma200": [100.0],
+            "mad": [0.02],
+            "index_price": [1100.0],
+            "index_ma200": [1000.0],
+            "index_mad": [0.02],
+            "roic": [0.10],
+            "fcf_yield": [0.05],
+            "market_cap": [10_000_000_000.0],
+            "dq_blocked": [False],
+            "dq_fail_count": [0],
+            "dq_fail_reasons": [""],
+            "dq_warn_count": [1],
+            "dq_warn_reasons": ["DQ_OUTLIER_ROBUST_fcf_yield"],
+        }
+    )
+
+    out = wft._apply_filters(month_df, params)
+    assert bool(out.loc[0, "fundamental_ok"]) is True
+    assert bool(out.loc[0, "technical_ok"]) is True
+    assert bool(out.loc[0, "dq_blocked"]) is False
+    assert bool(out.loc[0, "eligible"]) is True
+
+
+def test_cash_reasons_include_data_invalid_when_dq_blocks_all_candidates():
+    params = wft.WFTParams(mos_threshold=0.30, mad_min=-0.05, weakness_rule_variant="baseline")
+    month_df = pd.DataFrame(
+        {
+            "ticker": ["AAA.OL"],
+            "k": ["AAA"],
+            "mos": [0.50],
+            "high_risk_flag": [False],
+            "value_creation_ok_base": [True],
+            "quality_weak_count": [0],
+            "adj_close": [110.0],
+            "ma200": [100.0],
+            "mad": [0.02],
+            "index_price": [1100.0],
+            "index_ma200": [1000.0],
+            "index_mad": [0.02],
+            "roic": [0.10],
+            "fcf_yield": [0.05],
+            "market_cap": [10_000_000_000.0],
+            "dq_blocked": [True],
+            "dq_fail_count": [1],
+            "dq_fail_reasons": ["DQ_PRICE_NON_POSITIVE;DQ_MARKET_CAP_NON_POSITIVE"],
+            "dq_warn_count": [0],
+            "dq_warn_reasons": [""],
+        }
+    )
+
+    position, reasons = wft._pick_ticker_with_reason(month_df, params)
+
+    assert position == "CASH"
+    assert "DATA_INVALID" in reasons
+    assert "DQ_PRICE_NON_POSITIVE" in reasons
+    assert "ingen kandidat" in reasons
+
+
+def test_run_wft_calls_dq_for_static_and_monthly_panel(tmp_path, monkeypatch):
+    root = tmp_path / "repo"
+    master_path, prices_path = _write_smoke_dataset(root)
+
+    calls: list[dict] = []
+
+    def _fake_run_data_quality_checks(df: pd.DataFrame, dec_cfg: dict, asof: str):
+        calls.append(
+            {
+                "columns": set(df.columns.tolist()),
+                "critical_fields": list((dec_cfg.get("data_quality", {}) or {}).get("critical_fields", [])),
+                "asof": str(asof),
+            }
+        )
+        flags = pd.DataFrame(index=df.index)
+        flags["dq_fail_count"] = 0
+        flags["dq_warn_count"] = 0
+        flags["dq_blocked"] = False
+        flags["dq_fail_reasons"] = ""
+        flags["dq_warn_reasons"] = ""
+        flags["data_quality_fail"] = False
+        flags["data_quality_fail_count"] = 0
+        flags["data_quality_warn_count"] = 0
+        flags["data_quality_fail_reasons"] = ""
+        flags["data_quality_warn_reasons"] = ""
+        audit = pd.DataFrame(columns=["asof", "date", "ticker", "rule_id", "severity", "field", "value", "detail", "row_index"])
+        return flags, audit
+
+    monkeypatch.setattr(wft, "_run_data_quality_checks", _fake_run_data_quality_checks)
+
+    run_dir = root / "runs" / "wft_test_dq_call"
+    wft.run_wft(
+        project_root=root,
+        config_path=root / "config" / "config.yaml",
+        run_dir=run_dir,
+        train_years=12,
+        test_years=1,
+        step_years=1,
+        seed=42,
+        mos_grid=[0.30],
+        mad_grid=[-0.05],
+        weakness_variants=["baseline"],
+        start_year=2013,
+        end_year=2013,
+        master_path=master_path,
+        prices_path=prices_path,
+    )
+
+    assert len(calls) == 2
+    assert {"market_cap", "mos"}.issubset(calls[0]["columns"])
+    assert calls[0]["critical_fields"] == ["market_cap", "mos"]
+    assert {"adj_close", "ma200", "index_price", "index_ma200", "index_mad"}.issubset(calls[1]["columns"])
+    assert calls[1]["critical_fields"] == ["adj_close"]
+
+
 def test_wft_cli_smoke_outputs_files(tmp_path, monkeypatch):
     root = tmp_path / "repo"
     master_path, prices_path = _write_smoke_dataset(root)
@@ -408,9 +566,13 @@ def test_wft_cli_smoke_outputs_files(tmp_path, monkeypatch):
 
     results_path = run_dir / "wft_results.csv"
     summary_path = run_dir / "wft_summary.md"
+    dq_audit_path = run_dir / "wft_data_quality_audit.csv"
+    dq_report_path = run_dir / "wft_data_quality_report.md"
 
     assert results_path.exists()
     assert summary_path.exists()
+    assert dq_audit_path.exists()
+    assert dq_report_path.exists()
 
     out = pd.read_csv(results_path)
     assert not out.empty
@@ -431,3 +593,9 @@ def test_wft_cli_smoke_outputs_files(tmp_path, monkeypatch):
     md = summary_path.read_text(encoding="utf-8")
     assert "CAGR" in md
     assert "MaxDD" in md
+
+    dq_audit = pd.read_csv(dq_audit_path)
+    assert {"fold", "year_month", "ticker", "rule_id", "severity", "field", "value", "detail"}.issubset(set(dq_audit.columns))
+
+    dq_md = dq_report_path.read_text(encoding="utf-8")
+    assert "WFT Data Quality Report" in dq_md

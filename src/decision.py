@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import json
+import html
 import re
 import urllib.error
 import urllib.parse
@@ -100,6 +101,16 @@ GRAHAM_CRITERIA = [
     ("profit_growth", "Profit GROWTH - Total profit growth"),
     ("moderate_pe", "Moderate P/E ratio"),
     ("moderate_equity_price", "Moderate Equity Price"),
+]
+
+PRODUCT_FIELD_SPECS: list[tuple[str, str, str]] = [
+    ("revenue_goods", "Goods sales", "PRODUCT_GOODS"),
+    ("revenue_services", "Services sales", "PRODUCT_SERVICES"),
+    ("ins_earned_premiums", "Insurance premiums", "PRODUCT_INSURANCE_PREMIUMS"),
+    ("bank_total_loans_gross", "Bank lending products", "PRODUCT_BANK_LOANS"),
+    ("bank_customer_deposits", "Bank deposit products", "PRODUCT_BANK_DEPOSITS"),
+    ("bank_fee_commission_income", "Bank fee services", "PRODUCT_BANK_FEE_SERVICES"),
+    ("bank_net_interest_income", "Bank net interest products", "PRODUCT_BANK_NET_INTEREST"),
 ]
 
 
@@ -457,6 +468,444 @@ def _candidate_data_sufficiency(
     return out, required, min_count, min_ratio
 
 
+def _empty_candidate_products() -> pd.DataFrame:
+    return pd.DataFrame(
+        columns=[
+            "ticker",
+            "company",
+            "product_id",
+            "product_label",
+            "source_field",
+            "value",
+            "value_share",
+            "detail",
+        ]
+    )
+
+
+def _empty_candidate_product_demand_forecast() -> pd.DataFrame:
+    return pd.DataFrame(
+        columns=[
+            "ticker",
+            "company",
+            "product_id",
+            "product_label",
+            "scenario",
+            "year_offset",
+            "forecast_year",
+            "demand_index",
+            "product_demand_index",
+            "demand_cagr_assumption",
+            "model_confidence",
+            "driver_signal_z",
+            "anchor_growth_used",
+            "available_metric_count",
+        ]
+    )
+
+
+def _empty_candidate_product_demand_summary() -> pd.DataFrame:
+    return pd.DataFrame(
+        columns=[
+            "ticker",
+            "company",
+            "asof",
+            "base_demand_cagr",
+            "bear_demand_cagr",
+            "bull_demand_cagr",
+            "model_confidence",
+            "driver_signal_z",
+            "anchor_growth_used",
+            "available_metric_count",
+            "driver_metrics_used",
+        ]
+    )
+
+
+def _extract_candidate_products(pick: pd.Series) -> pd.DataFrame:
+    ticker = str(pick.get("ticker", ""))
+    company = str(pick.get("company", ""))
+    rows: list[dict] = []
+
+    for field, label, product_id in PRODUCT_FIELD_SPECS:
+        val = _to_float(pick.get(field, np.nan))
+        if np.isfinite(val) and abs(val) > 0:
+            rows.append(
+                {
+                    "ticker": ticker,
+                    "company": company,
+                    "product_id": product_id,
+                    "product_label": label,
+                    "source_field": field,
+                    "value": float(abs(val)),
+                    "value_share": np.nan,
+                    "detail": "structured_field",
+                }
+            )
+
+    if not rows:
+        return pd.DataFrame(
+            [
+                {
+                    "ticker": ticker,
+                    "company": company,
+                    "product_id": "PRODUCT_UNSPECIFIED",
+                    "product_label": "Core offerings (not available as structured product fields)",
+                    "source_field": "",
+                    "value": np.nan,
+                    "value_share": np.nan,
+                    "detail": "fallback_no_product_fields",
+                }
+            ]
+        )
+
+    out = pd.DataFrame(rows)
+    total = pd.to_numeric(out["value"], errors="coerce").replace([np.inf, -np.inf], np.nan).sum(skipna=True)
+    if np.isfinite(total) and total > 0:
+        out["value_share"] = pd.to_numeric(out["value"], errors="coerce") / float(total)
+    else:
+        out["value_share"] = np.nan
+    out = out.sort_values(["value", "product_id"], ascending=[False, True], na_position="last").reset_index(drop=True)
+    return out
+
+
+def _robust_z_for_pick(universe_df: pd.DataFrame, pick: pd.Series, col: str) -> float:
+    if col not in universe_df.columns:
+        return float("nan")
+    x = pd.to_numeric(universe_df[col], errors="coerce")
+    finite = x[np.isfinite(x)]
+    if int(finite.shape[0]) < 8:
+        return float("nan")
+    val = _to_float(pick.get(col, np.nan))
+    if not np.isfinite(val):
+        return float("nan")
+
+    med = float(finite.median())
+    mad = float((finite - med).abs().median())
+    if np.isfinite(mad) and mad > 0:
+        z = 0.6745 * (val - med) / mad
+    else:
+        sd = float(finite.std(ddof=1))
+        if (not np.isfinite(sd)) or sd <= 0:
+            return float("nan")
+        z = (val - float(finite.mean())) / sd
+    return float(np.clip(z, -3.0, 3.0))
+
+
+def _estimate_candidate_demand_inputs(pick: pd.Series, universe_df: pd.DataFrame) -> dict[str, object]:
+    driver_specs: list[tuple[str, float]] = [
+        ("profit_growth_5y", 0.40),
+        ("fcf_yield", 0.20),
+        ("t2_ebit_margin", 0.15),
+        ("t2_gross_margin", 0.10),
+        ("roic_wacc_spread", 0.10),
+        ("quality_score", 0.05),
+    ]
+
+    used_metrics: list[str] = []
+    z_parts: list[float] = []
+    w_parts: list[float] = []
+    for col, w in driver_specs:
+        z = _robust_z_for_pick(universe_df, pick, col)
+        if np.isfinite(z):
+            used_metrics.append(col)
+            z_parts.append(float(z))
+            w_parts.append(float(w))
+
+    driver_signal_z = float("nan")
+    if w_parts:
+        driver_signal_z = float(np.average(np.array(z_parts, dtype=float), weights=np.array(w_parts, dtype=float)))
+
+    anchor = _to_float(pick.get("profit_growth_5y", np.nan))
+    if not np.isfinite(anchor):
+        anchor = _to_float(pick.get("dividend_growth_5y", np.nan))
+    if np.isfinite(anchor):
+        anchor = float(np.clip(anchor, -0.25, 0.25))
+
+    if np.isfinite(anchor):
+        base_cagr = 0.70 * anchor + (0.03 * np.tanh(driver_signal_z) if np.isfinite(driver_signal_z) else 0.0) + 0.01
+    else:
+        base_cagr = (0.02 + (0.04 * np.tanh(driver_signal_z))) if np.isfinite(driver_signal_z) else 0.02
+    base_cagr = float(np.clip(base_cagr, -0.20, 0.25))
+
+    bear_cagr = float(np.clip(base_cagr - 0.05, -0.25, 0.25))
+    bull_cagr = float(np.clip(base_cagr + 0.05, -0.25, 0.35))
+
+    metric_n = int(len(used_metrics))
+    confidence_score = min(0.95, 0.25 + 0.12 * metric_n + (0.20 if np.isfinite(anchor) else 0.0))
+    if confidence_score >= 0.75:
+        confidence = "HIGH"
+    elif confidence_score >= 0.50:
+        confidence = "MEDIUM"
+    else:
+        confidence = "LOW"
+
+    return {
+        "base_cagr": base_cagr,
+        "bear_cagr": bear_cagr,
+        "bull_cagr": bull_cagr,
+        "model_confidence": confidence,
+        "driver_signal_z": driver_signal_z,
+        "anchor_growth_used": anchor,
+        "available_metric_count": metric_n,
+        "driver_metrics_used": ";".join(used_metrics),
+    }
+
+
+def _build_candidate_product_demand_forecast(
+    pick: pd.Series,
+    universe_df: pd.DataFrame,
+    asof: str,
+    products: pd.DataFrame,
+    horizon_years: int = 3,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if products is None or products.empty:
+        return _empty_candidate_product_demand_forecast(), _empty_candidate_product_demand_summary()
+
+    inputs = _estimate_candidate_demand_inputs(pick=pick, universe_df=universe_df)
+    scenario_cfg = [
+        ("bear", float(inputs["bear_cagr"])),
+        ("base", float(inputs["base_cagr"])),
+        ("bull", float(inputs["bull_cagr"])),
+    ]
+
+    asof_ts = pd.to_datetime(asof, errors="coerce")
+    base_year = int(asof_ts.year) if pd.notna(asof_ts) else 0
+    rows: list[dict] = []
+
+    for _, p_row in products.iterrows():
+        share = _to_float(p_row.get("value_share", np.nan))
+        if not np.isfinite(share) or share <= 0:
+            share = 1.0
+        for scenario, cagr in scenario_cfg:
+            for y in range(1, int(horizon_years) + 1):
+                demand_index = float(100.0 * ((1.0 + float(cagr)) ** y))
+                rows.append(
+                    {
+                        "ticker": str(p_row.get("ticker", pick.get("ticker", ""))),
+                        "company": str(p_row.get("company", pick.get("company", ""))),
+                        "product_id": str(p_row.get("product_id", "")),
+                        "product_label": str(p_row.get("product_label", "")),
+                        "scenario": scenario,
+                        "year_offset": int(y),
+                        "forecast_year": int(base_year + y) if base_year > 0 else "",
+                        "demand_index": demand_index,
+                        "product_demand_index": float(demand_index * share),
+                        "demand_cagr_assumption": float(cagr),
+                        "model_confidence": str(inputs["model_confidence"]),
+                        "driver_signal_z": float(inputs["driver_signal_z"]) if np.isfinite(_to_float(inputs["driver_signal_z"])) else np.nan,
+                        "anchor_growth_used": float(inputs["anchor_growth_used"]) if np.isfinite(_to_float(inputs["anchor_growth_used"])) else np.nan,
+                        "available_metric_count": int(inputs["available_metric_count"]),
+                    }
+                )
+
+    forecast = pd.DataFrame(rows)
+    summary = pd.DataFrame(
+        [
+            {
+                "ticker": str(pick.get("ticker", "")),
+                "company": str(pick.get("company", "")),
+                "asof": str(asof),
+                "base_demand_cagr": float(inputs["base_cagr"]),
+                "bear_demand_cagr": float(inputs["bear_cagr"]),
+                "bull_demand_cagr": float(inputs["bull_cagr"]),
+                "model_confidence": str(inputs["model_confidence"]),
+                "driver_signal_z": float(inputs["driver_signal_z"]) if np.isfinite(_to_float(inputs["driver_signal_z"])) else np.nan,
+                "anchor_growth_used": float(inputs["anchor_growth_used"]) if np.isfinite(_to_float(inputs["anchor_growth_used"])) else np.nan,
+                "available_metric_count": int(inputs["available_metric_count"]),
+                "driver_metrics_used": str(inputs["driver_metrics_used"]),
+            }
+        ]
+    )
+    return forecast, summary
+
+
+def _fmt_num(x: object, digits: int = 3) -> str:
+    v = _to_float(x)
+    if not np.isfinite(v):
+        return "n/a"
+    return f"{v:.{digits}g}"
+
+
+def _fmt_pct(x: object, digits: int = 1) -> str:
+    v = _to_float(x)
+    if not np.isfinite(v):
+        return "n/a"
+    return f"{v * 100:.{digits}f}%"
+
+
+def _annual_source_status(pick: pd.Series) -> tuple[str, str]:
+    fin_src = str(pick.get("financials_source", "")).strip().lower()
+    period_type = str(pick.get("reporting_period_type", "")).strip().lower()
+    fcf_src = str(pick.get("fcf_source", "")).strip().lower()
+    period_end = str(pick.get("financials_period_end", "")).strip()
+
+    annual = ("reports_y" in fin_src) or ("annual" in period_type)
+    has_r12 = ("reports_r12" in fcf_src) or ("r12" in fcf_src)
+
+    if annual and has_r12:
+        return (
+            "Delvis",
+            f"Arsdata fra {fin_src or 'ukjent'} ({period_type or 'ukjent'}) + FCF fra {fcf_src or 'ukjent'} (period_end={period_end or 'ukjent'})",
+        )
+    if annual:
+        return (
+            "Ja",
+            f"Arsdata fra {fin_src or 'ukjent'} ({period_type or 'ukjent'}, period_end={period_end or 'ukjent'})",
+        )
+    return (
+        "Nei",
+        f"Kilde={fin_src or 'ukjent'}, period_type={period_type or 'ukjent'}, fcf_source={fcf_src or 'ukjent'}",
+    )
+
+
+def _ascii_sparkline(values: list[float]) -> str:
+    finite = [float(v) for v in values if np.isfinite(v)]
+    if not finite:
+        return "n/a"
+    lo = min(finite)
+    hi = max(finite)
+    charset = " .:-=+*#%@"
+    if hi <= lo:
+        return "=" * min(len(finite), 48)
+    out = []
+    for v in finite[:48]:
+        ratio = (v - lo) / (hi - lo)
+        idx = int(round(ratio * (len(charset) - 1)))
+        idx = max(0, min(idx, len(charset) - 1))
+        out.append(charset[idx])
+    return "".join(out)
+
+
+def _price_sparkline_from_prices(prices_df: pd.DataFrame, pick: pd.Series, asof: str, max_points: int = 48) -> str:
+    if prices_df is None or prices_df.empty:
+        return "n/a"
+    px = _canon_cols(prices_df)
+    t_col = _pick(px, ["ticker", "symbol", "yahoo_ticker"])
+    d_col = _pick(px, ["date", "price_date", "datetime", "timestamp", "time"])
+    p_col = _pick(px, ["adj_close", "close", "price", "last"])
+    if not t_col or not d_col or not p_col:
+        return "n/a"
+
+    candidates = [
+        str(pick.get("yahoo_ticker", "")).strip(),
+        str(pick.get("ticker", "")).strip(),
+    ]
+    candidates = [c for c in candidates if c]
+    if not candidates:
+        return "n/a"
+
+    x = px.copy()
+    x[d_col] = pd.to_datetime(x[d_col], errors="coerce")
+    asof_ts = pd.to_datetime(asof, errors="coerce")
+    x = x[x[d_col].notna()]
+    if pd.notna(asof_ts):
+        x = x[x[d_col] <= asof_ts]
+    x[t_col] = x[t_col].astype(str).str.strip()
+    x = x[x[t_col].isin(candidates)]
+    if x.empty:
+        return "n/a"
+
+    x = x.sort_values(d_col)
+    vals = pd.to_numeric(x[p_col], errors="coerce")
+    vals = vals[np.isfinite(vals)].tolist()
+    if len(vals) > max_points:
+        step = max(1, int(len(vals) / max_points))
+        vals = vals[::step][:max_points]
+    return _ascii_sparkline(vals)
+
+
+def _base_demand_series(demand_forecast: pd.DataFrame) -> pd.DataFrame:
+    if demand_forecast is None or demand_forecast.empty:
+        return pd.DataFrame(columns=["forecast_year", "demand_index"])
+    d = demand_forecast.copy()
+    d = d[d["scenario"].astype(str).str.lower() == "base"]
+    if d.empty:
+        return pd.DataFrame(columns=["forecast_year", "demand_index"])
+    d["forecast_year"] = pd.to_numeric(d.get("forecast_year"), errors="coerce")
+    d["product_demand_index"] = pd.to_numeric(d.get("product_demand_index"), errors="coerce")
+    g = (
+        d.groupby("forecast_year", dropna=True)["product_demand_index"]
+        .sum()
+        .reset_index()
+        .rename(columns={"product_demand_index": "demand_index"})
+        .sort_values("forecast_year")
+    )
+    return g
+
+
+def _render_ascii_bar_chart(series_df: pd.DataFrame, width: int = 28) -> list[str]:
+    if series_df is None or series_df.empty:
+        return ["- Graf: ikke tilgjengelig."]
+    vals = pd.to_numeric(series_df["demand_index"], errors="coerce")
+    vals = vals[np.isfinite(vals)]
+    if vals.empty:
+        return ["- Graf: ikke tilgjengelig."]
+    vmax = float(vals.max())
+    if vmax <= 0:
+        return ["- Graf: ikke tilgjengelig."]
+    lines: list[str] = []
+    for _, r in series_df.iterrows():
+        y = int(pd.to_numeric(pd.Series([r.get("forecast_year")]), errors="coerce").fillna(0).iloc[0])
+        v = _to_float(r.get("demand_index"))
+        if not np.isfinite(v):
+            continue
+        bar_n = max(1, int(round((v / vmax) * width)))
+        lines.append(f"- {y}: {'#' * bar_n} {v:.1f}")
+    return lines if lines else ["- Graf: ikke tilgjengelig."]
+
+
+def _render_candidate_product_demand_md(
+    products: pd.DataFrame,
+    demand_forecast: pd.DataFrame,
+    demand_summary: pd.DataFrame,
+) -> list[str]:
+    lines: list[str] = []
+    lines.append("## 3) Produkter og markedsforventning")
+    lines.append("")
+    lines.append("### Products and Demand Outlook")
+
+    if products is None or products.empty:
+        lines.append("- Produktdata: ikke tilgjengelig i strukturerte felt.")
+        lines.append("")
+        return lines
+
+    product_cols = [c for c in ["product_label", "source_field", "value", "value_share", "detail"] if c in products.columns]
+    lines.append(_md_table(products[product_cols], max_rows=20))
+
+    if demand_summary is not None and not demand_summary.empty:
+        s = demand_summary.iloc[0]
+        base_cagr = _to_float(s.get("base_demand_cagr", np.nan))
+        bear_cagr = _to_float(s.get("bear_demand_cagr", np.nan))
+        bull_cagr = _to_float(s.get("bull_demand_cagr", np.nan))
+        conf = str(s.get("model_confidence", ""))
+        lines.append("")
+        lines.append(
+            f"- Demand model CAGR (bear/base/bull): {bear_cagr:.1%} / {base_cagr:.1%} / {bull_cagr:.1%} | confidence={conf}"
+            if np.isfinite(base_cagr) and np.isfinite(bear_cagr) and np.isfinite(bull_cagr)
+            else f"- Demand model confidence: {conf}"
+        )
+        metrics_txt = str(s.get("driver_metrics_used", "")).strip()
+        if metrics_txt:
+            lines.append(f"- Driver metrics used: {metrics_txt}")
+        comment = "Ettersporsel ser robust ut i base/bull." if (np.isfinite(base_cagr) and base_cagr >= 0.05) else "Ettersporsel ser moderat/usikker ut."
+        lines.append(f"- Kommentar: {comment}")
+
+    if demand_forecast is not None and not demand_forecast.empty:
+        base = demand_forecast[demand_forecast["scenario"].astype(str) == "base"].copy()
+        base_cols = [c for c in ["product_label", "forecast_year", "demand_index", "product_demand_index", "demand_cagr_assumption"] if c in base.columns]
+        if not base.empty and base_cols:
+            lines.append("")
+            lines.append("### Base Scenario (Demand Index)")
+            lines.append(_md_table(base[base_cols], max_rows=50))
+            lines.append("")
+            lines.append("### Base Scenario (ASCII Chart)")
+            lines.extend(_render_ascii_bar_chart(_base_demand_series(demand_forecast)))
+
+    lines.append("")
+    return lines
+
+
 def _decision_schema_rows(
     pick: pd.Series,
     mos_min: float,
@@ -605,7 +1054,14 @@ def _run_media_red_flag_scan(
     mcfg = (dec_cfg.get("media_red_flags") or {})
     enabled = bool(mcfg.get("enabled", True))
     if not enabled:
-        return {"enabled": False, "status": "disabled", "headlines_checked": 0, "red_flag_count": 0, "red_flags": []}
+        return {
+            "enabled": False,
+            "status": "disabled",
+            "headlines_checked": 0,
+            "red_flag_count": 0,
+            "red_flags": [],
+            "headlines_sample": [],
+        }
 
     days_back = int(mcfg.get("days_back", 30))
     max_headlines = int(mcfg.get("max_headlines", 30))
@@ -642,6 +1098,7 @@ def _run_media_red_flag_scan(
             "headlines_checked": 0,
             "red_flag_count": 0,
             "red_flags": [],
+            "headlines_sample": all_rows[:10],
         }
 
     cutoff = None
@@ -676,7 +1133,72 @@ def _run_media_red_flag_scan(
         "headlines_checked": len(all_rows),
         "red_flag_count": len(red_flags),
         "red_flags": red_flags,
+        "headlines_sample": all_rows[:10],
     }
+
+
+def _media_assessment_from_scan(media_scan: dict) -> tuple[str, str]:
+    status = str(media_scan.get("status", "unknown")).strip().lower()
+    red_n = int(pd.to_numeric(pd.Series([media_scan.get("red_flag_count", 0)]), errors="coerce").fillna(0).iloc[0])
+
+    if status == "error":
+        return "Ukjent", "Media-scan feilet. Kjor manuell nyhetssjekk."
+    if status == "disabled":
+        return "Ikke vurdert", "Media-scan er deaktivert i config."
+    if red_n >= 3:
+        return "Hoy risiko", "Flere potensielt negative nyhetssignaler er funnet."
+    if red_n >= 1:
+        return "Moderat risiko", "Noen potensielt negative nyhetssignaler er funnet."
+    return "Lav risiko", "Ingen tydelige red-flag treff i sjekkede overskrifter."
+
+
+def _media_headlines_frame(media_scan: dict, max_rows: int = 10) -> pd.DataFrame:
+    red_flags = media_scan.get("red_flags", []) or []
+    sample = media_scan.get("headlines_sample", []) or []
+
+    rows: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    for item in red_flags:
+        title = str(item.get("title", "")).strip()
+        link = str(item.get("link", "")).strip()
+        key = (title, link)
+        if key in seen or (not title and not link):
+            continue
+        seen.add(key)
+        rows.append(
+            {
+                "headline": title,
+                "source": str(item.get("source", "")).strip(),
+                "date": str(item.get("pub_date", "")).strip(),
+                "classification": "RED_FLAG",
+                "assessment": str(item.get("matched_terms", "")).strip(),
+            }
+        )
+        if len(rows) >= max_rows:
+            break
+
+    if len(rows) < max_rows:
+        for item in sample:
+            title = str(item.get("title", "")).strip()
+            link = str(item.get("link", "")).strip()
+            key = (title, link)
+            if key in seen or (not title and not link):
+                continue
+            seen.add(key)
+            rows.append(
+                {
+                    "headline": title,
+                    "source": str(item.get("source", "")).strip(),
+                    "date": str(item.get("pub_date", "")).strip(),
+                    "classification": "INFO",
+                    "assessment": "Ingen red-flag term matchet",
+                }
+            )
+            if len(rows) >= max_rows:
+                break
+
+    return pd.DataFrame(rows, columns=["headline", "source", "date", "classification", "assessment"])
 
 
 def _atomic_write_text(path: Path, text: str) -> None:
@@ -691,6 +1213,645 @@ def _atomic_write_csv(path: Path, df: pd.DataFrame) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
     df.to_csv(tmp, index=False, encoding="utf-8")
     tmp.replace(path)
+
+
+def _write_top_candidates_report(run_dir: Path, asof: str, frame: pd.DataFrame, max_rows: int = 25) -> None:
+    cols_pref = [
+        "ticker",
+        "company",
+        "market_cap",
+        "intrinsic_value",
+        "mos",
+        "quality_score",
+        "adj_close",
+        "above_ma200",
+        "mad",
+        "dq_fail_count",
+        "dq_warn_count",
+        "decision_reasons",
+    ]
+    cols = [c for c in cols_pref if c in frame.columns]
+    short = frame[cols].head(int(max_rows)).copy() if cols else frame.head(int(max_rows)).copy()
+    _atomic_write_csv(run_dir / "top_candidates.csv", short)
+
+    md_lines = [
+        f"# Top Candidates ({asof})",
+        "",
+        f"- Antall rader: {len(short)}",
+        "- Full eksport: `decision.csv`",
+        "",
+        _md_table(short, max_rows=max_rows),
+        "",
+    ]
+    _atomic_write_text(run_dir / "top_candidates.md", "\n".join(md_lines))
+
+
+def _html_escape(x: object) -> str:
+    return html.escape("" if x is None else str(x))
+
+
+def _extract_first_number(text: object) -> Optional[float]:
+    if text is None:
+        return None
+    s = str(text).replace(",", ".")
+    m = re.search(r"(-?\d+(?:\.\d+)?)", s)
+    if not m:
+        return None
+    try:
+        return float(m.group(1))
+    except Exception:
+        return None
+
+
+def _extract_percent_value(text: object) -> Optional[float]:
+    if text is None:
+        return None
+    s = str(text).replace(",", ".")
+    m = re.search(r"(-?\d+(?:\.\d+)?)\s*%", s)
+    if not m:
+        return None
+    try:
+        return float(m.group(1)) / 100.0
+    except Exception:
+        return None
+
+
+def _parse_bool_token(text: object) -> Optional[bool]:
+    if text is None:
+        return None
+    s = str(text).strip().lower()
+    if s in {"true", "ok", "pass", "ja", "yes"}:
+        return True
+    if s in {"false", "fail", "nei", "no"}:
+        return False
+    return None
+
+
+def _metric_tone_and_comment(key: str, value: object, comment: object) -> tuple[str, str]:
+    k = str(key).strip().lower()
+    v = str(value).strip()
+    c = str(comment).strip()
+    v_pct = _extract_percent_value(v)
+    c_pct = _extract_percent_value(c)
+    v_num = _extract_first_number(v)
+    c_num = _extract_first_number(c)
+    vb = _parse_bool_token(v)
+
+    if "mos" in k and v_pct is not None:
+        if c_pct is not None:
+            if v_pct >= c_pct:
+                return "good", "Over krav"
+            return "bad", "Under krav"
+        if v_pct >= 0.30:
+            return "good", "Sterk margin of safety"
+        if v_pct >= 0.0:
+            return "warn", "Moderat margin of safety"
+        return "bad", "Negativ margin of safety"
+
+    if "roic-wacc" in k and v_pct is not None:
+        if v_pct > 0:
+            return "good", "Verdiskaping positiv"
+        return "bad", "Verdiskaping negativ"
+
+    if "value qa unresolved" in k and v_num is not None:
+        if int(round(v_num)) <= 0:
+            return "good", "Ingen uforklarte avvik"
+        return "bad", "Manuell verifisering anbefales"
+
+    if "arsregnskap brukt" in k:
+        s = v.lower()
+        if s in {"ja", "yes"}:
+            return "good", "Dekning fra arsrapport"
+        if s in {"delvis", "partial"}:
+            return "warn", "Delvis arsdekning"
+        return "bad", "Manglende arsdekning"
+
+    if "quality score" in k and v_num is not None:
+        if v_num >= 0.50:
+            return "good", "Hoy kvalitet"
+        if v_num >= 0.0:
+            return "warn", "Noytral kvalitet"
+        return "bad", "Lav kvalitet"
+
+    if "prisalder" in k and v_num is not None:
+        thr = c_num if c_num is not None else 7.0
+        if v_num <= thr:
+            return "good", "Fersk kursdata"
+        return "bad", "Kursdata er for gammel"
+
+    if "above ma200" in k and vb is not None:
+        if vb:
+            return "good", "Trend over MA200"
+        return "bad", "Under MA200"
+
+    if "teknisk gate" in k and vb is not None:
+        if vb:
+            return "good", "Teknisk filter bestatt"
+        return "bad", "Teknisk filter feilet"
+
+    if k == "mad" and v_num is not None:
+        thr = c_num if c_num is not None else -0.05
+        if v_num >= thr:
+            return "good", "Momentum innenfor krav"
+        return "bad", "Momentum under terskel"
+
+    if "relevant index" in k:
+        if "true" in c.lower():
+            return "good", "Markedstrend positiv"
+        if "false" in c.lower():
+            return "warn", "Markedstrend svak"
+        return "neutral", "Ingen vurdering"
+
+    return "neutral", "Ingen automatisk vurdering"
+
+
+def _decorate_metric_table_for_html(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame(columns=["Nokkel", "Verdi", "Kommentar", "Status", "Vurdering"])
+    out = df.copy()
+    if "Nokkel" not in out.columns or "Verdi" not in out.columns:
+        return out
+    status_vals: list[str] = []
+    verdicts: list[str] = []
+    for _, row in out.iterrows():
+        tone, verdict = _metric_tone_and_comment(row.get("Nokkel", ""), row.get("Verdi", ""), row.get("Kommentar", ""))
+        status_vals.append(tone.upper())
+        verdicts.append(verdict)
+    out["Status"] = status_vals
+    out["Vurdering"] = verdicts
+    return out
+
+
+def _svg_line_chart_from_demand(demand_df: pd.DataFrame) -> str:
+    if demand_df is None or demand_df.empty:
+        return "<p class='muted'>(for lite data til graf)</p>"
+    if "demand_index" not in demand_df.columns:
+        return "<p class='muted'>(mangler demand_index)</p>"
+
+    d = demand_df.copy()
+    d["demand_index"] = pd.to_numeric(d["demand_index"], errors="coerce")
+    if "forecast_year" in d.columns:
+        x_labels = d["forecast_year"].astype(str).tolist()
+    elif "year_offset" in d.columns:
+        x_labels = d["year_offset"].astype(str).tolist()
+    else:
+        x_labels = [str(i + 1) for i in range(len(d))]
+    y_values = d["demand_index"].tolist()
+    valid = [(x_labels[i], y_values[i]) for i in range(len(y_values)) if np.isfinite(_to_float(y_values[i]))]
+    if len(valid) < 2:
+        return "<p class='muted'>(for lite data til graf)</p>"
+
+    labels = [str(v[0]) for v in valid]
+    values = [float(v[1]) for v in valid]
+    width = 820
+    height = 260
+    pad = 36
+    xw = width - (2 * pad)
+    yh = height - (2 * pad)
+    ymin = float(min(values))
+    ymax = float(max(values))
+    if ymax <= ymin:
+        ymax = ymin + 1.0
+
+    pts: list[tuple[float, float]] = []
+    for i, val in enumerate(values):
+        x = pad + (xw * i / max(1, len(values) - 1))
+        y = pad + yh * (1.0 - ((val - ymin) / (ymax - ymin)))
+        pts.append((x, y))
+    poly = " ".join([f"{x:.1f},{y:.1f}" for x, y in pts])
+
+    circles = []
+    labels_html = []
+    for i, (x, y) in enumerate(pts):
+        circles.append(f"<circle cx='{x:.1f}' cy='{y:.1f}' r='4' class='chart-dot' />")
+        labels_html.append(
+            f"<text x='{x:.1f}' y='{height - 12:.1f}' class='chart-label' text-anchor='middle'>{_html_escape(labels[i])}</text>"
+        )
+        labels_html.append(
+            f"<text x='{x:.1f}' y='{max(12.0, y - 10.0):.1f}' class='chart-value' text-anchor='middle'>{values[i]:.1f}</text>"
+        )
+
+    y_ticks = []
+    for k in range(5):
+        ratio = k / 4.0
+        val = ymin + (ymax - ymin) * (1.0 - ratio)
+        y = pad + yh * ratio
+        y_ticks.append(f"<line x1='{pad}' y1='{y:.1f}' x2='{width - pad}' y2='{y:.1f}' class='chart-grid' />")
+        y_ticks.append(f"<text x='{pad - 8}' y='{y + 4:.1f}' class='chart-axis' text-anchor='end'>{val:.0f}</text>")
+
+    return (
+        f"<svg viewBox='0 0 {width} {height}' class='demand-chart' role='img' "
+        f"aria-label='Base scenario demand index'>"
+        + "".join(y_ticks)
+        + f"<polyline points='{poly}' class='chart-line' />"
+        + "".join(circles)
+        + "".join(labels_html)
+        + "</svg>"
+    )
+
+
+def _cell_tone_class(col: str, value: object, row: pd.Series) -> str:
+    col_l = str(col).strip().lower()
+    txt = str(value).strip()
+    txt_l = txt.lower()
+
+    if col_l == "status":
+        if txt_l == "good":
+            return "tone-good"
+        if txt_l == "bad":
+            return "tone-bad"
+        if txt_l == "warn":
+            return "tone-warn"
+        return "tone-neutral"
+
+    if col_l == "classification":
+        if txt_l == "red_flag":
+            return "tone-bad"
+        if txt_l == "info":
+            return "tone-neutral"
+
+    if col_l == "assessment":
+        if "ingen red-flag" in txt_l:
+            return "tone-good"
+        if "matchet term" in txt_l:
+            return "tone-bad"
+        return "tone-neutral"
+
+    if col_l in {"verdi", "value"} and "nokkel" in [c.lower() for c in row.index.astype(str)]:
+        key_col = [c for c in row.index if str(c).lower() == "nokkel"][0]
+        comm_col = [c for c in row.index if str(c).lower() == "kommentar"]
+        tone, _ = _metric_tone_and_comment(row.get(key_col, ""), value, row.get(comm_col[0], "") if comm_col else "")
+        if tone == "good":
+            return "tone-good"
+        if tone == "bad":
+            return "tone-bad"
+        if tone == "warn":
+            return "tone-warn"
+        return "tone-neutral"
+
+    if col_l == "vurdering":
+        status_col = [c for c in row.index if str(c).lower() == "status"]
+        if status_col:
+            st = str(row.get(status_col[0], "")).strip().lower()
+            if st == "good":
+                return "tone-good"
+            if st == "bad":
+                return "tone-bad"
+            if st == "warn":
+                return "tone-warn"
+    return ""
+
+
+def _render_status_pill(text: str) -> str:
+    t = str(text).strip().upper()
+    if t == "GOOD":
+        return "<span class='pill pill-good'>GRONN</span>"
+    if t == "BAD":
+        return "<span class='pill pill-bad'>ROD</span>"
+    if t == "WARN":
+        return "<span class='pill pill-warn'>GUL</span>"
+    return "<span class='pill pill-neutral'>NOYTRAL</span>"
+
+
+def _html_table_from_df(df: pd.DataFrame, max_rows: int = 20) -> str:
+    if df is None or df.empty:
+        return "<p class='muted'>(no data)</p>"
+    d = df.head(max_rows).copy()
+    d = d.astype(object).where(d.notna(), "")
+    cols = [str(c) for c in d.columns]
+    head = "".join([f"<th>{_html_escape(c)}</th>" for c in cols])
+    rows = []
+    for i in range(len(d)):
+        row = d.iloc[i]
+        cells = []
+        for c in cols:
+            cls = _cell_tone_class(c, row[c], row)
+            value_html = _render_status_pill(row[c]) if str(c).strip().lower() == "status" else _html_escape(row[c])
+            cells.append(f"<td class='{cls}'>{value_html}</td>" if cls else f"<td>{value_html}</td>")
+        tds = "".join(cells)
+        rows.append(f"<tr>{tds}</tr>")
+    return "<table><thead><tr>" + head + "</tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
+
+
+def _metric_insights_html(df: pd.DataFrame, max_items: int = 4) -> str:
+    if df is None or df.empty:
+        return "<p class='muted'>Ingen kommentarer.</p>"
+    if "Status" not in df.columns or "Nokkel" not in df.columns:
+        return "<p class='muted'>Ingen kommentarer.</p>"
+    view = df.copy()
+    view["Status"] = view["Status"].astype(str).str.upper()
+    view = view[view["Status"].isin(["GOOD", "WARN", "BAD"])]
+    if view.empty:
+        return "<p class='muted'>Ingen avvik eller sterke signaler.</p>"
+    lines = []
+    for _, row in view.head(max_items).iterrows():
+        tone = str(row.get("Status", "NEUTRAL")).lower()
+        cls = "tone-neutral"
+        if tone == "good":
+            cls = "tone-good"
+        elif tone == "warn":
+            cls = "tone-warn"
+        elif tone == "bad":
+            cls = "tone-bad"
+        key = _html_escape(row.get("Nokkel", ""))
+        verdict = _html_escape(row.get("Vurdering", ""))
+        lines.append(f"<li class='{cls}'><strong>{key}:</strong> {verdict}</li>")
+    return "<ul class='insights'>" + "".join(lines) + "</ul>"
+
+
+def _build_decision_report_html(
+    asof: str,
+    pick: pd.Series,
+    fundamental_df: pd.DataFrame,
+    stock_df: pd.DataFrame,
+    products_df: pd.DataFrame,
+    demand_df: pd.DataFrame,
+    demand_chart_lines: list[str],
+    media_df: pd.DataFrame,
+    media_notes: list[str],
+    top_candidates_rel: str = "top_candidates.md",
+) -> str:
+    ticker = str(pick.get("ticker", ""))
+    company = str(pick.get("company", ""))
+    header_sub = f"{ticker} | {company} | asof {asof}"
+    fundamental_view = _decorate_metric_table_for_html(fundamental_df)
+    stock_view = _decorate_metric_table_for_html(stock_df)
+    media_view = media_df.copy()
+    if media_view is not None and not media_view.empty and "classification" in media_view.columns:
+        media_view["Status"] = (
+            media_view["classification"]
+            .astype(str)
+            .str.upper()
+            .map({"RED_FLAG": "BAD", "INFO": "NEUTRAL"})
+            .fillna("NEUTRAL")
+        )
+
+    demand_ul = "".join([f"<li>{_html_escape(line)}</li>" for line in demand_chart_lines if str(line).strip()])
+    media_ul = "".join([f"<li>{_html_escape(line)}</li>" for line in media_notes if str(line).strip()])
+    demand_svg = _svg_line_chart_from_demand(demand_df)
+
+    mos = _to_float(pick.get("mos"))
+    mos_req = _to_float(pick.get("mos_req"))
+    mos_tone = "neutral"
+    if np.isfinite(mos):
+        if np.isfinite(mos_req):
+            mos_tone = "good" if mos >= mos_req else "bad"
+        else:
+            mos_tone = "good" if mos >= 0.30 else ("warn" if mos >= 0 else "bad")
+    tech_ok = bool(_to_bool(pick.get("technical_ok")))
+    dq_blocked = bool(_to_bool(pick.get("dq_blocked"))) or bool(_to_bool(pick.get("data_quality_fail")))
+    unresolved_raw = pd.to_numeric(
+        pd.Series(
+            [
+                pick.get(
+                    "value_qc_unresolved_alert_count",
+                    pick.get("value_qc_unresolved_count", pick.get("value_qc_unresolved", np.nan)),
+                )
+            ]
+        ),
+        errors="coerce",
+    ).fillna(np.nan).iloc[0]
+    if not np.isfinite(unresolved_raw):
+        try:
+            qa_rows = fundamental_view[
+                fundamental_view.get("Nokkel", pd.Series("", index=fundamental_view.index))
+                .astype(str)
+                .str.strip()
+                .eq("Value QA unresolved")
+            ]
+            if not qa_rows.empty:
+                unresolved_raw = _extract_first_number(qa_rows.iloc[0].get("Verdi"))
+        except Exception:
+            unresolved_raw = np.nan
+    unresolved = int(unresolved_raw) if np.isfinite(unresolved_raw) else 0
+    red_flags = int((media_view.get("classification", pd.Series([], dtype=object)).astype(str).str.upper() == "RED_FLAG").sum())
+
+    def _card(label: str, value: str, tone: str, detail: str) -> str:
+        return (
+            f"<article class='stat tone-{_html_escape(tone)}'>"
+            f"<div class='stat-label'>{_html_escape(label)}</div>"
+            f"<div class='stat-value'>{_html_escape(value)}</div>"
+            f"<div class='stat-detail'>{_html_escape(detail)}</div>"
+            f"</article>"
+        )
+
+    cards_html = "".join(
+        [
+            _card("MoS", _fmt_pct(mos, 1), mos_tone, f"Krav {_fmt_pct(mos_req, 0)}"),
+            _card("Teknisk gate", "BESTATT" if tech_ok else "FEIL", "good" if tech_ok else "bad", "MA200/MAD + indeksregime"),
+            _card("Data quality", "OK" if not dq_blocked else "BLOKKERT", "good" if not dq_blocked else "bad", "FAIL blokkerer kandidat"),
+            _card("Value QA", f"{unresolved}", "good" if unresolved <= 0 else "bad", "Uforklarte avvik"),
+            _card(
+                "Nyhetsrisiko",
+                f"{red_flags} red flags",
+                "bad" if red_flags >= 2 else ("warn" if red_flags == 1 else "good"),
+                "Fra headline-scan",
+            ),
+        ]
+    )
+
+    return f"""<!doctype html>
+<html lang="no">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Decision Report {_html_escape(asof)}</title>
+  <style>
+    :root {{
+      --bg-a: #f1f6ff;
+      --bg-b: #fbfdff;
+      --ink: #0f172a;
+      --muted: #475569;
+      --card: #ffffff;
+      --line: #d8e3f2;
+      --head: #edf3fb;
+      --good: #166534;
+      --good-bg: #ecfdf3;
+      --bad: #b42318;
+      --bad-bg: #fff1ef;
+      --warn: #b54708;
+      --warn-bg: #fff7e6;
+      --accent: #0f5fd6;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(1100px 520px at 90% -10%, #dbeafe 0%, rgba(219,234,254,0) 70%),
+        linear-gradient(180deg, var(--bg-a), var(--bg-b));
+      font-family: "Segoe UI", "Calibri", Arial, sans-serif;
+      line-height: 1.45;
+    }}
+    .page {{ max-width: 1220px; margin: 24px auto; padding: 0 14px 24px 14px; }}
+    .hero {{
+      background: linear-gradient(135deg, #ffffff, #f9fbff);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 18px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      box-shadow: 0 8px 20px rgba(15, 23, 42, 0.04);
+    }}
+    h1 {{ margin: 0; font-size: 28px; letter-spacing: 0.2px; }}
+    h2 {{ margin: 0 0 10px 0; font-size: 20px; }}
+    h3 {{ margin: 12px 0 8px 0; font-size: 16px; }}
+    .sub {{ color: var(--muted); margin-top: 4px; }}
+    .hero-actions {{ display: flex; gap: 8px; flex-wrap: wrap; }}
+    .btn {{
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid #c2d3ee;
+      border-radius: 999px;
+      padding: 7px 12px;
+      text-decoration: none;
+      color: #0b3d91;
+      background: #eef4ff;
+      font-size: 13px;
+      font-weight: 600;
+    }}
+    .btn:hover {{ background: #e4edff; }}
+    .stats-grid {{
+      margin-top: 12px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px;
+    }}
+    .stat {{
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 12px;
+    }}
+    .stat-label {{ color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.4px; }}
+    .stat-value {{ font-size: 20px; font-weight: 700; margin-top: 2px; }}
+    .stat-detail {{ font-size: 12px; color: var(--muted); margin-top: 2px; }}
+    .stat.tone-good {{ border-left: 5px solid var(--good); background: linear-gradient(90deg, var(--good-bg), #fff 36%); }}
+    .stat.tone-bad {{ border-left: 5px solid var(--bad); background: linear-gradient(90deg, var(--bad-bg), #fff 36%); }}
+    .stat.tone-warn {{ border-left: 5px solid var(--warn); background: linear-gradient(90deg, var(--warn-bg), #fff 36%); }}
+    .stat.tone-neutral {{ border-left: 5px solid #64748b; }}
+    .grid-2 {{ margin-top: 12px; display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); }}
+    .card {{
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: 0 8px 20px rgba(15, 23, 42, 0.03);
+    }}
+    .muted {{ color: var(--muted); font-size: 13px; }}
+    .section-spacer {{ margin-top: 12px; }}
+    table {{
+      border-collapse: separate;
+      border-spacing: 0;
+      width: 100%;
+      font-size: 13px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+    }}
+    th, td {{ padding: 8px 9px; text-align: left; vertical-align: top; border-bottom: 1px solid #e7edf6; }}
+    th {{
+      background: var(--head);
+      color: #1f2937;
+      font-weight: 700;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }}
+    tr:last-child td {{ border-bottom: 0; }}
+    .pill {{
+      display: inline-block;
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+    }}
+    .pill-good {{ background: var(--good-bg); color: var(--good); }}
+    .pill-bad {{ background: var(--bad-bg); color: var(--bad); }}
+    .pill-warn {{ background: var(--warn-bg); color: var(--warn); }}
+    .pill-neutral {{ background: #eef2f7; color: #475569; }}
+    td.tone-good {{ background: #f1fcf6; color: #0f5132; font-weight: 600; }}
+    td.tone-bad {{ background: #fff4f2; color: #8b1d18; font-weight: 600; }}
+    td.tone-warn {{ background: #fff8eb; color: #8a4b08; font-weight: 600; }}
+    td.tone-neutral {{ background: #f8fafc; color: #334155; }}
+    .insights {{ margin: 10px 0 0 0; padding-left: 20px; }}
+    .insights li {{ margin: 4px 0; padding: 4px 6px; border-radius: 8px; }}
+    .demand-chart {{
+      width: 100%;
+      min-height: 220px;
+      border: 1px solid #dbe6f7;
+      border-radius: 12px;
+      background: linear-gradient(180deg, #f8fbff, #ffffff);
+      margin-bottom: 8px;
+    }}
+    .chart-grid {{ stroke: #e6edf7; stroke-width: 1; }}
+    .chart-line {{ fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }}
+    .chart-dot {{ fill: #ffffff; stroke: var(--accent); stroke-width: 2; }}
+    .chart-label {{ font-size: 12px; fill: #475569; }}
+    .chart-value {{ font-size: 11px; fill: #0f172a; font-weight: 700; }}
+    @media (max-width: 760px) {{
+      .hero {{ flex-direction: column; align-items: flex-start; }}
+      .grid-2 {{ grid-template-columns: 1fr; }}
+      h1 {{ font-size: 24px; }}
+    }}
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="hero">
+      <div>
+        <h1>Resultatrapport</h1>
+        <div class="sub">{_html_escape(header_sub)}</div>
+      </div>
+      <div class="hero-actions">
+        <a class="btn" href="{_html_escape(top_candidates_rel)}">Top candidates</a>
+        <a class="btn" href="decision.md">Tekstrapport</a>
+        <a class="btn" href="decision.csv">Raw CSV</a>
+      </div>
+    </header>
+
+    <section class="stats-grid">
+      {cards_html}
+    </section>
+
+    <section class="grid-2">
+      <article class="card">
+        <h2>1) Fundamental analyse</h2>
+        <p class="muted">Nokkeltall er hentet fra master_valued/valuation. Gronne felt er sterke signaler, rode felt er red flags.</p>
+        {_html_table_from_df(fundamental_view, max_rows=30)}
+        {_metric_insights_html(fundamental_view)}
+      </article>
+      <article class="card">
+        <h2>2) Aksje analyse</h2>
+        <p class="muted">Pris, trend og timing-gating. Teknisk analyse brukes kun for timing, ikke for intrinsic value.</p>
+        {_html_table_from_df(stock_view, max_rows=30)}
+        {_metric_insights_html(stock_view)}
+      </article>
+    </section>
+
+    <section class="card section-spacer">
+      <h2>3) Produkter og markedsforventning</h2>
+      <p class="muted">Produktoversikt + enkel ettersporselsmodell (bear/base/bull). Grafen viser base-scenario.</p>
+      {_html_table_from_df(products_df, max_rows=20)}
+      <h3>Base scenario demand index</h3>
+      {demand_svg}
+      {_html_table_from_df(demand_df, max_rows=20)}
+      <ul>{demand_ul}</ul>
+    </section>
+
+    <section class="card section-spacer">
+      <h2>4) Nyheter og vurdering</h2>
+      <p class="muted">Red flags i overskrifter markeres i rodt. Informasjon uten treff vises som noytral.</p>
+      {_html_table_from_df(media_view, max_rows=20)}
+      <ul>{media_ul}</ul>
+    </section>
+  </main>
+</body>
+</html>
+"""
 
 
 def _write_ma200_sanity_report(run_dir: Path, asof: str, df: pd.DataFrame) -> None:
@@ -1992,24 +3153,23 @@ def run(ctx, log) -> int:
         else:
             diag = df.sort_values(by=["quality_score", "mos"], ascending=[False, False], na_position="last")
         _atomic_write_csv(out_csv, diag[out_cols].head(top_n))
+        _write_top_candidates_report(ctx.run_dir, ctx.asof, diag[out_cols], max_rows=top_n)
         _atomic_write_csv(ctx.run_dir / "shortlist.csv", pd.DataFrame(columns=out_cols))
         md = [
             f"# Decision ({ctx.asof})",
             "",
             "**Anbefaling:** CASH (ingen kandidater bestod filter).",
             "",
-            "## Regelstatus",
-            f"- MoS-regel aktiv: min {mos_min:.0%} (høy risiko {mos_high:.0%})",
-            "- Verdiskaping-regel aktiv: ROIC > WACC i 3-års konservativ bane",
-            "- Kvalitetsregel aktiv: >=2 svekkede kvalitetsindikatorer => CASH",
-            f"- Quality-strategi: {quality_strategy}",
-            (f"- Dividend minimum score: {dividend_min_score}/11" if use_dividend_strategy else "- Dividend minimum score: ikke aktiv"),
-            (f"- Graham minimum score: {graham_min_score}/7" if use_graham_strategy else "- Graham minimum score: ikke aktiv"),
-            f"- {tech_rule_text}",
-            f"- Aksjekurs må være maks {max_price_age_days} dager gammel relativt til asof.",
-            f"- Min andel ferske aksjekurser i universet: {min_fresh_price_coverage:.0%} (nå: {fresh_stock_coverage:.1%})",
-            f"- Datatilstrekkelighet for kandidat: minst {candidate_min_count}/{len(candidate_required_fields)} felt og >= {candidate_min_ratio:.0%} dekning",
-            "- Verdsetting: bygger primært på fundamentale størrelser (FCF/OCF/CAPEX, netto gjeld, WACC/COE), ikke pris/teknisk.",
+            "## 1) Fundamental analyse",
+            f"- MoS-regel: min {mos_min:.0%} (hoy risiko {mos_high:.0%})",
+            "- Verdiskaping: ROIC > WACC i konservativ 3-ars bane",
+            "- Kvalitetsgate: >=2 svake indikatorer forkaster kandidat",
+            f"- Datatilstrekkelighet: minst {candidate_min_count}/{len(candidate_required_fields)} felt og >= {candidate_min_ratio:.0%} dekning",
+            "",
+            "## 2) Aksjeanalyse",
+            f"- Teknisk regel: {tech_rule_text}",
+            f"- Maks alder aksjekurs: {max_price_age_days} dager",
+            f"- Fersk prisdekning i universet: {fresh_stock_coverage:.1%} (krav {min_fresh_price_coverage:.0%})",
             "",
             ("## Klar beskjed" if (not global_price_data_ok) else "## Klar beskjed"),
             (
@@ -2018,8 +3178,15 @@ def run(ctx, log) -> int:
                 else "- Ingen kandidat passerte alle krav (inkludert datatilstrekkelighet)."
             ),
             "",
-            "## Topp (diagnostikk – før filter)",
-            _md_table(diag[out_cols], max_rows=10),
+            "## 3) Produkter og markedsforventning",
+            "- Ikke relevant for CASH i denne kjoringen (ingen valgt kandidat).",
+            "",
+            "## 4) Nyheter og vurdering",
+            "- Ikke vurdert i detalj fordi ingen kandidat ble valgt.",
+            "",
+            "## Videre lesing",
+            "- Top candidates (egen side): [top_candidates.md](top_candidates.md)",
+            "- Full eksport: `decision.csv`",
         ]
         _atomic_write_csv(ctx.run_dir / "decision_schema.csv", pd.DataFrame(columns=["parameter", "value", "threshold", "status", "comment"]))
         _atomic_write_csv(
@@ -2040,6 +3207,9 @@ def run(ctx, log) -> int:
                 indent=2,
             ),
         )
+        _atomic_write_csv(ctx.run_dir / "candidate_products.csv", _empty_candidate_products())
+        _atomic_write_csv(ctx.run_dir / "candidate_product_demand_forecast.csv", _empty_candidate_product_demand_forecast())
+        _atomic_write_csv(ctx.run_dir / "candidate_product_demand_summary.csv", _empty_candidate_product_demand_summary())
         _atomic_write_text(out_md, "\n".join(md))
         log.info(f"decision: wrote {out_csv}")
         log.info(f"decision: wrote {out_md}")
@@ -2070,82 +3240,87 @@ def run(ctx, log) -> int:
         eligible.loc[pick.name, "value_qc_unresolved_metrics"] = pick_unresolved_metrics
 
     _atomic_write_csv(out_csv, eligible[out_cols].head(top_n))
+    _write_top_candidates_report(ctx.run_dir, ctx.asof, eligible[out_cols], max_rows=top_n)
     _atomic_write_csv(ctx.run_dir / "shortlist.csv", eligible[out_cols].head(top_n))
+    candidate_products = _extract_candidate_products(pick)
+    candidate_demand_forecast, candidate_demand_summary = _build_candidate_product_demand_forecast(
+        pick=pick,
+        universe_df=df,
+        asof=ctx.asof,
+        products=candidate_products,
+        horizon_years=3,
+    )
+    _atomic_write_csv(ctx.run_dir / "candidate_products.csv", candidate_products)
+    _atomic_write_csv(ctx.run_dir / "candidate_product_demand_forecast.csv", candidate_demand_forecast)
+    _atomic_write_csv(ctx.run_dir / "candidate_product_demand_summary.csv", candidate_demand_summary)
+
+    annual_status, annual_detail = _annual_source_status(pick)
+    fundamental_rows = [
+        {"Nokkel": "Market cap", "Verdi": _fmt_num(pick.get("market_cap"), 4), "Kommentar": "Fra master_valued"},
+        {"Nokkel": "Intrinsic value", "Verdi": _fmt_num(pick.get("intrinsic_value"), 4), "Kommentar": "Fra valuation (fundamental modell)"},
+        {"Nokkel": "MoS", "Verdi": _fmt_pct(pick.get("mos"), 1), "Kommentar": f"Krav { _fmt_pct(pick.get('mos_req'), 0) }"},
+        {"Nokkel": "WACC used", "Verdi": _fmt_pct(pick.get("wacc_used"), 2), "Kommentar": "Kapitalkostnad"},
+        {"Nokkel": "COE used", "Verdi": _fmt_pct(pick.get("coe_used"), 2), "Kommentar": "Egenkapitalkostnad"},
+        {"Nokkel": "ROIC-WACC spread", "Verdi": _fmt_pct(pick.get("roic_wacc_spread"), 2), "Kommentar": "Verdiskaping > 0 er positivt"},
+        {"Nokkel": "Quality score", "Verdi": _fmt_num(pick.get("quality_score"), 4), "Kommentar": "Tverrsnittsmodell"},
+        {"Nokkel": "Value QA unresolved", "Verdi": str(int(pick_unresolved)), "Kommentar": "Uforklarte avvik som bor sjekkes manuelt"},
+        {"Nokkel": "Arsregnskap brukt", "Verdi": annual_status, "Kommentar": annual_detail},
+    ]
+    fundamental_df = pd.DataFrame(fundamental_rows)
+
+    px_date = pd.to_datetime(pick.get("date"), errors="coerce")
+    px_date_txt = str(px_date.date()) if pd.notna(px_date) else "ukjent"
+    price_age = pd.to_numeric(pd.Series([pick.get("stock_price_age_days")]), errors="coerce").fillna(np.nan).iloc[0]
+    stock_rows = [
+        {"Nokkel": "Siste tilgjengelige pris", "Verdi": _fmt_num(pick.get("adj_close"), 5), "Kommentar": f"Dato {px_date_txt}"},
+        {"Nokkel": "Prisalder", "Verdi": (f"{int(price_age)} dager" if np.isfinite(price_age) else "ukjent"), "Kommentar": f"Krav <= {max_price_age_days} dager"},
+        {"Nokkel": "Above MA200", "Verdi": str(bool(_to_bool(pick.get("above_ma200")))), "Kommentar": f"MA200={_fmt_num(pick.get('ma200'), 4)}"},
+        {"Nokkel": "MAD", "Verdi": _fmt_num(pick.get("mad"), 4), "Kommentar": f"Terskel {mad_min:.3f}"},
+        {"Nokkel": "Relevant index", "Verdi": str(pick.get("relevant_index_symbol", "")), "Kommentar": f"Index > MA200: {bool(_to_bool(pick.get('index_ma200_ok')))}"},
+        {"Nokkel": "Teknisk gate", "Verdi": str(bool(_to_bool(pick.get("technical_ok")))), "Kommentar": tech_rule_text},
+    ]
+    stock_df = pd.DataFrame(stock_rows)
+    stock_spark = _price_sparkline_from_prices(prices_df, pick, ctx.asof)
+
+    product_display_cols = [c for c in ["product_label", "source_field", "value_share", "detail"] if c in candidate_products.columns]
+    product_display = candidate_products[product_display_cols].copy() if product_display_cols else candidate_products.copy()
+    if "value_share" in product_display.columns:
+        product_display["value_share"] = product_display["value_share"].map(lambda v: _fmt_pct(v, 1) if np.isfinite(_to_float(v)) else "n/a")
+    demand_base = _base_demand_series(candidate_demand_forecast)
+    demand_lines = _render_ascii_bar_chart(demand_base)
 
     md = []
     md.append(f"# Decision ({ctx.asof})")
     md.append("")
     md.append(f"**Anbefaling:** Kandidat = `{pick['ticker']}` (beste blant de som bestod filter).")
     md.append("")
-    md.append("## Nøkkeltall")
-    md.append(f"- MoS-basis: {pick.get('mos_basis','')}")
-    md.append(f"- Market cap: {float(pick['market_cap']):.3g}")
-    md.append(f"- Intrinsic: {float(pick['intrinsic_value']):.3g}")
-    md.append(f"- MoS: {float(pick['mos'])*100:.1f}% (krav: {float(pick['mos_req'])*100:.0f}%)")
-    md.append(f"- Quality strategy: {quality_strategy}")
-    if np.isfinite(pick.get("beta", np.nan)): md.append(f"- Beta: {float(pick['beta']):.2f}")
-    if np.isfinite(pick.get("quality_score", np.nan)): md.append(f"- Quality score: {float(pick['quality_score']):.3f}")
-    if use_dividend_strategy and np.isfinite(pick.get("dividend_score", np.nan)):
-        md.append(f"- Dividend quality score: {int(pick['dividend_score'])}/11")
-        md.append(f"- Dividend criteria available: {int(pick.get('dividend_criteria_available_count', 0))}/11")
-    if use_graham_strategy and np.isfinite(pick.get("graham_score", np.nan)):
-        md.append(f"- Graham score: {int(pick['graham_score'])}/7")
-        md.append(f"- Graham criteria available: {int(pick.get('graham_criteria_available_count', 0))}/7")
-    if np.isfinite(pick.get("fresh_stock_price_coverage", np.nan)):
-        md.append(
-            f"- Fersk prisdekning i universet: {float(pick.get('fresh_stock_price_coverage')):.1%} (krav >= {min_fresh_price_coverage:.0%})"
-        )
-    if np.isfinite(pick.get("candidate_data_coverage_ratio", np.nan)):
-        md.append(
-            f"- Datadekning for kandidat: {int(pick.get('candidate_available_fields_count', 0))}/{int(pick.get('candidate_required_fields_count', len(candidate_required_fields)))} "
-            f"({float(pick.get('candidate_data_coverage_ratio')):.0%})"
-        )
-    if np.isfinite(pick.get("value_qc_alert_count", np.nan)):
-        md.append(
-            f"- Verdi-QA avvik: {int(pick.get('value_qc_alert_count', 0))} (uløste: {int(pick.get('value_qc_unresolved_alert_count', 0))})"
-        )
+    md.append("## Oversikt")
+    md.append("- Top candidates (egen side): [top_candidates.md](top_candidates.md)")
+    md.append("- Full eksport: `decision.csv`")
+    md.append("- Grafisk rapport: `decision_report.html`")
     md.append("")
-    md.append("## Årsaker (5-10 punkter)")
-    md.append(f"- Krav MoS >= {mos_min:.0%} (høy risiko: {mos_high:.0%})")
-    md.append("- Verdiskaping: ROIC-WACC må være positiv i 3-års konservativ bane")
-    md.append("- Kvalitetsgate: minst 2 svekkede indikatorer forkaster kandidat")
-    if use_dividend_strategy:
-        md.append("- Dividend strategy aktiv: 11 kriterier for utbyttekvalitet, lønnsomhet og verdsettelse")
-        md.append(f"- Minst {dividend_min_score} av 11 kriterier kreves")
-        md.append("- Kriterier: Dividend History, Dividend Growth, Payout ratio, Increase of the number of shares, Market value, Free cash flow margin, Operating cash flow margin, Profit Margin, Return on assets, Yield, P/E")
-    if use_graham_strategy:
-        md.append("- Graham strategy aktiv: defensive kriterier fra The Intelligent Investor")
-        md.append(f"- Minst {graham_min_score} av 7 kriterier kreves")
-        md.append("- Kriterier: Size, Financial strength, Earning stability, Dividend History, Profit Growth, Moderate P/E ratio, Moderate Equity Price")
-    md.append("- Verdsettingen er fundamentaldrevet: DCF basert på kontantstrøm, netto gjeld og kapitalkostnad. Pris/teknisk brukes ikke i intrinsic-verdi.")
-    md.append(f"- {tech_rule_text}")
-    md.append(f"- Aksjekurs må være maks {max_price_age_days} dager gammel relativt til asof.")
-    md.append(f"- Valgt ticker har MoS {float(pick['mos']):.1%} og quality_score {float(pick.get('quality_score', 0.0)):.3f}")
-    if np.isfinite(pick.get("roic_wacc_spread", np.nan)):
-        md.append(f"- ROIC-WACC spread (normalisert): {float(pick.get('roic_wacc_spread')):.3%}")
-    if np.isfinite(pick.get("quality_weak_count", np.nan)):
-        md.append(f"- Svekkede kvalitetsindikatorer: {int(pick.get('quality_weak_count'))}")
-    if "ma200" in pick.index and np.isfinite(pick.get("ma200", np.nan)):
-        md.append(f"- Teknisk: pris over MA200={bool(pick.get('above_ma200', False))}, MA200={float(pick.get('ma200')):.3g}")
-    if "adj_close" in pick.index and np.isfinite(pick.get("adj_close", np.nan)):
-        pick_px_date = pd.to_datetime(pick.get("date"), errors="coerce")
-        pick_px_date_txt = str(pick_px_date.date()) if pd.notna(pick_px_date) else "ukjent"
-        if np.isfinite(pick.get("stock_price_age_days", np.nan)):
-            pick_age_txt = f"{int(pick.get('stock_price_age_days'))} dager"
-        else:
-            pick_age_txt = "ukjent alder"
-        md.append(f"- Siste aksjekurs (adj_close): {float(pick.get('adj_close')):.4g} (dato {pick_px_date_txt}, {pick_age_txt})")
-    if "mad" in pick.index and np.isfinite(pick.get("mad", np.nan)):
-        md.append(f"- Momentum (MAD)={float(pick.get('mad')):.3f}, terskel={mad_min:.3f}")
-    if str(pick.get("relevant_index_symbol", "")):
+    md.append("## 1) Fundamental analyse")
+    md.append(_md_table(fundamental_df, max_rows=40))
+    if np.isfinite(_to_float(pick.get("candidate_data_coverage_ratio"))):
         md.append(
-            f"- Relevant indeks: {pick.get('relevant_index_symbol')} | over MA200={bool(pick.get('index_ma200_ok', False))} | "
-            f"index MAD ok={bool(pick.get('index_mad_ok', False))}"
+            f"- Kommentar: Datadekning {int(pick.get('candidate_available_fields_count', 0))}/{int(pick.get('candidate_required_fields_count', len(candidate_required_fields)))} "
+            f"({float(pick.get('candidate_data_coverage_ratio')):.0%})."
         )
-    worst = df.sort_values(by=["mos"], ascending=True, na_position="last").head(1)
-    if not worst.empty:
-        md.append(f"- Worst-case kandidat nå: {worst.iloc[0].get('ticker','')} med MoS={float(worst.iloc[0].get('mos', float('nan'))):.1%}")
-    md.append("- Break-case: Hvis valgt aksje faller under MA200 eller MOS < krav ved neste kjøring => gå til CASH.")
+    md.append(
+        "- Kommentar: Verdsettelse er fundamental (kontantstrom, netto gjeld, WACC/COE). Pris/teknisk brukes kun i timing/gating."
+    )
+    md.append("")
+    md.append("## 2) Aksje analyse")
+    md.append(_md_table(stock_df, max_rows=30))
+    md.append(f"- Prisgraf (ASCII, siste observasjoner): `{stock_spark}`")
+    md.append(
+        f"- Kommentar: Siste tilgjengelige kurs brukes som 'dagens pris' i denne rapporten (per {px_date_txt})."
+    )
+    md.append("")
+    md.append("## Beslutningskommentar")
+    md.append(f"- MoS { _fmt_pct(pick.get('mos'), 1) } mot krav { _fmt_pct(pick.get('mos_req'), 0) }.")
+    md.append(f"- Teknisk regel: {tech_rule_text}")
+    md.append("- Break-case: Hvis aksjen faller under MA200 eller MoS under krav ved neste kjoring => CASH.")
     md.append("")
     md.append("## Beslutningsskjema")
     schema_df = _decision_schema_rows(
@@ -2179,26 +3354,44 @@ def run(ctx, log) -> int:
         dec_cfg=dec_cfg,
     )
     _atomic_write_text(ctx.run_dir / "media_red_flags.json", json.dumps(media_scan, ensure_ascii=False, indent=2))
-    md.append("## Media Red Flag")
-    md.append(f"- Status: {media_scan.get('status', 'unknown')}")
-    md.append(f"- Headline-sjekk: {int(media_scan.get('headlines_checked', 0))}")
-    md.append(f"- Potensielle red flags: {int(media_scan.get('red_flag_count', 0))}")
+    media_risk, media_comment = _media_assessment_from_scan(media_scan)
+    media_df = _media_headlines_frame(media_scan, max_rows=10)
+    media_notes = [
+        f"Status: {media_scan.get('status', 'unknown')}",
+        f"Headline-sjekk: {int(media_scan.get('headlines_checked', 0))}",
+        f"Potensielle red flags: {int(media_scan.get('red_flag_count', 0))}",
+        f"Vurdering: {media_risk}",
+        f"Kommentar: {media_comment}",
+    ]
+
+    md.extend(
+        _render_candidate_product_demand_md(
+            products=candidate_products,
+            demand_forecast=candidate_demand_forecast,
+            demand_summary=candidate_demand_summary,
+        )
+    )
+    md.append("## 4) Nyheter og vurdering")
+    md.extend([f"- {line}" for line in media_notes])
     if media_scan.get("status") == "error":
         md.append(f"- Feil under mediesjekk: {media_scan.get('error', '')}")
-    else:
-        red_flags = media_scan.get("red_flags", []) or []
-        if red_flags:
-            md.append("- Treff:")
-            for item in red_flags[:5]:
-                md.append(
-                    f"  - {item.get('title', '')} | terms={item.get('matched_terms', '')} | source={item.get('source', '')}"
-                )
-        else:
-            md.append("- Ingen tydelige red-flag nøkkelord i sjekkede overskrifter.")
     md.append("")
-    md.append("## Topp 10 (eligible)")
-    md.append(_md_table(eligible[out_cols], max_rows=10))
+    md.append(_md_table(media_df, max_rows=10))
+    md.append("")
 
+    report_html = _build_decision_report_html(
+        asof=ctx.asof,
+        pick=pick,
+        fundamental_df=fundamental_df,
+        stock_df=stock_df,
+        products_df=product_display,
+        demand_df=demand_base,
+        demand_chart_lines=demand_lines,
+        media_df=media_df,
+        media_notes=media_notes,
+        top_candidates_rel="top_candidates.md",
+    )
+    _atomic_write_text(ctx.run_dir / "decision_report.html", report_html)
     _atomic_write_text(out_md, "\n".join(md))
     log.info(f"decision: wrote {out_csv}")
     log.info(f"decision: wrote {out_md}")

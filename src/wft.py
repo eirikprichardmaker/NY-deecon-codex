@@ -15,6 +15,7 @@ import pandas as pd
 import yaml
 
 from src.common.config import load_config, project_root_from_file, resolve_paths
+from src.decision import REASON_DATA_INVALID, _run_data_quality_checks
 
 COUNTRY_FROM_SUFFIX = {
     "OL": "NO",
@@ -50,10 +51,10 @@ DECISION_REASON_PRIORITY = [
     "kvalitetsscore",
     REASON_DATA_MISSING_MA200,
     REASON_DATA_MISSING_BENCHMARK,
+    REASON_DATA_INVALID,
     "datamangler",
     "ingen kandidat",
 ]
-
 
 @dataclass(frozen=True)
 class WFTParams:
@@ -142,6 +143,25 @@ def _collect_decision_reasons(values: pd.Series) -> str:
             seen.add(token)
 
     return "|".join(out)
+
+
+def _split_reason_tokens(values: pd.Series, sep: str = ";") -> list[str]:
+    tokens: list[str] = []
+    for v in values.fillna("").astype(str):
+        for part in str(v).split(sep):
+            token = part.strip()
+            if token:
+                tokens.append(token)
+    return tokens
+
+
+def _top_dq_fail_rule_ids(values: pd.Series, limit: int = 3) -> list[str]:
+    tokens = _split_reason_tokens(values, sep=";")
+    if not tokens:
+        return []
+    counts = pd.Series(tokens, dtype=str).value_counts()
+    ordered = counts.sort_values(ascending=False, kind="mergesort")
+    return [str(x) for x in ordered.head(int(limit)).index.tolist()]
 
 
 def _zscore(s: pd.Series) -> pd.Series:
@@ -480,6 +500,7 @@ def _load_static_universe(master_path: Path) -> pd.DataFrame:
             "k": m["k"],
             "ticker": m["ticker"],
             "company": m.get("company", pd.Series("", index=m.index)),
+            "intrinsic_value": intrinsic,
             "market_cap": mcap,
             "mos": mos,
             "high_risk_flag": high_risk_flag.astype(bool),
@@ -561,8 +582,213 @@ def _load_monthly_panel(prices_path: Path, static_universe: pd.DataFrame) -> pd.
     return panel.sort_values(["month", "k"]).reset_index(drop=True)
 
 
+def _ensure_wft_dq_columns(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+
+    dq_blocked_src = out.get("dq_blocked", out.get("data_quality_fail", pd.Series(False, index=out.index)))
+    fail_count_src = out.get("dq_fail_count", out.get("data_quality_fail_count", pd.Series(0, index=out.index)))
+    warn_count_src = out.get("dq_warn_count", out.get("data_quality_warn_count", pd.Series(0, index=out.index)))
+    fail_reasons_src = out.get("dq_fail_reasons", out.get("data_quality_fail_reasons", pd.Series("", index=out.index)))
+    warn_reasons_src = out.get("dq_warn_reasons", out.get("data_quality_warn_reasons", pd.Series("", index=out.index)))
+
+    out["dq_blocked"] = pd.Series(dq_blocked_src, index=out.index).fillna(False).astype(bool)
+    out["dq_fail_count"] = pd.to_numeric(pd.Series(fail_count_src, index=out.index), errors="coerce").fillna(0).astype(int)
+    out["dq_warn_count"] = pd.to_numeric(pd.Series(warn_count_src, index=out.index), errors="coerce").fillna(0).astype(int)
+    out["dq_fail_reasons"] = pd.Series(fail_reasons_src, index=out.index).fillna("").astype(str)
+    out["dq_warn_reasons"] = pd.Series(warn_reasons_src, index=out.index).fillna("").astype(str)
+
+    out["data_quality_fail"] = out["dq_blocked"]
+    out["data_quality_fail_count"] = out["dq_fail_count"]
+    out["data_quality_warn_count"] = out["dq_warn_count"]
+    out["data_quality_fail_reasons"] = out["dq_fail_reasons"]
+    out["data_quality_warn_reasons"] = out["dq_warn_reasons"]
+    return out
+
+
+def _wft_data_quality_config(decision_cfg: dict, scope: str) -> dict:
+    dq_cfg = dict((decision_cfg.get("data_quality", {}) or {}))
+    if scope == "static":
+        dq_cfg.setdefault("critical_fields", ["market_cap", "mos"])
+    else:
+        # Monthly WFT panel contains warmup periods where MA200 metrics can be absent.
+        dq_cfg.setdefault("critical_fields", ["adj_close"])
+    return {"data_quality": dq_cfg}
+
+
+def _derive_wft_asof(panel: pd.DataFrame, asof: str | None) -> str:
+    if asof:
+        return str(asof)
+    month_s = pd.to_datetime(panel.get("month", pd.Series(dtype=object)), errors="coerce")
+    if month_s.notna().any():
+        return pd.Timestamp(month_s.max()).date().isoformat()
+    return pd.Timestamp.utcnow().date().isoformat()
+
+
+def _apply_wft_data_quality(
+    static_universe: pd.DataFrame,
+    panel: pd.DataFrame,
+    decision_cfg: dict,
+    asof: str,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    static_in = static_universe.copy().reset_index(drop=True)
+    panel_in = panel.copy().reset_index(drop=True)
+
+    static_flags, static_audit = _run_data_quality_checks(
+        static_in,
+        dec_cfg=_wft_data_quality_config(decision_cfg, scope="static"),
+        asof=asof,
+    )
+    panel_flags, panel_audit = _run_data_quality_checks(
+        panel_in,
+        dec_cfg=_wft_data_quality_config(decision_cfg, scope="panel"),
+        asof=asof,
+    )
+
+    for c in static_flags.columns:
+        static_in[c] = static_flags[c]
+    for c in panel_flags.columns:
+        panel_in[c] = panel_flags[c]
+
+    static_out = _ensure_wft_dq_columns(static_in)
+    panel_out = _ensure_wft_dq_columns(panel_in)
+    return static_out, panel_out, static_audit, panel_audit
+
+
+def _build_test_fold_lookup(folds: list[dict]) -> dict[pd.Timestamp, str]:
+    month_to_fold: dict[pd.Timestamp, str] = {}
+    for fold in folds:
+        label = f"test_{int(fold['test_year'])}"
+        months = pd.date_range(fold["test_start"], fold["test_end"], freq="ME")
+        for month in months:
+            month_to_fold[pd.Timestamp(month)] = label
+    return month_to_fold
+
+
+def _build_wft_dq_audit(
+    static_audit: pd.DataFrame,
+    panel_audit: pd.DataFrame,
+    panel: pd.DataFrame,
+    month_to_fold: dict[pd.Timestamp, str],
+) -> pd.DataFrame:
+    audit_cols = [
+        "scope",
+        "fold",
+        "year_month",
+        "asof",
+        "date",
+        "ticker",
+        "rule_id",
+        "severity",
+        "field",
+        "value",
+        "detail",
+        "group_key",
+        "group_n",
+        "source_fields",
+        "row_index",
+    ]
+    panel_meta = panel.reset_index(drop=True).copy()
+    panel_meta["month"] = pd.to_datetime(panel_meta.get("month", pd.Series(dtype=object)), errors="coerce")
+
+    frames: list[pd.DataFrame] = []
+    if not static_audit.empty:
+        s = static_audit.copy()
+        s["scope"] = "static"
+        s["fold"] = "STATIC"
+        s["year_month"] = ""
+        frames.append(s)
+
+    if not panel_audit.empty:
+        p = panel_audit.copy()
+        p["scope"] = "panel"
+        p["month"] = pd.to_datetime(p["row_index"].map(panel_meta["month"]), errors="coerce")
+        p["year_month"] = p["month"].dt.strftime("%Y-%m").fillna("")
+        p["fold"] = p["month"].map(month_to_fold).fillna("")
+        frames.append(p.drop(columns=["month"]))
+
+    if not frames:
+        return pd.DataFrame(columns=audit_cols)
+
+    out = pd.concat(frames, ignore_index=True)
+    out["fold"] = out["fold"].fillna("").astype(str)
+    out["year_month"] = out["year_month"].fillna("").astype(str)
+    return out.reindex(columns=audit_cols)
+
+
+def _series_to_md_lines(s: pd.Series, prefix: str, limit: int = 5) -> list[str]:
+    if s.empty:
+        return [f"- {prefix}: (none)"]
+    lines: list[str] = []
+    for idx, val in s.head(int(limit)).items():
+        lines.append(f"- {prefix} `{idx}`: {int(val)}")
+    return lines
+
+
+def _write_wft_data_quality_report(
+    run_dir: Path,
+    dq_audit: pd.DataFrame,
+    panel: pd.DataFrame,
+) -> None:
+    panel_dq = _ensure_wft_dq_columns(panel)
+    fail_total = int((dq_audit.get("severity", pd.Series(dtype=str)) == "FAIL").sum()) if not dq_audit.empty else 0
+    warn_total = int((dq_audit.get("severity", pd.Series(dtype=str)) == "WARN").sum()) if not dq_audit.empty else 0
+    blocked_total = int(panel_dq["dq_blocked"].sum()) if "dq_blocked" in panel_dq.columns else 0
+
+    lines = [
+        "# WFT Data Quality Report",
+        "",
+        "## Totals",
+        f"- FAIL events: {fail_total}",
+        f"- WARN events: {warn_total}",
+        f"- Blocked panel rows (dq_blocked=true): {blocked_total}",
+        "",
+        "## Top Rules",
+    ]
+
+    if dq_audit.empty:
+        lines.append("- (none)")
+    else:
+        top_rules = (
+            dq_audit.groupby(["severity", "rule_id"], as_index=False)
+            .size()
+            .sort_values(["size", "severity", "rule_id"], ascending=[False, True, True], kind="mergesort")
+            .head(10)
+        )
+        for _, r in top_rules.iterrows():
+            lines.append(f"- {r['severity']} `{r['rule_id']}`: {int(r['size'])}")
+
+    if dq_audit.empty:
+        panel_fail = pd.DataFrame()
+        panel_warn = pd.DataFrame()
+    else:
+        scope_s = dq_audit["scope"] if "scope" in dq_audit.columns else pd.Series("", index=dq_audit.index)
+        sev_s = dq_audit["severity"] if "severity" in dq_audit.columns else pd.Series("", index=dq_audit.index)
+        panel_fail = dq_audit[(scope_s.astype(str) == "panel") & (sev_s.astype(str) == "FAIL")].copy()
+        panel_warn = dq_audit[(scope_s.astype(str) == "panel") & (sev_s.astype(str) == "WARN")].copy()
+
+    lines.extend(["", "## Worst Months"])
+    fail_months = panel_fail.groupby("year_month").size().sort_values(ascending=False, kind="mergesort") if not panel_fail.empty else pd.Series(dtype=int)
+    warn_months = panel_warn.groupby("year_month").size().sort_values(ascending=False, kind="mergesort") if not panel_warn.empty else pd.Series(dtype=int)
+    lines.extend(_series_to_md_lines(fail_months, prefix="FAIL", limit=5))
+    lines.extend(_series_to_md_lines(warn_months, prefix="WARN", limit=5))
+
+    lines.extend(["", "## Worst Folds"])
+    fold_fail = panel_fail[panel_fail["fold"].astype(str).ne("")].groupby("fold").size().sort_values(ascending=False, kind="mergesort") if not panel_fail.empty else pd.Series(dtype=int)
+    fold_warn = panel_warn[panel_warn["fold"].astype(str).ne("")].groupby("fold").size().sort_values(ascending=False, kind="mergesort") if not panel_warn.empty else pd.Series(dtype=int)
+    lines.extend(_series_to_md_lines(fold_fail, prefix="FAIL", limit=5))
+    lines.extend(_series_to_md_lines(fold_warn, prefix="WARN", limit=5))
+
+    lines.extend(["", "## Most Blocked Tickers"])
+    blocked = panel_dq[panel_dq["dq_blocked"].astype(bool)] if "dq_blocked" in panel_dq.columns else pd.DataFrame()
+    blocked_by_ticker = blocked.groupby("ticker").size().sort_values(ascending=False, kind="mergesort") if not blocked.empty else pd.Series(dtype=int)
+    lines.extend(_series_to_md_lines(blocked_by_ticker, prefix="ticker", limit=10))
+
+    (run_dir / "wft_data_quality_report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def _apply_filters(month_df: pd.DataFrame, params: WFTParams) -> pd.DataFrame:
     d = month_df.copy()
+    d = _ensure_wft_dq_columns(d)
 
     base_mos = float(params.mos_threshold)
     mos_req = np.where(d["high_risk_flag"].fillna(False), np.maximum(0.40, base_mos), base_mos)
@@ -625,7 +851,7 @@ def _apply_filters(month_df: pd.DataFrame, params: WFTParams) -> pd.DataFrame:
         d["tech_signal_count"].ge(2)
     )
 
-    d["eligible"] = d["fundamental_ok"] & d["technical_ok"]
+    d["eligible"] = d["fundamental_ok"] & d["technical_ok"] & (~d["dq_blocked"].astype(bool))
 
     roic_z = _zscore(d["roic"])
     fcf_z = _zscore(d["fcf_yield"])
@@ -679,6 +905,16 @@ def _cash_decision_reasons(d: pd.DataFrame) -> str:
     quality_score_failed = (not pre_quality.empty) and pre_quality["quality_score"].isna().all()
     if quality_filter_failed or quality_score_failed:
         reasons.append("kvalitetsscore")
+
+    dq_blocked = d.get("dq_blocked", d.get("data_quality_fail", pd.Series(False, index=d.index))).fillna(False).astype(bool)
+    pre_dq_eligible = d["fundamental_ok"].astype(bool) & d["technical_ok"].astype(bool)
+    post_dq_eligible = d["eligible"].astype(bool)
+    dq_removed_all = bool(pre_dq_eligible.any()) and (not post_dq_eligible.any()) and bool(dq_blocked.loc[pre_dq_eligible].all())
+    if dq_removed_all:
+        reasons.append(REASON_DATA_INVALID)
+        fail_reason_col = "dq_fail_reasons" if "dq_fail_reasons" in d.columns else "data_quality_fail_reasons"
+        top_rule_ids = _top_dq_fail_rule_ids(d.loc[dq_blocked & pre_dq_eligible, fail_reason_col], limit=3)
+        reasons.extend(top_rule_ids)
 
     if not reasons:
         reasons.append("ingen kandidat")
@@ -979,6 +1215,14 @@ def run_wft(
     if asof:
         cutoff_month = pd.to_datetime(asof).to_period("M").to_timestamp("M")
         panel = panel[pd.to_datetime(panel["month"], errors="coerce") <= cutoff_month].copy()
+    decision_cfg = dict((cfg.get("decision", {}) or {}))
+    dq_asof = _derive_wft_asof(panel, asof=asof)
+    static, panel, static_dq_audit, panel_dq_audit = _apply_wft_data_quality(
+        static_universe=static,
+        panel=panel,
+        decision_cfg=decision_cfg,
+        asof=dq_asof,
+    )
 
     folds = _build_folds(panel["month"], train_years=train_years, test_years=test_years, step_years=step_years)
     if not folds:
@@ -997,6 +1241,15 @@ def run_wft(
     position_country = _build_position_country_lookup(panel)
 
     run_dir.mkdir(parents=True, exist_ok=True)
+    month_to_fold = _build_test_fold_lookup(folds)
+    wft_dq_audit = _build_wft_dq_audit(
+        static_audit=static_dq_audit,
+        panel_audit=panel_dq_audit,
+        panel=panel,
+        month_to_fold=month_to_fold,
+    )
+    wft_dq_audit.to_csv(run_dir / "wft_data_quality_audit.csv", index=False)
+    _write_wft_data_quality_report(run_dir=run_dir, dq_audit=wft_dq_audit, panel=panel)
 
     rows: list[dict] = []
     perf_rows: list[dict] = []
