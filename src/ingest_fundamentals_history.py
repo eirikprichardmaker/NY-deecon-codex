@@ -171,28 +171,63 @@ def _parse_kpi_history_payload(payload: Any) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
 
     def _points(obj: Dict[str, Any]) -> List[Any]:
-        for k in ["values", "history", "data", "items", "kpiHistory"]:
+        for k in ["values", "Values", "history", "data", "items", "kpiHistory"]:
             if k in obj and isinstance(obj[k], list):
                 return obj[k]
         return []
 
+    def _date_from_year_period(y_raw: Any, p_raw: Any) -> str | None:
+        try:
+            y = int(float(y_raw))
+            p = int(float(p_raw))
+        except Exception:
+            return None
+        if y < 1900 or y > 2100:
+            return None
+        quarter_map = {
+            1: "03-31",
+            2: "06-30",
+            3: "09-30",
+            4: "12-31",
+            5: "12-31",  # Borsdata uses period=5 for annual values.
+        }
+        mmdd = quarter_map.get(p)
+        if not mmdd:
+            return None
+        return f"{y:04d}-{mmdd}"
+
     def _date_val(pt: Dict[str, Any]):
         d = pt.get("d") or pt.get("date") or pt.get("reportEndDate") or pt.get("reportDate")
+        if d in (None, ""):
+            d = _date_from_year_period(pt.get("y"), pt.get("p"))
         v = pt.get("v") if "v" in pt else pt.get("value", pt.get("val"))
         return d, v
 
     if isinstance(payload, dict):
-        for k in ["data", "Data", "instruments", "Instruments"]:
+        # Borsdata KPI history responses are commonly wrapped in "kpisList".
+        for k in ["kpisList", "kpiHistoryList", "data", "Data", "instruments", "Instruments"]:
             if k in payload and isinstance(payload[k], list):
                 payload = payload[k]
                 break
 
     if isinstance(payload, list):
-        if payload and isinstance(payload[0], dict) and any(k.lower() in ("insid", "ins_id", "id") for k in payload[0].keys()):
+        first_is_dict = bool(payload) and isinstance(payload[0], dict)
+        first_keys = {str(k).lower() for k in payload[0].keys()} if first_is_dict else set()
+        first_has_points = first_is_dict and any(
+            isinstance(payload[0].get(k), list) for k in ["values", "Values", "history", "data", "items", "kpiHistory"]
+        )
+        first_has_id = first_is_dict and any(k in first_keys for k in ("insid", "ins_id", "id", "instrument"))
+        if first_has_id or first_has_points:
             for inst_obj in payload:
                 if not isinstance(inst_obj, dict):
                     continue
-                ins_id = inst_obj.get("insId") or inst_obj.get("ins_id") or inst_obj.get("InsId") or inst_obj.get("id")
+                ins_id = (
+                    inst_obj.get("insId")
+                    or inst_obj.get("ins_id")
+                    or inst_obj.get("InsId")
+                    or inst_obj.get("id")
+                    or inst_obj.get("instrument")
+                )
                 pts = _points(inst_obj)
                 for pt in pts:
                     if isinstance(pt, dict):

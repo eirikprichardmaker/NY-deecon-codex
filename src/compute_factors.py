@@ -117,14 +117,25 @@ def run(ctx, log) -> int:
     if col_nd_ebitda:
         out["ebitda_proxy"] = safe_div(out["net_debt"], out["nd_ebitda"])
 
-    # FCF yield: prefer EV if available, else market cap
+    # FCF yield: prefer EV if available, else market cap.
+    # fcf_ttm is stored in base currency while market_cap/net_debt commonly come
+    # in "millions"; align denominator scale before dividing.
     out["fcf_yield"] = np.nan
     denom = out["enterprise_value_proxy"]
+    mcap_scale = 1.0
+    if np.isfinite(med_mcap) and med_mcap > 0 and med_mcap < 10_000_000:
+        mcap_scale = 1_000_000.0
     use_ev = denom.notna() & (denom > 0)
-    out.loc[use_ev, "fcf_yield"] = safe_div(out.loc[use_ev, "fcf_ttm"], denom.loc[use_ev])
+    out.loc[use_ev, "fcf_yield"] = safe_div(
+        out.loc[use_ev, "fcf_ttm"],
+        denom.loc[use_ev] * mcap_scale,
+    )
 
     use_mcap = out["fcf_yield"].isna() & out["market_cap"].notna() & (out["market_cap"] > 0)
-    out.loc[use_mcap, "fcf_yield"] = safe_div(out.loc[use_mcap, "fcf_ttm"], out.loc[use_mcap, "market_cap"])
+    out.loc[use_mcap, "fcf_yield"] = safe_div(
+        out.loc[use_mcap, "fcf_ttm"],
+        out.loc[use_mcap, "market_cap"] * mcap_scale,
+    )
     out["fcf_yield_invalid"] = out["fcf_yield"].isna().astype(int)
 
     # GP/A: not available with current master schema

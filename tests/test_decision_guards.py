@@ -19,6 +19,13 @@ def test_to_decimal_rate_normalizes_percent_points():
     assert abs(float(out.iloc[1]) - 0.08) < 1e-12
 
 
+def test_to_decimal_rate_normalizes_mixed_when_tail_indicates_percent_points():
+    s = pd.Series([0.4, 0.8, 1.2, 3.0, 8.0, 12.0])
+    out = _to_decimal_rate(s)
+    assert abs(float(out.iloc[0]) - 0.004) < 1e-12
+    assert abs(float(out.iloc[5]) - 0.12) < 1e-12
+
+
 def test_value_creation_gate_requires_positive_3y_conservative_spread():
     df = pd.DataFrame(
         {

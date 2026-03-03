@@ -11,6 +11,8 @@ if str(ROOT) not in sys.path:
 
 from src.decision import (
     _apply_index_technical_filter,
+    _analyze_candidate_value_qc,
+    _build_value_qc_flags,
     _candidate_data_sufficiency,
     _decision_schema_rows,
     _run_media_red_flag_scan,
@@ -115,3 +117,46 @@ def test_media_red_flag_scan_disabled_returns_without_network() -> None:
     )
     assert out["enabled"] is False
     assert out["status"] == "disabled"
+
+
+def test_value_qc_flags_detects_extreme_roic_outlier() -> None:
+    df = pd.DataFrame(
+        {
+            "market_cap": [1e9, 2e9, 3e9, 4e9],
+            "intrinsic_value": [2e9, 2.1e9, 3.1e9, 4.2e9],
+            "mos": [1.0, 0.05, 0.03, 0.05],
+            "roic_dec": [0.2, 0.15, 0.1, 34.0],
+            "roic": [20.0, 15.0, 10.0, 3400.0],
+            "roic_current": [20.0, 15.0, 10.0, 3400.0],
+            "wacc_dec": [0.09, 0.09, 0.09, 0.09],
+            "roic_wacc_spread": [0.11, 0.06, 0.01, 33.91],
+            "quality_score": [0.1, 0.2, 0.3, 0.4],
+            "ev_ebit": [10.0, 12.0, 9.0, 11.0],
+            "nd_ebitda": [1.0, 2.0, 1.5, 1.2],
+            "fcf_yield": [0.05, 0.06, 0.04, 0.07],
+            "adj_close": [10.0, 11.0, 9.0, 10.5],
+            "ma21": [10.1, 11.1, 9.1, 10.4],
+            "ma200": [9.5, 10.5, 8.8, 10.1],
+            "mad": [0.05, 0.057, 0.034, 0.03],
+            "index_price": [1000.0, 1001.0, 999.0, 1002.0],
+            "index_ma21": [990.0, 991.0, 989.0, 992.0],
+            "index_ma200": [950.0, 951.0, 949.0, 952.0],
+            "index_mad": [0.04, 0.042, 0.043, 0.042],
+        }
+    )
+    qc, specs, summary = _build_value_qc_flags(
+        df,
+        {"value_qc": {"enabled": True, "min_samples_for_distribution": 2}},
+    )
+    assert "value_qc_roic_flag" in qc.columns
+    assert bool(qc.loc[3, "value_qc_roic_flag"]) is True
+    assert int(qc.loc[3, "value_qc_alert_count"]) >= 1
+    assert "roic" in str(qc.loc[3, "value_qc_alert_metrics"])
+    assert "roic" in summary["metric"].tolist()
+
+    pick = pd.concat([df.loc[3], qc.loc[3]])
+    details = _analyze_candidate_value_qc(pick, specs)
+    roic_row = details[details["metric"] == "roic"].iloc[0]
+    assert bool(roic_row["is_alert"]) is True
+    assert bool(roic_row["resolved"]) is False
+    assert "Uvanlig verdi" in str(roic_row["note"])

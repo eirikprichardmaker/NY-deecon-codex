@@ -1,11 +1,32 @@
 ﻿from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Tuple, Optional
 
 import numpy as np
 import pandas as pd
+
+MARKET_BY_COUNTRY = {
+    "NO": "NO",
+    "NORWAY": "NO",
+    "SE": "SE",
+    "SWEDEN": "SE",
+    "DK": "DK",
+    "DENMARK": "DK",
+    "FI": "FI",
+    "FINLAND": "FI",
+}
+
+MARKET_BY_SUFFIX = {
+    "OL": "NO",
+    "ST": "SE",
+    "CO": "DK",
+    "HE": "FI",
+}
 
 
 def _cfg_get(cfg: Any, key: str, default: Any) -> Any:
@@ -41,6 +62,26 @@ def _to_num(s: pd.Series) -> pd.Series:
 
 def _norm_yahoo(s: pd.Series) -> pd.Series:
     return s.astype(str).str.upper().str.strip()
+
+
+def _is_price_like_col(col: str) -> bool:
+    c = str(col).strip().lower()
+    patterns = [
+        r"(?:^|_)adj_close(?:$|_)",
+        r"(?:^|_)close(?:$|_)",
+        r"(?:^|_)price(?:$|_)",
+        r"(?:^|_)ma200(?:$|_)",
+        r"(?:^|_)mad(?:$|_)",
+        r"(?:^|_)index_(?:$|_)",
+    ]
+    return any(re.search(p, c) for p in patterns)
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(path)
 
 
 @dataclass
@@ -106,9 +147,218 @@ def _resolve_paths(ctx) -> Dict[str, Path]:
     except Exception:
         root = Path(getattr(ctx, "project_root", "."))  # best effort
         return {
+            "data_dir": root / "data",
+            "raw_dir": root / "data" / "raw",
             "processed_dir": root / "data" / "processed",
             "runs_dir": root / "runs",
         }
+
+
+def _canon_cols(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+
+    def canon(s: str) -> str:
+        s = str(s).strip().lower()
+        s = re.sub(r"[^a-z0-9]+", "_", s)
+        return s.strip("_")
+
+    out.columns = [canon(c) for c in out.columns]
+    return out
+
+
+def _quarter_end_from_year_period(year_raw: Any, period_raw: Any) -> Optional[str]:
+    try:
+        y = int(float(year_raw))
+        p = int(float(period_raw))
+    except Exception:
+        return None
+    if y < 1900 or y > 2100:
+        return None
+    mmdd = {1: "03-31", 2: "06-30", 3: "09-30", 4: "12-31", 5: "12-31"}.get(p)
+    if not mmdd:
+        return None
+    return f"{y:04d}-{mmdd}"
+
+
+def _suffix_from_yahoo(yahoo_ticker: str) -> str:
+    s = str(yahoo_ticker).strip().upper()
+    if "." not in s:
+        return ""
+    return s.rsplit(".", 1)[-1]
+
+
+def _latest_raw_snapshot_dir_with_data(raw_dir: Path, asof: str, subdir: str) -> Optional[Path]:
+    if not raw_dir.exists():
+        return None
+    asof_dt = pd.to_datetime(asof, errors="coerce")
+    if pd.isna(asof_dt):
+        return None
+
+    rows: list[tuple[pd.Timestamp, Path]] = []
+    for d in raw_dir.iterdir():
+        if not d.is_dir():
+            continue
+        ts = pd.to_datetime(d.name, format="%Y-%m-%d", errors="coerce")
+        if pd.isna(ts) or ts.normalize() > asof_dt.normalize():
+            continue
+        if (d / subdir).exists():
+            rows.append((ts.normalize(), d))
+    if not rows:
+        return None
+    rows.sort(key=lambda x: x[0], reverse=True)
+    return rows[0][1]
+
+
+def _load_insid_mapping(project_root: Path, allowed_yahoo: Optional[pd.Series] = None) -> pd.DataFrame:
+    candidates = [
+        project_root / "config" / "tickers_with_insid_clean.csv",
+        project_root / "config" / "tickers_with_insid.csv",
+    ]
+    for p in candidates:
+        if not p.exists():
+            continue
+        df = pd.read_csv(p)
+        cols = {str(c).strip().lower(): c for c in df.columns}
+        y_col = cols.get("yahoo_ticker")
+        i_col = cols.get("ins_id") or cols.get("insid")
+        c_col = cols.get("country")
+        if not y_col or not i_col:
+            continue
+
+        out = df[[y_col, i_col] + ([c_col] if c_col else [])].copy().rename(
+            columns={y_col: "yahoo_ticker", i_col: "ins_id", (c_col or ""): "country"}
+        )
+        if "country" not in out.columns:
+            out["country"] = ""
+        out["yahoo_ticker"] = out["yahoo_ticker"].astype(str).str.upper().str.strip()
+        out["ins_id"] = pd.to_numeric(out["ins_id"], errors="coerce")
+        out = out[out["ins_id"].notna() & out["yahoo_ticker"].ne("")].copy()
+        out["ins_id"] = out["ins_id"].astype(int)
+        out["country"] = out["country"].astype(str).str.upper().str.strip()
+        out["market"] = out["country"].map(lambda x: MARKET_BY_COUNTRY.get(x, ""))
+        needs_market = out["market"].eq("")
+        if needs_market.any():
+            out.loc[needs_market, "market"] = out.loc[needs_market, "yahoo_ticker"].map(
+                lambda x: MARKET_BY_SUFFIX.get(_suffix_from_yahoo(x), "")
+            )
+        out = out[out["market"].ne("")].copy()
+        out = out[["yahoo_ticker", "ins_id", "market"]]
+        if allowed_yahoo is not None:
+            allow = allowed_yahoo.astype(str).str.upper().str.strip()
+            allow_set = {x for x in allow.tolist() if x}
+            if allow_set:
+                out = out[out["yahoo_ticker"].isin(allow_set)].copy()
+        if not out.empty:
+            stats = out.groupby("yahoo_ticker", dropna=False).agg(
+                ins_id_nunique=("ins_id", "nunique"),
+                market_nunique=("market", "nunique"),
+            )
+            bad = stats[(stats["ins_id_nunique"] > 1) | (stats["market_nunique"] > 1)]
+            if not bad.empty:
+                # Keep valuation deterministic: ambiguous mapping is excluded from
+                # quarterly bridge (falls back to missing quarterly data handling).
+                bad_keys = set(bad.index.tolist())
+                out = out[~out["yahoo_ticker"].isin(bad_keys)].copy()
+            out = out.sort_values(["yahoo_ticker", "ins_id", "market"], kind="mergesort").drop_duplicates(
+                subset=["yahoo_ticker"],
+                keep="first",
+            )
+        return out
+    return pd.DataFrame(columns=["yahoo_ticker", "ins_id", "market"])
+
+
+def _pick_latest_report_row(df: pd.DataFrame, asof_dt: pd.Timestamp) -> Optional[pd.Series]:
+    if df is None or df.empty:
+        return None
+    d = _canon_cols(df)
+
+    date_col = "report_date" if "report_date" in d.columns else ("report_end_date" if "report_end_date" in d.columns else None)
+    if date_col:
+        d[date_col] = pd.to_datetime(d[date_col], errors="coerce")
+        d = d[d[date_col].notna() & (d[date_col] <= asof_dt)]
+    if d.empty:
+        return None
+
+    if "year" in d.columns:
+        d["year"] = pd.to_numeric(d["year"], errors="coerce")
+    if "period" in d.columns:
+        d["period"] = pd.to_numeric(d["period"], errors="coerce")
+
+    sort_cols = [c for c in ["year", "period"] if c in d.columns]
+    if sort_cols:
+        d = d.sort_values(sort_cols)
+    return d.iloc[-1]
+
+
+def _load_quarterly_r12_fcf_snapshot(
+    *,
+    project_root: Path,
+    raw_dir: Path,
+    asof: str,
+    yahoo_tickers: pd.Series,
+) -> pd.DataFrame:
+    out = pd.DataFrame({"yahoo_ticker": yahoo_tickers.astype(str).str.upper().str.strip()})
+    out["quarterly_fcf_millions"] = np.nan
+    out["quarterly_period_end"] = ""
+    out["quarterly_snapshot"] = ""
+    out["quarterly_source"] = ""
+
+    if out.empty:
+        return out
+
+    snapshot = _latest_raw_snapshot_dir_with_data(raw_dir, asof, "reports_r12")
+    if snapshot is None:
+        return out
+
+    ins_map = _load_insid_mapping(project_root, allowed_yahoo=out["yahoo_ticker"])
+    if ins_map.empty:
+        return out
+
+    work = out.merge(ins_map, on="yahoo_ticker", how="left", validate="one_to_one")
+    asof_dt = pd.to_datetime(asof, errors="coerce")
+    if pd.isna(asof_dt):
+        return out
+
+    for i, row in work.iterrows():
+        ins_id = row.get("ins_id")
+        market = str(row.get("market", "")).upper()
+        if not np.isfinite(pd.to_numeric(pd.Series([ins_id]), errors="coerce").iloc[0]) or not market:
+            continue
+        p = snapshot / "reports_r12" / f"market={market}" / f"ins_id={int(ins_id)}.parquet"
+        if not p.exists():
+            continue
+        try:
+            rep = pd.read_parquet(p)
+        except Exception:
+            continue
+        latest = _pick_latest_report_row(rep, asof_dt=asof_dt)
+        if latest is None:
+            continue
+        latest_d = _canon_cols(pd.DataFrame([latest])).iloc[0]
+        fcf = pd.to_numeric(
+            pd.Series([latest_d.get("free_cash_flow", latest_d.get("free_cash_flow_for_the_year"))]),
+            errors="coerce",
+        ).iloc[0]
+        if not np.isfinite(fcf):
+            continue
+        per_end = latest_d.get("report_end_date", latest_d.get("report_date", ""))
+        per_end_dt = pd.to_datetime(per_end, errors="coerce")
+        per_end_s = ""
+        if pd.notna(per_end_dt):
+            per_end_s = per_end_dt.date().isoformat()
+        else:
+            per_end_s = _quarter_end_from_year_period(latest_d.get("year"), latest_d.get("period")) or ""
+
+        out.at[i, "quarterly_fcf_millions"] = float(fcf)
+        out.at[i, "quarterly_period_end"] = per_end_s
+        out.at[i, "quarterly_snapshot"] = snapshot.name
+        out.at[i, "quarterly_source"] = "reports_r12.free_cash_flow"
+
+    out["quarterly_period_end"] = out["quarterly_period_end"].astype(str)
+    period_dt = pd.to_datetime(out["quarterly_period_end"], errors="coerce")
+    out["quarterly_age_days"] = (asof_dt.normalize() - period_dt).dt.days
+    out["quarterly_data_ok"] = pd.to_numeric(out["quarterly_fcf_millions"], errors="coerce").notna()
+    return out
 
 
 def run(ctx, log) -> int:
@@ -123,6 +373,8 @@ def run(ctx, log) -> int:
       - Enforces one-to-one merge, stable rowcount.
     """
     paths = _resolve_paths(ctx)
+    project_root = Path(getattr(ctx, "project_root", "."))
+    raw_dir = paths.get("raw_dir", project_root / "data" / "raw")
     processed_dir = paths.get("processed_dir", Path("data/processed"))
     runs_dir = paths.get("runs_dir", Path("runs"))
 
@@ -132,6 +384,7 @@ def run(ctx, log) -> int:
     _ensure_dir(processed_dir)
 
     asof = getattr(ctx, "asof", None)
+    asof_s = str(asof) if asof is not None else datetime.utcnow().date().isoformat()
 
     # Load base (master_cost is the safest pre-valuation frame)
     master_cost_path = processed_dir / "master_cost.parquet"
@@ -162,22 +415,100 @@ def run(ctx, log) -> int:
     ticker_col = _pick_first_col(df, ["ticker"])
     company_col = _pick_first_col(df, ["company"])
 
-    # Build FCF (millions)
+    valuation_inputs = [x for x in [fcf_col, ocf_col, capex_col, net_debt_col, wacc_col, coe_col] if x]
+    forbidden_hits = [c for c in valuation_inputs if _is_price_like_col(c)]
+    valuation_input_audit = {
+        "asof": asof_s,
+        "valuation_model": "DCF",
+        "fundamental_inputs_selected": valuation_inputs,
+        "forbidden_price_like_hits": forbidden_hits,
+        "fundamental_only_guard_passed": len(forbidden_hits) == 0,
+        "note": "Intrinsic value must be based on fundamentals + risk inputs, never price/technical fields.",
+    }
+    if forbidden_hits:
+        raise ValueError(
+            "valuation: fundamental-only guard failed. Price/technical-like columns selected as valuation inputs: "
+            + ", ".join(forbidden_hits)
+        )
+
+    # Build base FCF (millions) from master_* fields.
     reason = pd.Series(index=df.index, dtype="object")
 
     if fcf_col:
-        fcf_m = _to_num(df[fcf_col])
+        base_fcf_m = _to_num(df[fcf_col])
     else:
-        fcf_m = pd.Series(np.nan, index=df.index)
+        base_fcf_m = pd.Series(np.nan, index=df.index)
 
-    if fcf_m.notna().mean() == 0.0 and ocf_col and capex_col:
+    if base_fcf_m.notna().mean() == 0.0 and ocf_col and capex_col:
         ocf_m = _to_num(df[ocf_col])
         capex_m = _to_num(df[capex_col])
-        fcf_m = ocf_m - capex_m
+        base_fcf_m = ocf_m - capex_m
 
-    # Mark missing fcf
+    prefer_quarterly = bool(_cfg_get(ctx.cfg, "valuation.prefer_quarterly_reports", False))
+    require_quarterly = bool(_cfg_get(ctx.cfg, "valuation.require_quarterly_reports", False))
+    max_quarterly_age_days = int(_cfg_get(ctx.cfg, "valuation.max_quarterly_report_age_days", 220))
+
+    q_snap = pd.DataFrame(
+        {
+            "yahoo_ticker": df["yahoo_ticker"],
+            "quarterly_fcf_millions": np.nan,
+            "quarterly_period_end": "",
+            "quarterly_snapshot": "",
+            "quarterly_source": "",
+            "quarterly_age_days": np.nan,
+            "quarterly_data_ok": False,
+        }
+    )
+    if prefer_quarterly or require_quarterly:
+        q_snap = _load_quarterly_r12_fcf_snapshot(
+            project_root=project_root,
+            raw_dir=raw_dir,
+            asof=asof_s,
+            yahoo_tickers=df["yahoo_ticker"],
+        )
+        q_snap["yahoo_ticker"] = _norm_yahoo(q_snap["yahoo_ticker"])
+        q_dup = int(q_snap["yahoo_ticker"].duplicated().sum())
+        if q_dup:
+            raise ValueError(f"valuation: quarterly snapshot duplicate yahoo_ticker rows: {q_dup}")
+        df = df.merge(q_snap, on="yahoo_ticker", how="left", validate="one_to_one")
+    else:
+        for c in q_snap.columns:
+            if c != "yahoo_ticker":
+                df[c] = q_snap[c].values
+
+    q_fcf_m = _to_num(df.get("quarterly_fcf_millions", pd.Series(np.nan, index=df.index)))
+    q_age_days = _to_num(df.get("quarterly_age_days", pd.Series(np.nan, index=df.index)))
+    q_has_data = q_fcf_m.notna()
+    q_stale = q_has_data & q_age_days.notna() & (q_age_days > max_quarterly_age_days)
+    q_ok = q_has_data & ~q_stale
+
+    if prefer_quarterly:
+        fcf_m = base_fcf_m.where(~q_ok, q_fcf_m)
+        fcf_source = pd.Series(np.where(q_ok, "reports_r12", "master"), index=df.index, dtype="object")
+    else:
+        fcf_m = base_fcf_m.copy()
+        fcf_source = pd.Series("master", index=df.index, dtype="object")
+
     reason = np.where(fcf_m.notna(), None, "missing_fcf")
     reason = pd.Series(reason, index=df.index, dtype="object")
+    if require_quarterly:
+        reason = reason.where(
+            q_ok,
+            other=np.where(q_stale, "stale_quarterly_fcf", "missing_quarterly_fcf"),
+        )
+    valuation_input_audit["quarterly_reports"] = {
+        "prefer_quarterly_reports": prefer_quarterly,
+        "require_quarterly_reports": require_quarterly,
+        "max_quarterly_report_age_days": max_quarterly_age_days,
+        "quarterly_fcf_coverage": float(q_has_data.mean()) if len(q_has_data) else 0.0,
+        "quarterly_fcf_fresh_coverage": float(q_ok.mean()) if len(q_ok) else 0.0,
+        "quarterly_fcf_stale_count": int(q_stale.sum()),
+        "fcf_source_reports_r12_count": int((fcf_source == "reports_r12").sum()),
+    }
+    _atomic_write_text(
+        run_dir / "valuation_input_audit.json",
+        json.dumps(valuation_input_audit, ensure_ascii=False, indent=2),
+    )
 
     # WACC/COE
     params = DCFParams(
@@ -247,6 +578,12 @@ def run(ctx, log) -> int:
         "yahoo_ticker": df["yahoo_ticker"],
         "ticker": df[ticker_col] if ticker_col else df["yahoo_ticker"],
         "model": model,
+        "fcf_used_millions": fcf_m,
+        "fcf_source": fcf_source,
+        "quarterly_fcf_millions": q_fcf_m,
+        "quarterly_period_end": df.get("quarterly_period_end", pd.Series("", index=df.index)),
+        "quarterly_age_days": q_age_days,
+        "quarterly_data_ok": q_ok.astype(bool),
         "intrinsic_ev": intrinsic_ev,
         "intrinsic_equity": intrinsic_equity,
         "net_debt_used": net_debt_used,
@@ -289,7 +626,7 @@ def run(ctx, log) -> int:
 
                 for i in range(len(df)):
                     # carry base reason for missing_fcf/invalid_wacc etc
-                    if reason.iat[i] in ("missing_fcf", "invalid_wacc"):
+                    if reason.iat[i] in ("missing_fcf", "missing_quarterly_fcf", "stale_quarterly_fcf", "invalid_wacc"):
                         ev_m_list.append(np.nan)
                         eq_m_list.append(np.nan)
                         rsn_list.append(reason.iat[i])

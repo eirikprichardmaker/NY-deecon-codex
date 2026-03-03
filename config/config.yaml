@@ -43,6 +43,10 @@ decision:
     - index_ma200
   candidate_min_required_fields: 8
   candidate_min_required_ratio: 0.75
+  value_qc:
+    enabled: true
+    min_samples_for_distribution: 30
+    iqr_multiplier: 3.0
   media_red_flags:
     enabled: true
     days_back: 30
@@ -76,3 +80,8 @@ financials_enrichment:
   enabled: true
   tiers_config: config/financials_field_tiers.yaml
   include_reports_y_bridge: true
+
+valuation:
+  prefer_quarterly_reports: true
+  require_quarterly_reports: true
+  max_quarterly_report_age_days: 220

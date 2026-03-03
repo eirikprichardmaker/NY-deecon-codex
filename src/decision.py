@@ -58,6 +58,25 @@ DEFAULT_MEDIA_RED_FLAG_TERMS = [
     "accounting",
 ]
 
+DEFAULT_VALUE_QC_SPECS: list[dict] = [
+    {"metric": "market_cap", "col": "market_cap", "hard_min": 1e6, "hard_max": 1e14, "source_cols": ["market_cap", "market_cap_current"]},
+    {"metric": "intrinsic_value", "col": "intrinsic_value", "hard_min": -1e14, "hard_max": 1e15, "source_cols": ["intrinsic_value", "intrinsic_equity", "intrinsic_ev"]},
+    {"metric": "mos", "col": "mos", "hard_min": -2.0, "hard_max": 50.0, "source_cols": ["intrinsic_value", "market_cap"], "formula": "mos"},
+    {"metric": "roic", "col": "roic_dec", "hard_min": -5.0, "hard_max": 10.0, "source_cols": ["roic", "roic_current"]},
+    {"metric": "wacc", "col": "wacc_dec", "hard_min": 0.01, "hard_max": 0.40, "source_cols": ["wacc_used", "wacc", "coe_used"]},
+    {"metric": "roic_wacc_spread", "col": "roic_wacc_spread", "hard_min": -5.0, "hard_max": 10.0, "source_cols": ["roic_dec", "wacc_dec"], "formula": "roic_wacc_spread"},
+    {"metric": "quality_score", "col": "quality_score", "hard_min": -10.0, "hard_max": 10.0, "source_cols": ["quality_score"]},
+    {"metric": "ev_ebit", "col": "ev_ebit", "hard_min": -50.0, "hard_max": 200.0, "source_cols": ["ev_ebit", "ev_ebit_current"]},
+    {"metric": "nd_ebitda", "col": "nd_ebitda", "hard_min": -20.0, "hard_max": 50.0, "source_cols": ["nd_ebitda", "n_debt_ebitda_current"]},
+    {"metric": "fcf_yield", "col": "fcf_yield", "hard_min": -2.0, "hard_max": 2.0, "source_cols": ["fcf_yield"]},
+    {"metric": "adj_close", "col": "adj_close", "hard_min": 0.0, "hard_max": 1e6, "source_cols": ["adj_close"]},
+    {"metric": "ma200", "col": "ma200", "hard_min": 0.0, "hard_max": 1e6, "source_cols": ["ma200"]},
+    {"metric": "mad", "col": "mad", "hard_min": -5.0, "hard_max": 5.0, "source_cols": ["mad", "ma21", "ma200"], "formula": "mad"},
+    {"metric": "index_price", "col": "index_price", "hard_min": 0.0, "hard_max": 1e6, "source_cols": ["index_price"]},
+    {"metric": "index_ma200", "col": "index_ma200", "hard_min": 0.0, "hard_max": 1e6, "source_cols": ["index_ma200"]},
+    {"metric": "index_mad", "col": "index_mad", "hard_min": -5.0, "hard_max": 5.0, "source_cols": ["index_mad", "index_ma21", "index_ma200"], "formula": "index_mad"},
+]
+
 DIVIDEND_CRITERIA = [
     ("dividend_history", "Dividend History"),
     ("dividend_growth", "Dividend Growth"),
@@ -157,6 +176,225 @@ def _series_has_value(s: pd.Series) -> pd.Series:
         return s.notna()
     t = s.astype(str).str.strip()
     return t.ne("") & t.ne("nan") & t.ne("None")
+
+
+def _to_float(x: object) -> float:
+    try:
+        v = float(x)
+    except Exception:
+        return float("nan")
+    return v if np.isfinite(v) else float("nan")
+
+
+def _calc_formula_value(metric_formula: str, row: pd.Series) -> float:
+    if metric_formula == "mos":
+        iv = _to_float(row.get("intrinsic_value"))
+        mc = _to_float(row.get("market_cap"))
+        if np.isfinite(iv) and np.isfinite(mc) and mc != 0:
+            return (iv / mc) - 1.0
+        return float("nan")
+    if metric_formula == "roic_wacc_spread":
+        ro = _to_float(row.get("roic_dec"))
+        wc = _to_float(row.get("wacc_dec"))
+        if np.isfinite(ro) and np.isfinite(wc):
+            return ro - wc
+        return float("nan")
+    if metric_formula == "mad":
+        m21 = _to_float(row.get("ma21"))
+        m200 = _to_float(row.get("ma200"))
+        if np.isfinite(m21) and np.isfinite(m200) and m200 != 0:
+            return (m21 - m200) / m200
+        return float("nan")
+    if metric_formula == "index_mad":
+        m21 = _to_float(row.get("index_ma21"))
+        m200 = _to_float(row.get("index_ma200"))
+        if np.isfinite(m21) and np.isfinite(m200) and m200 != 0:
+            return (m21 - m200) / m200
+        return float("nan")
+    return float("nan")
+
+
+def _formula_consistent(observed: float, expected: float, rel_tol: float = 0.02, abs_tol: float = 1e-6) -> bool:
+    if not np.isfinite(observed) or not np.isfinite(expected):
+        return False
+    return abs(observed - expected) <= max(abs_tol, abs(expected) * rel_tol)
+
+
+def _build_value_qc_flags(df: pd.DataFrame, dec_cfg: dict) -> tuple[pd.DataFrame, list[dict], pd.DataFrame]:
+    qc_cfg = dec_cfg.get("value_qc", {}) or {}
+    iqr_mult = float(qc_cfg.get("iqr_multiplier", 3.0))
+    min_samples = int(qc_cfg.get("min_samples_for_distribution", 30))
+    enabled = bool(qc_cfg.get("enabled", True))
+    specs = list(DEFAULT_VALUE_QC_SPECS)
+
+    out = pd.DataFrame(index=df.index)
+    summary_rows: list[dict] = []
+    if not enabled:
+        for spec in specs:
+            m = spec["metric"]
+            out[f"value_qc_{m}_flag"] = False
+            out[f"value_qc_{m}_lower"] = np.nan
+            out[f"value_qc_{m}_upper"] = np.nan
+        out["value_qc_alert_count"] = 0
+        out["value_qc_has_alerts"] = False
+        out["value_qc_alert_metrics"] = ""
+        summary = pd.DataFrame(
+            [{"metric": s["metric"], "status": "disabled", "alert_count": 0, "sample_count": 0} for s in specs]
+        )
+        return out, specs, summary
+
+    for spec in specs:
+        metric = str(spec["metric"])
+        col = str(spec["col"])
+        hard_min = spec.get("hard_min", None)
+        hard_max = spec.get("hard_max", None)
+        flag_col = f"value_qc_{metric}_flag"
+        lo_col = f"value_qc_{metric}_lower"
+        hi_col = f"value_qc_{metric}_upper"
+
+        if col not in df.columns:
+            out[flag_col] = False
+            out[lo_col] = np.nan
+            out[hi_col] = np.nan
+            summary_rows.append(
+                {
+                    "metric": metric,
+                    "source_col": col,
+                    "sample_count": 0,
+                    "lower": np.nan,
+                    "upper": np.nan,
+                    "alert_count": 0,
+                    "status": "missing_column",
+                }
+            )
+            continue
+
+        s = pd.to_numeric(df[col], errors="coerce")
+        finite = s[np.isfinite(s)]
+        lower = -np.inf
+        upper = np.inf
+        status = "ok"
+        if len(finite) >= min_samples:
+            q1 = float(finite.quantile(0.25))
+            q3 = float(finite.quantile(0.75))
+            iqr = q3 - q1
+            if np.isfinite(iqr) and iqr > 0:
+                lower = q1 - (iqr_mult * iqr)
+                upper = q3 + (iqr_mult * iqr)
+            else:
+                status = "zero_iqr"
+        else:
+            status = "small_sample"
+
+        if hard_min is not None and np.isfinite(float(hard_min)):
+            lower = max(lower, float(hard_min))
+        if hard_max is not None and np.isfinite(float(hard_max)):
+            upper = min(upper, float(hard_max))
+        if not np.isfinite(lower):
+            lower = -np.inf
+        if not np.isfinite(upper):
+            upper = np.inf
+        if lower > upper:
+            lower, upper = upper, lower
+
+        flags = s.isna() | ~np.isfinite(s) | (s < lower) | (s > upper)
+        out[flag_col] = flags.astype(bool)
+        out[lo_col] = lower
+        out[hi_col] = upper
+        summary_rows.append(
+            {
+                "metric": metric,
+                "source_col": col,
+                "sample_count": int(finite.shape[0]),
+                "lower": lower,
+                "upper": upper,
+                "alert_count": int(flags.sum()),
+                "status": status,
+            }
+        )
+
+    flag_cols = [f"value_qc_{s['metric']}_flag" for s in specs if f"value_qc_{s['metric']}_flag" in out.columns]
+    if flag_cols:
+        out["value_qc_alert_count"] = out[flag_cols].astype(int).sum(axis=1)
+        out["value_qc_has_alerts"] = out["value_qc_alert_count"] > 0
+    else:
+        out["value_qc_alert_count"] = 0
+        out["value_qc_has_alerts"] = False
+
+    def _join_alert_metrics(r: pd.Series) -> str:
+        hits = []
+        for spec in specs:
+            m = spec["metric"]
+            c = f"value_qc_{m}_flag"
+            if c in r.index and _to_bool(r.get(c)):
+                hits.append(m)
+        return ", ".join(hits)
+
+    out["value_qc_alert_metrics"] = out.apply(_join_alert_metrics, axis=1)
+    summary = pd.DataFrame(summary_rows)
+    return out, specs, summary
+
+
+def _analyze_candidate_value_qc(pick: pd.Series, specs: list[dict]) -> pd.DataFrame:
+    rows: list[dict] = []
+    for spec in specs:
+        metric = str(spec["metric"])
+        col = str(spec["col"])
+        flag_col = f"value_qc_{metric}_flag"
+        lo_col = f"value_qc_{metric}_lower"
+        hi_col = f"value_qc_{metric}_upper"
+        is_alert = _to_bool(pick.get(flag_col))
+        observed = _to_float(pick.get(col))
+        lower = _to_float(pick.get(lo_col))
+        upper = _to_float(pick.get(hi_col))
+        sources = [str(c) for c in spec.get("source_cols", [])]
+
+        source_parts: list[str] = []
+        source_values: list[float] = []
+        for c in sources:
+            if c not in pick.index:
+                continue
+            v = _to_float(pick.get(c))
+            if np.isfinite(v):
+                source_values.append(v)
+                source_parts.append(f"{c}={v:.6g}")
+            else:
+                source_parts.append(f"{c}=n/a")
+
+        unique_vals = {round(v, 8) for v in source_values}
+        source_unique_count = int(len(unique_vals))
+
+        formula_name = str(spec.get("formula", "")).strip()
+        formula_expected = float("nan")
+        formula_ok = False
+        formula_note = ""
+        if formula_name:
+            formula_expected = _calc_formula_value(formula_name, pick)
+            formula_ok = _formula_consistent(observed, formula_expected)
+            formula_note = (
+                f"{formula_name}: observed={observed:.6g}, expected={formula_expected:.6g}, ok={formula_ok}"
+                if np.isfinite(formula_expected) and np.isfinite(observed)
+                else f"{formula_name}: insufficient_inputs"
+            )
+
+        resolved = (source_unique_count >= 2) or formula_ok or (not is_alert)
+        rows.append(
+            {
+                "metric": metric,
+                "value": observed,
+                "lower": lower,
+                "upper": upper,
+                "is_alert": bool(is_alert),
+                "resolved": bool(resolved),
+                "source_unique_values": source_unique_count,
+                "source_snapshot": "; ".join(source_parts),
+                "formula_check": formula_note,
+                "note": "" if (not is_alert or resolved) else "Uvanlig verdi uten robust forklaring i tilgjengelige kilder.",
+            }
+        )
+
+    out = pd.DataFrame(rows)
+    return out
 
 
 def _candidate_data_sufficiency(
@@ -318,6 +556,14 @@ def _decision_schema_rows(
         "True",
         _to_bool(pick.get("eligible")),
         str(pick.get("reason_technical_fail", "")),
+    )
+    add(
+        "Verdi-QA",
+        f"alerts={int(pd.to_numeric(pd.Series([pick.get('value_qc_alert_count')]), errors='coerce').fillna(0).iloc[0])}, "
+        f"unresolved={int(pd.to_numeric(pd.Series([pick.get('value_qc_unresolved_alert_count')]), errors='coerce').fillna(0).iloc[0])}",
+        "unresolved=0",
+        int(pd.to_numeric(pd.Series([pick.get("value_qc_unresolved_alert_count")]), errors="coerce").fillna(0).iloc[0]) == 0,
+        str(pick.get("value_qc_unresolved_metrics", "")),
     )
     return pd.DataFrame(rows)
 
@@ -523,8 +769,22 @@ def _to_decimal_rate(s: pd.Series) -> pd.Series:
     x = pd.to_numeric(s, errors="coerce")
     if int(x.notna().sum()) == 0:
         return x
-    med = x.abs().median(skipna=True)
-    if np.isfinite(med) and med > 2.0:
+    ax = x.abs()
+    med = float(ax.median(skipna=True))
+    q75 = float(ax.quantile(0.75))
+    q95 = float(ax.quantile(0.95))
+    share_gt_1 = float((ax > 1.0).mean())
+    share_gt_2 = float((ax > 2.0).mean())
+
+    # Heuristic:
+    # - clear percent-point scale (median > 2)
+    # - or mixed-scale series with substantial mass above 1-2.
+    should_scale = (
+        (np.isfinite(med) and med > 2.0) or
+        (np.isfinite(q75) and q75 > 1.0 and share_gt_1 >= 0.20) or
+        (np.isfinite(q95) and q95 > 2.0 and share_gt_2 >= 0.05)
+    )
+    if should_scale:
         x = x / 100.0
     return x
 
@@ -1233,6 +1493,10 @@ def run(ctx, log) -> int:
         df[c] = value_gate[c]
     for c in quality_gate.columns:
         df[c] = quality_gate[c]
+    value_qc_block, value_qc_specs, value_qc_summary = _build_value_qc_flags(df, dec_cfg)
+    for c in value_qc_block.columns:
+        df[c] = value_qc_block[c]
+    _atomic_write_csv(ctx.run_dir / "value_qc_summary.csv", value_qc_summary)
     sufficiency_block, candidate_required_fields, candidate_min_count, candidate_min_ratio = _candidate_data_sufficiency(
         df, dec_cfg
     )
@@ -1364,6 +1628,8 @@ def run(ctx, log) -> int:
     df.loc[df["technical_ok"].astype(bool), "reason_technical_fail"] = ""
 
     df["eligible"] = df["technical_ok"] & df["fundamental_ok"]
+    df["value_qc_unresolved_alert_count"] = 0
+    df["value_qc_unresolved_metrics"] = ""
     _write_ma200_sanity_report(ctx.run_dir, ctx.asof, df)
 
     strategy_screen_cols: list[str] = []
@@ -1401,6 +1667,7 @@ def run(ctx, log) -> int:
         "fundamental_ok", "technical_ok", "reason_fundamental_fail", "reason_technical_fail",
         "value_creation_ok", "roic_wacc_spread", "roic_wacc_spread_y3", "value_creation_reason",
         "quality_gate_ok", "quality_weak_count", "quality_gate_reason",
+        "value_qc_alert_count", "value_qc_has_alerts", "value_qc_alert_metrics",
         "candidate_data_ok", "candidate_available_fields_count", "candidate_required_fields_count", "candidate_data_coverage_ratio", "candidate_data_missing_fields",
         "date", "adj_close", "stock_price_age_days", "stock_price_stale", "fresh_stock_price_coverage", "global_price_data_ok",
         "stock_ma200_ok", "stock_mad_ok", "ma200_ok",
@@ -1436,6 +1703,7 @@ def run(ctx, log) -> int:
         "beta", "coe_used", "wacc_used",
         "value_creation_ok", "roic_wacc_spread", "roic_wacc_spread_y1", "roic_wacc_spread_y2", "roic_wacc_spread_y3", "value_creation_reason",
         "quality_gate_ok", "quality_weak_count", "quality_gate_reason",
+        "value_qc_alert_count", "value_qc_has_alerts", "value_qc_alert_metrics", "value_qc_unresolved_alert_count", "value_qc_unresolved_metrics",
         "candidate_data_ok", "candidate_available_fields_count", "candidate_required_fields_count", "candidate_data_coverage_ratio", "candidate_data_missing_fields",
         "date", "adj_close", "stock_price_age_days", "stock_price_stale", "fresh_stock_price_coverage", "global_price_data_ok",
         "above_ma200", "mad", "ma21", "ma200", "stock_ma200_ok", "stock_mad_ok",
@@ -1473,6 +1741,7 @@ def run(ctx, log) -> int:
             f"- Aksjekurs må være maks {max_price_age_days} dager gammel relativt til asof.",
             f"- Min andel ferske aksjekurser i universet: {min_fresh_price_coverage:.0%} (nå: {fresh_stock_coverage:.1%})",
             f"- Datatilstrekkelighet for kandidat: minst {candidate_min_count}/{len(candidate_required_fields)} felt og >= {candidate_min_ratio:.0%} dekning",
+            "- Verdsetting: bygger primært på fundamentale størrelser (FCF/OCF/CAPEX, netto gjeld, WACC/COE), ikke pris/teknisk.",
             "",
             ("## Klar beskjed" if (not global_price_data_ok) else "## Klar beskjed"),
             (
@@ -1485,6 +1754,10 @@ def run(ctx, log) -> int:
             _md_table(diag[out_cols], max_rows=10),
         ]
         _atomic_write_csv(ctx.run_dir / "decision_schema.csv", pd.DataFrame(columns=["parameter", "value", "threshold", "status", "comment"]))
+        _atomic_write_csv(
+            ctx.run_dir / "candidate_value_qc.csv",
+            pd.DataFrame(columns=["metric", "value", "lower", "upper", "is_alert", "resolved", "source_unique_values", "source_snapshot", "formula_check", "note"]),
+        )
         _atomic_write_text(
             ctx.run_dir / "media_red_flags.json",
             json.dumps(
@@ -1504,7 +1777,30 @@ def run(ctx, log) -> int:
         log.info(f"decision: wrote {out_md}")
         return 0
 
-    pick = eligible.iloc[0]
+    pick = eligible.iloc[0].copy()
+    candidate_qc = _analyze_candidate_value_qc(pick, value_qc_specs)
+    _atomic_write_csv(ctx.run_dir / "candidate_value_qc.csv", candidate_qc)
+    pick_alerts = int(candidate_qc["is_alert"].astype(bool).sum()) if not candidate_qc.empty else 0
+    pick_unresolved = int((candidate_qc["is_alert"].astype(bool) & ~candidate_qc["resolved"].astype(bool)).sum()) if not candidate_qc.empty else 0
+    pick_unresolved_metrics = ", ".join(
+        candidate_qc.loc[
+            candidate_qc["is_alert"].astype(bool) & ~candidate_qc["resolved"].astype(bool),
+            "metric",
+        ].astype(str).tolist()
+    )
+    pick["value_qc_alert_count"] = pick_alerts
+    pick["value_qc_unresolved_alert_count"] = pick_unresolved
+    pick["value_qc_unresolved_metrics"] = pick_unresolved_metrics
+
+    if pick.name in df.index:
+        df.loc[pick.name, "value_qc_alert_count"] = pick_alerts
+        df.loc[pick.name, "value_qc_unresolved_alert_count"] = pick_unresolved
+        df.loc[pick.name, "value_qc_unresolved_metrics"] = pick_unresolved_metrics
+    if pick.name in eligible.index:
+        eligible.loc[pick.name, "value_qc_alert_count"] = pick_alerts
+        eligible.loc[pick.name, "value_qc_unresolved_alert_count"] = pick_unresolved
+        eligible.loc[pick.name, "value_qc_unresolved_metrics"] = pick_unresolved_metrics
+
     _atomic_write_csv(out_csv, eligible[out_cols].head(top_n))
     _atomic_write_csv(ctx.run_dir / "shortlist.csv", eligible[out_cols].head(top_n))
 
@@ -1536,6 +1832,10 @@ def run(ctx, log) -> int:
             f"- Datadekning for kandidat: {int(pick.get('candidate_available_fields_count', 0))}/{int(pick.get('candidate_required_fields_count', len(candidate_required_fields)))} "
             f"({float(pick.get('candidate_data_coverage_ratio')):.0%})"
         )
+    if np.isfinite(pick.get("value_qc_alert_count", np.nan)):
+        md.append(
+            f"- Verdi-QA avvik: {int(pick.get('value_qc_alert_count', 0))} (uløste: {int(pick.get('value_qc_unresolved_alert_count', 0))})"
+        )
     md.append("")
     md.append("## Årsaker (5-10 punkter)")
     md.append(f"- Krav MoS >= {mos_min:.0%} (høy risiko: {mos_high:.0%})")
@@ -1549,6 +1849,7 @@ def run(ctx, log) -> int:
         md.append("- Graham strategy aktiv: defensive kriterier fra The Intelligent Investor")
         md.append(f"- Minst {graham_min_score} av 7 kriterier kreves")
         md.append("- Kriterier: Size, Financial strength, Earning stability, Dividend History, Profit Growth, Moderate P/E ratio, Moderate Equity Price")
+    md.append("- Verdsettingen er fundamentaldrevet: DCF basert på kontantstrøm, netto gjeld og kapitalkostnad. Pris/teknisk brukes ikke i intrinsic-verdi.")
     md.append(f"- {tech_rule_text}")
     md.append(f"- Aksjekurs må være maks {max_price_age_days} dager gammel relativt til asof.")
     md.append(f"- Valgt ticker har MoS {float(pick['mos']):.1%} og quality_score {float(pick.get('quality_score', 0.0)):.3f}")
@@ -1591,6 +1892,17 @@ def run(ctx, log) -> int:
     )
     _atomic_write_csv(ctx.run_dir / "decision_schema.csv", schema_df)
     md.append(_md_table(schema_df, max_rows=50))
+    md.append("")
+    md.append("## Kvalitetssikring Av Verdier")
+    md.append(f"- Antall avvik i kandidattall: {pick_alerts}")
+    md.append(f"- Uforklarte avvik etter kildeanalyse: {pick_unresolved}")
+    if pick_unresolved > 0:
+        md.append(
+            f"- VIKTIG: Uvanlige verdier uten robust forklaring for metrikker: {pick_unresolved_metrics}. "
+            "Disse bør manuelt verifiseres før endelig kjøpsbeslutning."
+        )
+    else:
+        md.append("- Ingen uforklarte avvik i nøkkelverdiene for valgt kandidat.")
     md.append("")
     media_scan = _run_media_red_flag_scan(
         asof=ctx.asof,
