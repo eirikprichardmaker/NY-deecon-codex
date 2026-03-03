@@ -32,6 +32,25 @@ def test_missing_intrinsic_is_fail_and_blocked():
     assert (audit["severity"] == "FAIL").any()
 
 
+def test_missing_intrinsic_columns_is_fail_and_blocked():
+    df = pd.DataFrame(
+        {
+            "ticker": ["AAA.OL", "BBB.OL"],
+            "adj_close": [100.0, 101.0],
+            "market_cap": [1_000_000_000.0, 2_000_000_000.0],
+            "mos": [None, None],
+            "fcf_yield": [0.05, 0.04],
+            "roic": [0.10, 0.11],
+        }
+    )
+
+    flags, audit = _run_data_quality_checks(df, {"data_quality": {}}, asof="2026-02-16")
+
+    assert flags["dq_blocked"].all()
+    assert (audit["rule_id"] == "DQ_INTRINSIC_MISSING").sum() == len(df)
+    assert (audit["reason"] == "intrinsic_column_missing").all()
+
+
 def test_non_positive_price_and_market_cap_are_fail():
     df = pd.DataFrame(
         {

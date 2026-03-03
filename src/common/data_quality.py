@@ -186,6 +186,10 @@ def apply_data_quality(
             intrinsic = _to_num(d[intrinsic_col])
             for i in intrinsic.index[~np.isfinite(intrinsic)]:
                 add_event(i, "DQ_INTRINSIC_MISSING", "FAIL", intrinsic_col, d.loc[i, intrinsic_col], "intrinsic_missing")
+        else:
+            missing_field = "|".join(INTRINSIC_ALIASES)
+            for i in d.index:
+                add_event(i, "DQ_INTRINSIC_MISSING", "FAIL", missing_field, np.nan, "intrinsic_column_missing")
 
         if mos_col and price_col and intrinsic_col:
             mos = _to_num(d[mos_col])
