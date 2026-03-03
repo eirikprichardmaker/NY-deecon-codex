@@ -47,6 +47,10 @@ decision:
     enabled: true
     min_samples_for_distribution: 30
     iqr_multiplier: 3.0
+  data_quality:
+    outlier_min_samples: 10
+    outlier_mad_threshold: 6.0
+    stale_fundamentals_days: 450
   media_red_flags:
     enabled: true
     days_back: 30
