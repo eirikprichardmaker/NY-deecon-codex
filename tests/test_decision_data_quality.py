@@ -9,86 +9,96 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.decision import REASON_DATA_INVALID, _run_data_quality_checks
+from src.decision import _run_data_quality_checks
 
 
-def test_data_quality_fail_on_missing_critical_field():
-    df = pd.DataFrame(
-        {
-            "ticker": ["AAA.OL"],
-            "intrinsic_value": [100.0],
-            "market_cap": [50.0],
-            "mos": [1.0],
-            "mos_req": [0.2],
-            "quality_score": [0.3],
-            "roic_wacc_spread": [0.02],
-            "adj_close": [None],
-            "ma200": [90.0],
-            "mad": [0.1],
-            "index_price": [120.0],
-            "index_ma200": [110.0],
-        }
-    )
+def _base_row(ticker: str = "AAA.OL") -> dict:
+    return {
+        "ticker": ticker,
+        "ins_id": "1001",
+        "sector": "Industrials",
+        "date": "2026-02-16",
+        "intrinsic_value": 100.0,
+        "market_cap": 50.0,
+        "mos": 1.0,
+        "mos_req": 0.2,
+        "quality_score": 0.3,
+        "roic_wacc_spread": 0.02,
+        "adj_close": 10.0,
+        "ma200": 9.0,
+        "mad": 0.1,
+        "index_price": 120.0,
+        "index_ma200": 110.0,
+        "fcf_yield": 0.1,
+        "roic": 0.12,
+        "operating_margin": 0.15,
+    }
+
+
+def test_missing_critical_field_is_fail_and_blocked():
+    row = _base_row()
+    row["adj_close"] = None
+    df = pd.DataFrame([row])
 
     flags, audit = _run_data_quality_checks(df, {"data_quality": {}}, asof="2026-02-16")
 
-    assert bool(flags.loc[0, "data_quality_fail"]) is True
-    assert "missing_or_non_finite:adj_close" in str(flags.loc[0, "data_quality_fail_reasons"])
+    assert bool(flags.loc[0, "dq_blocked"]) is True
+    assert int(flags.loc[0, "dq_fail_count"]) >= 1
+    assert "DQ_CRITICAL_PRESENT_adj_close" in str(flags.loc[0, "dq_fail_reasons"])
     assert (audit["severity"] == "FAIL").any()
 
 
-def test_data_quality_fail_on_hard_range_violation():
-    df = pd.DataFrame(
-        {
-            "ticker": ["AAA.OL"],
-            "intrinsic_value": [100.0],
-            "market_cap": [-5.0],
-            "mos": [1.0],
-            "mos_req": [0.2],
-            "quality_score": [0.3],
-            "roic_wacc_spread": [0.02],
-            "adj_close": [10.0],
-            "ma200": [9.0],
-            "mad": [0.1],
-            "index_price": [120.0],
-            "index_ma200": [110.0],
-        }
-    )
+def test_impossible_negative_values_are_fail():
+    row = _base_row()
+    row["market_cap"] = -1.0
+    row["shares_outstanding"] = 0
+    df = pd.DataFrame([row])
 
     flags, audit = _run_data_quality_checks(df, {"data_quality": {}}, asof="2026-02-16")
 
-    assert bool(flags.loc[0, "data_quality_fail"]) is True
-    assert any(audit["rule_id"].astype(str).str.contains("DQ_RANGE_MIN_market_cap"))
+    assert bool(flags.loc[0, "dq_blocked"]) is True
+    assert {"DQ_MARKET_CAP_NON_POSITIVE", "DQ_SHARES_NON_POSITIVE"}.issubset(set(audit["rule_id"].tolist()))
 
 
-def test_data_quality_outlier_warn_and_fail_thresholds():
-    values = [100.0] * 19 + [200.0, 500.0]
-    df = pd.DataFrame(
-        {
-            "ticker": [f"T{i}" for i in range(len(values))],
-            "intrinsic_value": [1000.0] * len(values),
-            "market_cap": [1e9] * len(values),
-            "mos": [0.5] * len(values),
-            "mos_req": [0.2] * len(values),
-            "quality_score": [0.3] * len(values),
-            "roic_wacc_spread": [0.02] * len(values),
-            "adj_close": values,
-            "ma200": [100.0] * len(values),
-            "mad": [0.01] * len(values),
-            "index_price": [1000.0] * len(values),
-            "index_ma200": [900.0] * len(values),
-        }
+def test_sector_outlier_is_warn_only_not_blocked():
+    rows = []
+    for i in range(11):
+        row = _base_row(f"I{i}.OL")
+        row["fcf_yield"] = 0.08 + i * 0.001
+        rows.append(row)
+    outlier = _base_row("OUT.OL")
+    outlier["fcf_yield"] = 5.0
+    rows.append(outlier)
+    df = pd.DataFrame(rows)
+
+    flags, audit = _run_data_quality_checks(
+        df,
+        {"data_quality": {"outlier_min_samples": 10, "outlier_mad_threshold": 4.0}},
+        asof="2026-02-16",
     )
 
-    cfg_warn = {"data_quality": {"outlier_min_samples": 10, "outlier_z_warn": 2.0, "outlier_z_fail": 10.0}}
-    _, audit_warn = _run_data_quality_checks(df, cfg_warn, asof="2026-02-16")
-    warning = audit_warn[(audit_warn["field"] == "adj_close") & (audit_warn["severity"] == "WARN")]
+    out_idx = df.index[df["ticker"] == "OUT.OL"][0]
+    assert bool(flags.loc[out_idx, "dq_blocked"]) is False
+    assert int(flags.loc[out_idx, "dq_warn_count"]) >= 1
+    assert (audit["rule_id"] == "DQ_OUTLIER_ROBUST_fcf_yield").any()
 
-    cfg_fail = {"data_quality": {"outlier_min_samples": 10, "outlier_z_warn": 2.0, "outlier_z_fail": 3.0}}
-    flags, audit_fail = _run_data_quality_checks(df, cfg_fail, asof="2026-02-16")
-    severe = audit_fail[(audit_fail["field"] == "adj_close") & (audit_fail["severity"] == "FAIL")]
 
-    assert not severe.empty
-    assert not warning.empty
-    assert REASON_DATA_INVALID == "DATA_INVALID"
-    assert int(flags["data_quality_fail_count"].sum()) >= 1
+def test_low_sample_size_sector_warns_and_logs_group_n():
+    rows = []
+    for i in range(3):
+        row = _base_row(f"L{i}.OL")
+        row["sector"] = "TinySector"
+        row["fcf_yield"] = 0.1 + i * 0.01
+        rows.append(row)
+    df = pd.DataFrame(rows)
+
+    flags, audit = _run_data_quality_checks(
+        df,
+        {"data_quality": {"outlier_min_samples": 5}},
+        asof="2026-02-16",
+    )
+
+    assert (flags["dq_warn_count"] > 0).all()
+    low_sample = audit[audit["rule_id"] == "DQ_OUTLIER_LOW_SAMPLE_fcf_yield"]
+    assert not low_sample.empty
+    assert (low_sample["group_n"] == 3).all()
