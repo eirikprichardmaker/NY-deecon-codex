@@ -2,6 +2,7 @@ import time
 import datetime as dt
 from pathlib import Path
 
+import src.gui_qt as gui_qt
 from src.gui import (
     build_run_weekly_command,
     build_result_preview,
@@ -205,6 +206,24 @@ def test_build_result_preview_html_is_rendered_in_app(tmp_path: Path):
     assert "Title: R" in txt
     assert "x" in txt.lower()
     assert "warning" in txt.lower()
+
+
+def test_build_result_preview_html_fallback_when_bs4_missing(tmp_path: Path, monkeypatch):
+    p = tmp_path / "result.html"
+    p.write_text("<html><head><title>Fallback</title></head><body><p>warning and pass</p></body></html>", encoding="utf-8")
+    monkeypatch.setattr(gui_qt, "BeautifulSoup", None)
+    txt = build_result_preview(p)
+    assert "Title: Fallback" in txt
+    assert "warning and pass" in txt.lower()
+
+
+def test_build_result_preview_html_large_input_uses_fast_parser(tmp_path: Path):
+    p = tmp_path / "result.html"
+    body = "<p>warning block</p>" * ((gui_qt.HTML_PARSE_SOFT_LIMIT_CHARS // 20) + 20)
+    p.write_text(f"<html><head><title>Big</title></head><body>{body}</body></html>", encoding="utf-8")
+    txt = build_result_preview(p)
+    assert "Title: Big" in txt
+    assert "warning block" in txt.lower()
 
 
 def test_find_result_highlight_spans_marks_red_and_green():

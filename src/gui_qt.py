@@ -1,7 +1,17 @@
-﻿from __future__ import annotations
+﻿"""Deecon Qt GUI.
+
+CHANGELOG (2026-03-04)
+- Tightened AppShell spacing to a strict 8px layout rhythm.
+- Centralized style semantics (tokens + status/button maps).
+- Improved subprocess/log streaming resilience for long-running output.
+- Improved preview fallback/performance for large HTML files.
+"""
+
+from __future__ import annotations
 
 import datetime as _dt
 import html
+import os
 import re
 import subprocess
 import sys
@@ -281,6 +291,13 @@ def _simple_html_to_text(raw_html: str) -> str:
     return txt.strip()
 
 
+def _extract_html_title(raw_html: str) -> str:
+    match = re.search(r"(?is)<title[^>]*>(.*?)</title>", raw_html or "")
+    if not match:
+        return ""
+    return re.sub(r"\s+", " ", html.unescape(match.group(1))).strip()
+
+
 def _table_to_lines(table) -> List[str]:
     lines: List[str] = []
     rows = table.find_all("tr")
@@ -293,8 +310,13 @@ def _table_to_lines(table) -> List[str]:
 
 
 def _html_to_preview_text(raw_html: str) -> str:
-    if BeautifulSoup is None:
-        return _simple_html_to_text(raw_html)
+    title = _extract_html_title(raw_html)
+    use_simple_parser = BeautifulSoup is None or len(raw_html or "") > HTML_PARSE_SOFT_LIMIT_CHARS
+    if use_simple_parser:
+        simple = _simple_html_to_text(raw_html)
+        if title:
+            return f"Title: {title}\n\n{simple}".strip()
+        return simple
 
     soup = BeautifulSoup(raw_html, "html.parser")
     lines: List[str] = []
@@ -465,16 +487,7 @@ def build_test_result_html(
 ) -> str:
     summary = extract_pytest_summary(output)
     status = "PASS" if int(exit_code) == 0 else "FAIL"
-    tokens = build_ui_tokens() if "build_ui_tokens" in globals() else {
-        "text": "#111111",
-        "surface": "#ffffff",
-        "bg": "#fafafa",
-        "border": "#dddddd",
-        "success": "#0b6b0b",
-        "error": "#8b0000",
-        "log_bg": "#111111",
-        "log_text": "#eeeeee",
-    }
+    tokens = build_ui_tokens()
     status_color = tokens["success"] if status == "PASS" else tokens["error"]
     cmd_text = " ".join(command)
     duration_sec = max(0.0, (finished_at - started_at).total_seconds())
@@ -486,8 +499,8 @@ def build_test_result_html(
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Deecon Test Report</title>
   <style>
-    body {{ font-family: Segoe UI, Arial, sans-serif; margin: 24px; color: {tokens["text"]}; background: {tokens["bg"]}; }}
-    .card {{ background: {tokens["surface"]}; border: 1px solid {tokens["border"]}; border-radius: 10px; padding: 16px; margin-bottom: 16px; }}
+    body {{ font-family: "Segoe UI", Arial, sans-serif; margin: 24px; color: {tokens["text"]}; background: {tokens["bg"]}; }}
+    .card {{ background: {tokens["surface"]}; border: 1px solid {tokens["border"]}; border-radius: 12px; padding: 16px; margin-bottom: 16px; }}
     .status {{ font-weight: 700; color: {status_color}; }}
     pre {{ white-space: pre-wrap; word-break: break-word; background: {tokens["log_bg"]}; color: {tokens["log_text"]}; border-radius: 8px; padding: 12px; }}
     code {{ font-family: Consolas, Menlo, monospace; }}
@@ -534,16 +547,14 @@ def write_test_result_page(
     path.write_text(content, encoding="utf-8")
     return path
 
-"""CHANGELOG (2026-03-04)
-- AppShell layout + consistent 8px spacing.
-- Token-based styling for colors/components.
-- Robust process stop and streamed logging improvements.
-"""
-
 UI_SPACING = 8
+UI_OUTER_MARGIN = UI_SPACING * 2
 LOG_FLUSH_INTERVAL_MS = 40
+LOG_QUEUE_MAX_CHARS = 400_000
 LOG_MAX_CHARS = 600_000
 PREVIEW_SECTION_MAX_CHARS = 120_000
+HIGHLIGHT_SCAN_MAX_CHARS = 80_000
+HTML_PARSE_SOFT_LIMIT_CHARS = 700_000
 
 
 def build_ui_tokens() -> Dict[str, str]:
@@ -574,6 +585,32 @@ def build_ui_tokens() -> Dict[str, str]:
     }
 
 
+def build_style_map() -> Dict[str, Dict[str, str]]:
+    return {
+        "button_variants": {
+            "primary": "primary",
+            "secondary": "secondary",
+            "destructive": "destructive",
+        },
+        "status_tones": {
+            "neutral": "neutral",
+            "idle": "neutral",
+            "run": "running",
+            "running": "running",
+            "info": "running",
+            "ok": "ok",
+            "success": "ok",
+            "done": "ok",
+            "warn": "warn",
+            "warning": "warn",
+            "bad": "error",
+            "error": "error",
+            "fail": "error",
+            "failed": "error",
+        },
+    }
+
+
 def build_light_qss(tokens: Dict[str, str]) -> str:
     return f"""
 * {{
@@ -590,13 +627,13 @@ QFrame[card="true"], QGroupBox {{
   border-radius: 12px;
 }}
 QGroupBox {{
-  margin-top: 14px;
-  padding-top: 12px;
+  margin-top: 16px;
+  padding-top: 8px;
 }}
 QGroupBox::title {{
   subcontrol-origin: margin;
-  left: 10px;
-  padding: 0 6px;
+  left: 8px;
+  padding: 0 8px;
   color: {tokens["text"]};
   font-size: 13px;
   font-weight: 600;
@@ -614,15 +651,13 @@ QLabel[role="muted"], QLabel#subTitleLabel {{
 }}
 QLabel[role="help"] {{
   color: {tokens["muted"]};
-  font-size: 12px;
 }}
 QLabel[role="error"] {{
   color: {tokens["error"]};
-  font-size: 12px;
 }}
 QLabel#statusChip {{
   border-radius: 12px;
-  padding: 5px 12px;
+  padding: 8px 16px;
   font-size: 13px;
   font-weight: 700;
   background: {tokens["surface_alt"]};
@@ -651,7 +686,7 @@ QLabel#statusChip[statusTone="error"], QLabel#statusChip[tone="error"] {{
 QLineEdit, QComboBox, QListWidget, QTextEdit {{
   background: {tokens["surface_alt"]};
   border: 1px solid {tokens["border"]};
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 8px;
 }}
 QLineEdit:focus, QComboBox:focus, QListWidget:focus, QTextEdit:focus {{
@@ -663,8 +698,8 @@ QListWidget#sideNav {{
   padding: 0;
 }}
 QListWidget#sideNav::item {{
-  padding: 8px 10px;
-  margin: 2px 0;
+  padding: 8px 16px;
+  margin: 0;
   border-radius: 8px;
 }}
 QListWidget#sideNav::item:selected {{
@@ -673,8 +708,8 @@ QListWidget#sideNav::item:selected {{
   font-weight: 700;
 }}
 QPushButton {{
-  border-radius: 10px;
-  padding: 8px 12px;
+  border-radius: 12px;
+  padding: 8px 16px;
   border: 1px solid {tokens["border"]};
   background: {tokens["surface_alt"]};
   font-size: 13px;
@@ -721,7 +756,7 @@ QTextEdit#logEdit {{
   background: {tokens["log_bg"]};
   color: {tokens["log_text"]};
   border: 1px solid {tokens["log_border"]};
-  border-radius: 10px;
+  border-radius: 12px;
   font-family: Consolas, Menlo, monospace;
   font-size: 12px;
 }}
@@ -729,7 +764,7 @@ QTextEdit#previewEdit {{
   background: {tokens["surface_alt"]};
   color: {tokens["text"]};
   border: 1px solid {tokens["border"]};
-  border-radius: 10px;
+  border-radius: 12px;
   font-family: Consolas, Menlo, monospace;
   font-size: 12px;
 }}
@@ -793,6 +828,8 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
             rc = 99
             out_parts: List[str] = []
             try:
+                env = os.environ.copy()
+                env.setdefault("PYTHONUNBUFFERED", "1")
                 self._proc = subprocess.Popen(
                     self.cmd,
                     stdout=subprocess.PIPE,
@@ -801,6 +838,7 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
                     encoding="utf-8",
                     errors="replace",
                     bufsize=1,
+                    env=env,
                 )
                 assert self._proc.stdout is not None
                 while True:
@@ -811,6 +849,10 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
                         continue
                     if self._proc.poll() is not None:
                         break
+                tail = self._proc.stdout.read()
+                if tail:
+                    out_parts.append(tail)
+                    self.output_line.emit(tail)
                 rc = int(self._proc.wait())
             except Exception as exc:  # pragma: no cover
                 self.output_line.emit(f"[error] failed to execute command: {exc}\n")
@@ -851,6 +893,7 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
         def __init__(self) -> None:
             super().__init__()
             self.tokens = build_ui_tokens()
+            self.style_map = build_style_map()
             self.setWindowTitle("Deecon Control Center (Qt)")
             self.resize(1360, 900)
             self.setMinimumSize(1150, 760)
@@ -865,6 +908,8 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
             self.decision_source_path: str = ""
             self.field_error_labels: Dict[str, QtWidgets.QLabel] = {}
             self._log_queue: deque[str] = deque()
+            self._queued_log_chars = 0
+            self._log_char_count = 0
             self._log_timer = QtCore.QTimer(self)
             self._log_timer.setInterval(LOG_FLUSH_INTERVAL_MS)
             self._log_timer.timeout.connect(self._flush_log_queue)
@@ -886,19 +931,19 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
             root = QtWidgets.QWidget(self)
             self.setCentralWidget(root)
             outer = QtWidgets.QVBoxLayout(root)
-            outer.setContentsMargins(UI_SPACING * 2, UI_SPACING * 2, UI_SPACING * 2, UI_SPACING * 2)
-            outer.setSpacing(UI_SPACING * 2)
+            outer.setContentsMargins(UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN)
+            outer.setSpacing(UI_OUTER_MARGIN)
 
             top = QtWidgets.QFrame()
             top.setObjectName("topBar")
             top.setProperty("card", True)
             top_l = QtWidgets.QVBoxLayout(top)
-            top_l.setContentsMargins(UI_SPACING * 2, UI_SPACING * 2, UI_SPACING * 2, UI_SPACING * 2)
+            top_l.setContentsMargins(UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN)
             top_l.setSpacing(UI_SPACING)
             top_row = QtWidgets.QHBoxLayout()
-            top_row.setSpacing(UI_SPACING * 2)
+            top_row.setSpacing(UI_OUTER_MARGIN)
             txt_col = QtWidgets.QVBoxLayout()
-            txt_col.setSpacing(UI_SPACING // 2)
+            txt_col.setSpacing(UI_SPACING)
             title = QtWidgets.QLabel("Deecon Control Center")
             title.setObjectName("titleLabel")
             title.setProperty("role", "h1")
@@ -914,7 +959,7 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
             self.task_status_label.setProperty("role", "muted")
             self.task_status_label.setAlignment(QtCore.Qt.AlignRight)
             status_col = QtWidgets.QVBoxLayout()
-            status_col.setSpacing(UI_SPACING // 2)
+            status_col.setSpacing(UI_SPACING)
             status_col.setAlignment(QtCore.Qt.AlignTop | QtCore.Qt.AlignRight)
             status_col.addWidget(self.status_chip, 0, QtCore.Qt.AlignRight)
             status_col.addWidget(self.task_status_label, 0, QtCore.Qt.AlignRight)
@@ -929,12 +974,12 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
             outer.addWidget(top)
 
             body = QtWidgets.QHBoxLayout()
-            body.setSpacing(UI_SPACING * 2)
+            body.setSpacing(UI_OUTER_MARGIN)
             nav_card = QtWidgets.QFrame()
             nav_card.setProperty("card", True)
             nav_card.setFixedWidth(220)
             nav_l = QtWidgets.QVBoxLayout(nav_card)
-            nav_l.setContentsMargins(UI_SPACING * 2, UI_SPACING * 2, UI_SPACING * 2, UI_SPACING * 2)
+            nav_l.setContentsMargins(UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN)
             nav_l.setSpacing(UI_SPACING)
             nav_title = QtWidgets.QLabel("Resultater")
             nav_title.setProperty("role", "h2")
@@ -977,7 +1022,9 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
             QtGui.QShortcut(QtGui.QKeySequence("Esc"), self, activated=self._stop_pipeline)
 
         def _set_button_variant(self, btn: QtWidgets.QPushButton, variant: str) -> None:
-            btn.setProperty("variant", str(variant or "secondary").strip().lower())
+            normalized = str(variant or "").strip().lower()
+            variant_value = self.style_map["button_variants"].get(normalized, "secondary")
+            btn.setProperty("variant", variant_value)
 
         def _add_labeled_field(
             self,
@@ -991,7 +1038,7 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
             block = QtWidgets.QWidget()
             block_l = QtWidgets.QVBoxLayout(block)
             block_l.setContentsMargins(0, 0, 0, 0)
-            block_l.setSpacing(UI_SPACING // 2)
+            block_l.setSpacing(UI_SPACING)
             label = QtWidgets.QLabel(label_text)
             block_l.addWidget(label)
             row = QtWidgets.QHBoxLayout()
@@ -1018,23 +1065,23 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
             panel = QtWidgets.QWidget()
             layout = QtWidgets.QHBoxLayout(panel)
             layout.setContentsMargins(0, 0, 0, 0)
-            layout.setSpacing(UI_SPACING * 2)
+            layout.setSpacing(UI_OUTER_MARGIN)
 
             left = QtWidgets.QWidget()
             left_l = QtWidgets.QVBoxLayout(left)
             left_l.setContentsMargins(0, 0, 0, 0)
-            left_l.setSpacing(UI_SPACING * 2)
+            left_l.setSpacing(UI_OUTER_MARGIN)
             layout.addWidget(left, 0)
 
             right = QtWidgets.QWidget()
             right_l = QtWidgets.QVBoxLayout(right)
             right_l.setContentsMargins(0, 0, 0, 0)
-            right_l.setSpacing(UI_SPACING * 2)
+            right_l.setSpacing(UI_OUTER_MARGIN)
             layout.addWidget(right, 1)
 
             setup = QtWidgets.QGroupBox("Run Setup")
             setup_l = QtWidgets.QVBoxLayout(setup)
-            setup_l.setContentsMargins(UI_SPACING * 2, UI_SPACING * 2, UI_SPACING * 2, UI_SPACING * 2)
+            setup_l.setContentsMargins(UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN)
             setup_l.setSpacing(UI_SPACING)
             self.asof_edit = QtWidgets.QLineEdit(_dt.date.today().isoformat())
             self.config_edit = QtWidgets.QLineEdit(r"config\config.yaml")
@@ -1068,7 +1115,7 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
 
             steps_group = QtWidgets.QGroupBox("Steps")
             steps_l = QtWidgets.QVBoxLayout(steps_group)
-            steps_l.setContentsMargins(UI_SPACING * 2, UI_SPACING * 2, UI_SPACING * 2, UI_SPACING * 2)
+            steps_l.setContentsMargins(UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN)
             steps_l.setSpacing(UI_SPACING)
             preset_row = QtWidgets.QHBoxLayout()
             preset_row.setSpacing(UI_SPACING)
@@ -1096,7 +1143,7 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
 
             cmd_group = QtWidgets.QGroupBox("Command Preview")
             cmd_l = QtWidgets.QVBoxLayout(cmd_group)
-            cmd_l.setContentsMargins(UI_SPACING * 2, UI_SPACING * 2, UI_SPACING * 2, UI_SPACING * 2)
+            cmd_l.setContentsMargins(UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN)
             cmd_l.setSpacing(UI_SPACING)
             self.command_preview_label = QtWidgets.QLabel("")
             self.command_preview_label.setWordWrap(True)
@@ -1106,7 +1153,7 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
 
             act_group = QtWidgets.QGroupBox("Actions")
             act_l = QtWidgets.QGridLayout(act_group)
-            act_l.setContentsMargins(UI_SPACING * 2, UI_SPACING * 2, UI_SPACING * 2, UI_SPACING * 2)
+            act_l.setContentsMargins(UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN)
             act_l.setHorizontalSpacing(UI_SPACING)
             act_l.setVerticalSpacing(UI_SPACING)
             self.run_model_btn = QtWidgets.QPushButton("Run model (F5)")
@@ -1131,7 +1178,7 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
             show_dec_btn.clicked.connect(self._show_latest_decision_in_gui)
             show_test_btn.clicked.connect(self._show_latest_test_report_in_gui)
             show_dq_btn.clicked.connect(self._show_latest_dq_report_in_gui)
-            clear_log_btn.clicked.connect(lambda: self.log_edit.clear())
+            clear_log_btn.clicked.connect(self._clear_log)
             act_l.addWidget(self.run_model_btn, 0, 0)
             act_l.addWidget(self.run_btn, 0, 1)
             act_l.addWidget(self.run_tests_btn, 1, 0)
@@ -1144,29 +1191,37 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
 
             log_group = QtWidgets.QGroupBox("Live Log")
             log_l = QtWidgets.QVBoxLayout(log_group)
-            log_l.setContentsMargins(UI_SPACING * 2, UI_SPACING * 2, UI_SPACING * 2, UI_SPACING * 2)
+            log_l.setContentsMargins(UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN)
             log_l.setSpacing(UI_SPACING)
             self.log_edit = QtWidgets.QTextEdit()
             self.log_edit.setObjectName("logEdit")
             self.log_edit.setReadOnly(True)
+            self.log_edit.setUndoRedoEnabled(False)
             log_l.addWidget(self.log_edit)
             right_l.addWidget(log_group, 1)
             return panel
+
+        def _clear_log(self) -> None:
+            self._log_queue.clear()
+            self._queued_log_chars = 0
+            self._log_char_count = 0
+            self.log_edit.clear()
 
         def _create_preview_editor(self) -> QtWidgets.QTextEdit:
             edit = QtWidgets.QTextEdit()
             edit.setObjectName("previewEdit")
             edit.setReadOnly(True)
+            edit.setUndoRedoEnabled(False)
             return edit
         def _build_overview_page(self) -> None:
             page = QtWidgets.QWidget()
             self.pages.addWidget(page)
             layout = QtWidgets.QVBoxLayout(page)
             layout.setContentsMargins(0, 0, 0, 0)
-            layout.setSpacing(UI_SPACING * 2)
+            layout.setSpacing(UI_OUTER_MARGIN)
             controls = QtWidgets.QGroupBox("Resultatoversikt")
             c_l = QtWidgets.QVBoxLayout(controls)
-            c_l.setContentsMargins(UI_SPACING * 2, UI_SPACING * 2, UI_SPACING * 2, UI_SPACING * 2)
+            c_l.setContentsMargins(UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN)
             c_l.setSpacing(UI_SPACING)
             filter_row = QtWidgets.QHBoxLayout()
             filter_row.setSpacing(UI_SPACING)
@@ -1203,7 +1258,7 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
 
             prev_group = QtWidgets.QGroupBox("Preview")
             p_l = QtWidgets.QVBoxLayout(prev_group)
-            p_l.setContentsMargins(UI_SPACING * 2, UI_SPACING * 2, UI_SPACING * 2, UI_SPACING * 2)
+            p_l.setContentsMargins(UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN)
             p_l.setSpacing(UI_SPACING)
             label = QtWidgets.QLabel("No result selected")
             label.setProperty("role", "muted")
@@ -1219,10 +1274,10 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
             self.pages.addWidget(page)
             layout = QtWidgets.QVBoxLayout(page)
             layout.setContentsMargins(0, 0, 0, 0)
-            layout.setSpacing(UI_SPACING * 2)
+            layout.setSpacing(UI_OUTER_MARGIN)
             head = QtWidgets.QGroupBox("Decision")
             h_l = QtWidgets.QVBoxLayout(head)
-            h_l.setContentsMargins(UI_SPACING * 2, UI_SPACING * 2, UI_SPACING * 2, UI_SPACING * 2)
+            h_l.setContentsMargins(UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN)
             h_l.setSpacing(UI_SPACING)
             h_l.addWidget(QtWidgets.QLabel("Decision-seksjoner kan veksles under."))
             btn_row = QtWidgets.QHBoxLayout()
@@ -1262,7 +1317,7 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
 
             prev_group = QtWidgets.QGroupBox("Decision Preview")
             p_l = QtWidgets.QVBoxLayout(prev_group)
-            p_l.setContentsMargins(UI_SPACING * 2, UI_SPACING * 2, UI_SPACING * 2, UI_SPACING * 2)
+            p_l.setContentsMargins(UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN)
             p_l.setSpacing(UI_SPACING)
             label = QtWidgets.QLabel("No decision selected")
             label.setProperty("role", "muted")
@@ -1279,10 +1334,10 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
             self.pages.addWidget(page)
             layout = QtWidgets.QVBoxLayout(page)
             layout.setContentsMargins(0, 0, 0, 0)
-            layout.setSpacing(UI_SPACING * 2)
+            layout.setSpacing(UI_OUTER_MARGIN)
             top = QtWidgets.QGroupBox("Test Reports")
             t_l = QtWidgets.QHBoxLayout(top)
-            t_l.setContentsMargins(UI_SPACING * 2, UI_SPACING * 2, UI_SPACING * 2, UI_SPACING * 2)
+            t_l.setContentsMargins(UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN)
             t_l.setSpacing(UI_SPACING)
             latest_btn = QtWidgets.QPushButton("Latest test report")
             latest_btn.clicked.connect(self._show_latest_test_report_in_gui)
@@ -1297,7 +1352,7 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
 
             prev = QtWidgets.QGroupBox("Test Preview")
             p_l = QtWidgets.QVBoxLayout(prev)
-            p_l.setContentsMargins(UI_SPACING * 2, UI_SPACING * 2, UI_SPACING * 2, UI_SPACING * 2)
+            p_l.setContentsMargins(UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN)
             p_l.setSpacing(UI_SPACING)
             label = QtWidgets.QLabel("No test report selected")
             label.setProperty("role", "muted")
@@ -1313,10 +1368,10 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
             self.pages.addWidget(page)
             layout = QtWidgets.QVBoxLayout(page)
             layout.setContentsMargins(0, 0, 0, 0)
-            layout.setSpacing(UI_SPACING * 2)
+            layout.setSpacing(UI_OUTER_MARGIN)
             top = QtWidgets.QGroupBox("Data Quality")
             t_l = QtWidgets.QHBoxLayout(top)
-            t_l.setContentsMargins(UI_SPACING * 2, UI_SPACING * 2, UI_SPACING * 2, UI_SPACING * 2)
+            t_l.setContentsMargins(UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN)
             t_l.setSpacing(UI_SPACING)
             latest_btn = QtWidgets.QPushButton("Latest DQ report")
             latest_btn.clicked.connect(self._show_latest_dq_report_in_gui)
@@ -1331,7 +1386,7 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
 
             prev = QtWidgets.QGroupBox("Data Quality Preview")
             p_l = QtWidgets.QVBoxLayout(prev)
-            p_l.setContentsMargins(UI_SPACING * 2, UI_SPACING * 2, UI_SPACING * 2, UI_SPACING * 2)
+            p_l.setContentsMargins(UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN)
             p_l.setSpacing(UI_SPACING)
             label = QtWidgets.QLabel("No data-quality report selected")
             label.setProperty("role", "muted")
@@ -1344,15 +1399,7 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
 
         def _set_status(self, text: str, tone: str = "neutral") -> None:
             t = str(tone).strip().lower()
-            mapped = "neutral"
-            if t in {"running", "run", "info"}:
-                mapped = "running"
-            elif t in {"ok", "success", "done"}:
-                mapped = "ok"
-            elif t in {"warn", "warning"}:
-                mapped = "warn"
-            elif t in {"bad", "error", "fail", "failed"}:
-                mapped = "error"
+            mapped = self.style_map["status_tones"].get(t, "neutral")
             self.status_chip.setProperty("statusTone", mapped)
             self.status_chip.setProperty("tone", mapped)
             self.status_chip.setText(text)
@@ -1444,7 +1491,14 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
         def _append_log(self, text: str) -> None:
             if not text:
                 return
-            self._log_queue.append(str(text))
+            payload = str(text)
+            if len(payload) > LOG_QUEUE_MAX_CHARS:
+                payload = payload[-LOG_QUEUE_MAX_CHARS:]
+            while self._log_queue and (self._queued_log_chars + len(payload)) > LOG_QUEUE_MAX_CHARS:
+                dropped = self._log_queue.popleft()
+                self._queued_log_chars -= len(dropped)
+            self._log_queue.append(payload)
+            self._queued_log_chars += len(payload)
             if not self._log_timer.isActive():
                 self._log_timer.start()
 
@@ -1468,23 +1522,28 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
             cursor.movePosition(QtGui.QTextCursor.End)
             merged: List[str] = []
             for _ in range(min(160, len(self._log_queue))):
-                merged.append(self._log_queue.popleft())
+                chunk = self._log_queue.popleft()
+                self._queued_log_chars -= len(chunk)
+                merged.append(chunk)
             for line in "".join(merged).splitlines(True):
                 fmt = QtGui.QTextCharFormat()
                 fmt.setForeground(self._color_for_log_line(line))
                 cursor.insertText(line, fmt)
+                self._log_char_count += len(line)
             self.log_edit.setTextCursor(cursor)
             self.log_edit.ensureCursorVisible()
-            plain = self.log_edit.toPlainText()
-            if len(plain) > LOG_MAX_CHARS:
+            if self._log_char_count > LOG_MAX_CHARS:
+                plain = self.log_edit.toPlainText()
                 self.log_edit.setPlainText(plain[-LOG_MAX_CHARS:])
+                self._log_char_count = min(LOG_MAX_CHARS, len(plain))
                 cur = self.log_edit.textCursor()
                 cur.movePosition(QtGui.QTextCursor.End)
                 self.log_edit.setTextCursor(cur)
 
         def _apply_flag_highlights(self, editor: QtWidgets.QTextEdit, text: str) -> None:
+            scope = text[:HIGHLIGHT_SCAN_MAX_CHARS]
             selections: List[QtWidgets.QTextEdit.ExtraSelection] = []
-            for start, end, tag in find_result_highlight_spans(text):
+            for start, end, tag in find_result_highlight_spans(scope):
                 sel = QtWidgets.QTextEdit.ExtraSelection()
                 cur = editor.textCursor()
                 cur.setPosition(start)
@@ -1511,6 +1570,7 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
             editor.setTextCursor(cur)
             if label is not None:
                 label.setText(path_text or "No file selected")
+
         def _start_worker(self, cmd: List[str], task: str, report_out_dir: Optional[Path] = None) -> None:
             if self.worker is not None and self.worker.isRunning():
                 self._set_status("Another process is already running", tone="warn")
@@ -1722,28 +1782,32 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
                 hits = hits[:120]
 
                 current = self.results_combo.currentText().strip()
+                current_path = self.result_choices.get(current)
+                current_resolved = current_path.resolve() if current_path and current_path.exists() else current_path
                 self.result_choices = {}
                 labels: List[str] = []
+                selected_idx = 0
                 for path in hits:
                     label = format_result_label(path, Path.cwd())
                     self.result_choices[label] = path
                     labels.append(label)
+                    resolved = path.resolve() if path.exists() else path
+                    if current_resolved is not None and resolved == current_resolved:
+                        selected_idx = len(labels) - 1
                 self.result_stats_label.setText(f"{len(labels)} files")
 
                 self.results_combo.blockSignals(True)
                 self.results_combo.clear()
                 self.results_combo.addItems(labels)
                 if labels:
-                    if current in self.result_choices:
-                        self.results_combo.setCurrentText(current)
-                    else:
-                        self.results_combo.setCurrentIndex(0)
+                    self.results_combo.setCurrentIndex(selected_idx)
                 self.results_combo.blockSignals(False)
 
                 if labels:
                     self._preview_selected_result()
                     return
                 if self.run_dir_edit.text().strip() and not Path(self.run_dir_edit.text().strip()).exists():
+                    self._set_status("Invalid run_dir", tone="error")
                     self._set_preview_text(
                         "overview",
                         "Selected run_dir does not exist.\nUse Browse to choose an existing folder, then refresh.",
@@ -1921,3 +1985,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
