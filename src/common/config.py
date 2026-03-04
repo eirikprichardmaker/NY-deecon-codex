@@ -1,6 +1,7 @@
 # src/common/config.py
 from __future__ import annotations
 import json
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +19,8 @@ class RunContext:
     cfg: Dict[str, Any]
 
 def project_root_from_file() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parents[2]
 
 def deep_merge(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:

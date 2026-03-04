@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import html
+import os
 import queue
 import re
 import subprocess
@@ -12,6 +13,23 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
 
 from src.run_weekly import DEFAULT_STEPS, OPTIONAL_STEPS
+
+RUN_WEEKLY_SUBPROCESS_FLAG = "--run-weekly-subprocess"
+
+
+def is_frozen_bundle() -> bool:
+    return bool(getattr(sys, "frozen", False))
+
+
+def bundle_base_dir() -> Path:
+    if is_frozen_bundle():
+        return Path(sys.executable).resolve().parent
+    return Path.cwd()
+
+
+def ensure_runtime_working_directory() -> None:
+    if is_frozen_bundle():
+        os.chdir(bundle_base_dir())
 
 try:
     from bs4 import BeautifulSoup
@@ -44,7 +62,11 @@ def build_run_weekly_command(
     dry_run: bool,
     steps: Iterable[str],
 ) -> List[str]:
-    cmd = [sys.executable, "-m", "src.run_weekly", "--asof", validate_asof(asof), "--config", config_path]
+    if is_frozen_bundle():
+        cmd = [sys.executable, RUN_WEEKLY_SUBPROCESS_FLAG]
+    else:
+        cmd = [sys.executable, "-m", "src.run_weekly"]
+    cmd.extend(["--asof", validate_asof(asof), "--config", config_path])
     if run_dir:
         cmd.extend(["--run-dir", run_dir])
     if dry_run:
@@ -1472,6 +1494,19 @@ class DeeconGui:
 
 
 def main() -> int:
+    if RUN_WEEKLY_SUBPROCESS_FLAG in sys.argv:
+        from src.run_weekly import main as run_weekly_main
+
+        args = [a for a in sys.argv[1:] if a != RUN_WEEKLY_SUBPROCESS_FLAG]
+        orig_argv = sys.argv[:]
+        try:
+            sys.argv = [orig_argv[0], *args]
+            return int(run_weekly_main())
+        finally:
+            sys.argv = orig_argv
+
+    ensure_runtime_working_directory()
+
     if tk is None:
         print("Tkinter is not available in this Python environment.", file=sys.stderr)
         return 1
