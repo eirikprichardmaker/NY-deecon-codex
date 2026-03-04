@@ -4,6 +4,7 @@ from pathlib import Path
 
 import src.gui_qt as gui_qt
 from src.gui import (
+    build_module_command,
     build_run_weekly_command,
     build_result_preview,
     build_test_result_html,
@@ -58,6 +59,19 @@ def test_build_run_weekly_command_optional_flags():
     assert "--dry-run" in cmd
     assert "--run-dir" in cmd and r"runs\manual" in cmd
     assert "--steps" not in cmd
+
+
+def test_build_module_command_non_frozen_uses_dash_m():
+    cmd = build_module_command("src.run_weekly", ["--help"])
+    assert cmd[:3] == [cmd[0], "-m", "src.run_weekly"]
+    assert "--help" in cmd
+
+
+def test_build_module_command_frozen_uses_internal_dispatch(monkeypatch):
+    monkeypatch.setattr(gui_qt.sys, "frozen", True, raising=False)
+    cmd = build_module_command("src.run_weekly", ["--help"])
+    assert cmd[:3] == [cmd[0], "--run-module", "src.run_weekly"]
+    assert "--help" in cmd
 
 
 def test_find_latest_decision_md_returns_none_when_missing(tmp_path: Path):

@@ -46,6 +46,17 @@ def validate_asof(value: str) -> str:
     return raw
 
 
+def is_frozen_runtime() -> bool:
+    return bool(getattr(sys, "frozen", False))
+
+
+def build_module_command(module_name: str, module_args: Iterable[str]) -> List[str]:
+    args = [str(a) for a in module_args]
+    if is_frozen_runtime():
+        return [sys.executable, "--run-module", str(module_name), *args]
+    return [sys.executable, "-m", str(module_name), *args]
+
+
 def build_run_weekly_command(
     asof: str,
     config_path: str,
@@ -53,7 +64,10 @@ def build_run_weekly_command(
     dry_run: bool,
     steps: Iterable[str],
 ) -> List[str]:
-    cmd = [sys.executable, "-m", "src.run_weekly", "--asof", validate_asof(asof), "--config", config_path]
+    cmd = build_module_command(
+        "src.run_weekly",
+        ["--asof", validate_asof(asof), "--config", config_path],
+    )
     if run_dir:
         cmd.extend(["--run-dir", run_dir])
     if dry_run:
@@ -1676,7 +1690,7 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
             try:
                 if not self._ensure_selected_run_dir_exists(silent=False):
                     return
-                cmd = [sys.executable, "-m", "pytest", "-q"]
+                cmd = build_module_command("pytest", ["-q"])
                 selected_run_dir = self.run_dir_edit.text().strip()
                 report_out_dir = Path(selected_run_dir) if selected_run_dir else (Path("runs") / "gui_reports")
                 self._start_worker(cmd, task="tests", report_out_dir=report_out_dir)
