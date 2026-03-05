@@ -37,6 +37,21 @@ def test_validate_asof_rejects_invalid_date():
         assert True
 
 
+def test_build_run_weekly_command_frozen_uses_subprocess_flag(monkeypatch):
+    monkeypatch.setattr("src.gui.is_frozen_bundle", lambda: True)
+    monkeypatch.setattr("src.gui.sys.executable", "DeeconControlCenter.exe")
+    cmd = build_run_weekly_command(
+        asof="2026-02-22",
+        config_path=r"config\config.yaml",
+        run_dir=None,
+        dry_run=False,
+        steps=["valuation"],
+    )
+    assert cmd[0] == "DeeconControlCenter.exe"
+    assert cmd[1] == "--run-weekly-subprocess"
+    assert "--steps" in cmd and "valuation" in cmd
+
+
 def test_build_run_weekly_command_basic():
     cmd = build_run_weekly_command(
         asof="2026-02-22",

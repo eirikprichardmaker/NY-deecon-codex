@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$Python = "python",
     [string]$VenvDir = ".venv-build-gui",
@@ -57,6 +57,7 @@ $pyinstallerArgs = @(
     "--collect-submodules", "bs4",
     "--collect-data", "bs4",
     "--hidden-import", "pytest",
+    "--hidden-import", "tkinter",
     "--add-data", "$configPath;config",
     "--add-data", "$configsPath;configs",
     "src\gui_windows_entry.py"
@@ -69,6 +70,8 @@ $outExe = Join-Path $outDir "DeeconControlCenter.exe"
 if (-not (Test-Path $outExe)) {
     throw "Build failed: missing $outExe"
 }
+
+New-Item -ItemType Directory -Force -Path (Join-Path $outDir "runs") | Out-Null
 
 if (Test-Path (Join-Path $repoRoot "README_run_windows.md")) {
     Copy-Item -Force (Join-Path $repoRoot "README_run_windows.md") (Join-Path $outDir "README_run_windows.md")

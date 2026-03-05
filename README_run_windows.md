@@ -20,7 +20,7 @@ The script will:
 1. Create a virtual environment for build tools.
 2. Install `requirements.txt`.
 3. Install PyInstaller.
-4. Build an onedir app with no console window.
+4. Build a one-dir app with no console window.
 
 ## Output
 
@@ -31,7 +31,10 @@ Expected output executable:
 The build also includes:
 - `config\` (so default `config\config.yaml` works)
 - `configs\`
+- `README_run_windows.md`
 - bundled Python runtime and imported `src` modules
+
+At runtime, the app creates/uses `runs\` inside `dist\DeeconControlCenter\`.
 
 ## Run (end user)
 
