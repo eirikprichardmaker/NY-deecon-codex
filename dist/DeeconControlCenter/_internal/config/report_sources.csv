@@ -1,0 +1,3 @@
+company_id,ticker,year,source_type,report_url
+NEXT,NB_GROUP,2024,esef_zip,<URL_TIL_ESEF_ZIP>
+EKORNES,EKQ,2024,esef_zip,<URL_TIL_ESEF_ZIP>

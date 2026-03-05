@@ -1,0 +1,12 @@
+# configs/thresholds.yaml  (Delmål 1 - frozen)
+fundamentals:
+  roic_min: 0.0
+  ev_ebit_min: 0.0
+  nd_ebitda_max: 3.0
+technical:
+  ma200_window: 200
+  ma21_window: 21
+decision_rules:
+  # CANDIDATE = fundamental_ok AND technical_ok
+  # WAIT      = fundamental_ok AND NOT technical_ok
+  # HOLD      = NOT fundamental_ok

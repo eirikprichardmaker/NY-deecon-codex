@@ -1,0 +1,285 @@
+version: 1
+mapping_name: esef_ifrs_default_conservative
+source_taxonomy: IFRS full + ESEF common practice extensions
+rules:
+  aggregation_policy:
+    revenue_total:
+      when_components_only: sum confident components if no explicit total revenue fact exists
+      candidates: [ifrs-full:Revenue, ifrs-full:RevenueFromContractsWithCustomers]
+    capex_purchase_ppe:
+      when_disclosed_gross_and_net: prefer gross purchases of PPE cash outflow
+    net_finance_income_expense:
+      fallback: finance_income + finance_costs
+  ambiguity_notes:
+    - Do not map issuer-specific extension tags by default without anchored IFRS concept.
+    - Only map facts with clear sign and period type consistency.
+    - Insurance IFRS 17 tags can vary; prefer clearly labeled base IFRS concepts.
+
+mappings:
+  - concept: ifrs-full:Revenue
+    field_id: revenue_total
+    confidence: high
+    notes: Standard top-line revenue concept.
+  - concept: ifrs-full:RevenueFromContractsWithCustomers
+    field_id: revenue_total
+    confidence: high
+    notes: IFRS 15 revenue concept.
+  - concept: ifrs-full:CostOfSales
+    field_id: cost_of_goods_sold
+    confidence: high
+    notes: Standard cost of sales mapping.
+  - concept: ifrs-full:GrossProfit
+    field_id: gross_profit
+    confidence: high
+    notes: Direct gross profit concept.
+  - concept: ifrs-full:OtherOperatingIncome
+    field_id: non_operating_income_expense
+    confidence: medium
+    notes: Use cautiously due to issuer diversity.
+  - concept: ifrs-full:AdministrativeExpense
+    field_id: sga_expense
+    confidence: medium
+    notes: May represent part of SG&A only.
+  - concept: ifrs-full:DepreciationExpense
+    field_id: depreciation_expense
+    confidence: high
+    notes: Direct depreciation concept.
+  - concept: ifrs-full:AmortisationExpense
+    field_id: amortization_expense
+    confidence: high
+    notes: Direct amortization concept.
+  - concept: ifrs-full:OperatingProfitLoss
+    field_id: operating_income_ebit
+    confidence: high
+    notes: Preferred EBIT anchor.
+  - concept: ifrs-full:ProfitLossBeforeTax
+    field_id: profit_before_tax
+    confidence: high
+    notes: Standard pre-tax income.
+  - concept: ifrs-full:IncomeTaxExpenseContinuingOperations
+    field_id: income_tax_expense
+    confidence: high
+    notes: Use continuing operations tax expense when available.
+  - concept: ifrs-full:ProfitLoss
+    field_id: net_income
+    confidence: high
+    notes: Profit/loss for period.
+  - concept: ifrs-full:ProfitLossAttributableToOwnersOfParent
+    field_id: net_income_attributable_to_parent
+    confidence: high
+    notes: Net income attributable to parent.
+
+  - concept: ifrs-full:CashAndCashEquivalents
+    field_id: cash_and_cash_equivalents
+    confidence: high
+    notes: Balance sheet cash anchor.
+  - concept: ifrs-full:TradeAndOtherCurrentReceivables
+    field_id: accounts_receivable
+    confidence: high
+    notes: Receivables mapping.
+  - concept: ifrs-full:Inventories
+    field_id: inventory
+    confidence: high
+    notes: Standard inventories mapping.
+  - concept: ifrs-full:PropertyPlantAndEquipment
+    field_id: property_plant_equipment
+    confidence: high
+    notes: PPE carrying amount.
+  - concept: ifrs-full:RightofuseAssets
+    field_id: right_of_use_assets
+    confidence: high
+    notes: IFRS16 right-of-use assets.
+  - concept: ifrs-full:IntangibleAssetsOtherThanGoodwill
+    field_id: intangible_assets
+    confidence: high
+    notes: Intangible assets excluding goodwill.
+  - concept: ifrs-full:Goodwill
+    field_id: goodwill
+    confidence: high
+    notes: Goodwill carrying amount.
+  - concept: ifrs-full:DeferredTaxAssets
+    field_id: deferred_tax_assets
+    confidence: high
+    notes: Deferred tax assets.
+  - concept: ifrs-full:Assets
+    field_id: total_assets
+    confidence: high
+    notes: Total assets anchor.
+  - concept: ifrs-full:TradeAndOtherCurrentPayables
+    field_id: accounts_payable
+    confidence: high
+    notes: Accounts payable and other current payables.
+  - concept: ifrs-full:BorrowingsCurrent
+    field_id: short_term_debt
+    confidence: high
+    notes: Current borrowings.
+  - concept: ifrs-full:BorrowingsNoncurrent
+    field_id: long_term_debt
+    confidence: high
+    notes: Non-current borrowings.
+  - concept: ifrs-full:LeaseLiabilitiesCurrent
+    field_id: lease_liabilities_current
+    confidence: high
+    notes: Current lease liabilities.
+  - concept: ifrs-full:LeaseLiabilitiesNoncurrent
+    field_id: lease_liabilities_noncurrent
+    confidence: high
+    notes: Non-current lease liabilities.
+  - concept: ifrs-full:Liabilities
+    field_id: total_liabilities
+    confidence: high
+    notes: Total liabilities anchor.
+  - concept: ifrs-full:Equity
+    field_id: total_equity
+    confidence: high
+    notes: Total equity anchor.
+  - concept: ifrs-full:EquityAttributableToOwnersOfParent
+    field_id: equity_attributable_to_parent
+    confidence: high
+    notes: Parent equity anchor.
+
+  - concept: ifrs-full:NetCashFlowsFromUsedInOperatingActivities
+    field_id: cash_flow_from_operations
+    confidence: high
+    notes: CFO anchor.
+  - concept: ifrs-full:InterestPaidClassifiedAsOperatingActivities
+    field_id: interest_paid_cash
+    confidence: medium
+    notes: Use with policy awareness for operating vs financing classification.
+  - concept: ifrs-full:IncomeTaxesPaidRefundClassifiedAsOperatingActivities
+    field_id: income_taxes_paid_cash
+    confidence: medium
+    notes: Cash tax paid in operating section.
+  - concept: ifrs-full:PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities
+    field_id: capex_purchase_ppe
+    confidence: high
+    notes: Core capex mapping.
+  - concept: ifrs-full:PurchaseOfIntangibleAssetsClassifiedAsInvestingActivities
+    field_id: capex_purchase_intangibles
+    confidence: high
+    notes: Intangible capex mapping.
+  - concept: ifrs-full:NetCashFlowsFromUsedInInvestingActivities
+    field_id: cash_flow_from_investing
+    confidence: high
+    notes: CFI anchor.
+  - concept: ifrs-full:ProceedsFromBorrowings
+    field_id: debt_issued_cash_inflow
+    confidence: medium
+    notes: Financing inflow from borrowings.
+  - concept: ifrs-full:RepaymentsOfBorrowings
+    field_id: debt_repaid_cash_outflow
+    confidence: medium
+    notes: Financing outflow from debt repayments.
+  - concept: ifrs-full:DividendsPaidClassifiedAsFinancingActivities
+    field_id: dividends_paid_total
+    confidence: high
+    notes: Dividend payout cash flow.
+  - concept: ifrs-full:PaymentsOfLeaseLiabilitiesClassifiedAsFinancingActivities
+    field_id: lease_principal_repayments
+    confidence: medium
+    notes: Lease principal in financing cash flow.
+  - concept: ifrs-full:NetCashFlowsFromUsedInFinancingActivities
+    field_id: cash_flow_from_financing
+    confidence: high
+    notes: CFF anchor.
+  - concept: ifrs-full:EffectOfExchangeRateChangesOnCashAndCashEquivalents
+    field_id: fx_effect_on_cash
+    confidence: high
+    notes: FX effect on cash.
+  - concept: ifrs-full:IncreaseDecreaseInCashAndCashEquivalents
+    field_id: net_change_in_cash
+    confidence: high
+    notes: Net cash movement anchor.
+
+  - concept: ifrs-full:WeightedAverageNumberOfSharesOutstandingBasic
+    field_id: shares_outstanding_basic
+    confidence: high
+    notes: Share count for EPS and dilution analytics.
+  - concept: ifrs-full:WeightedAverageNumberOfDilutedSharesOutstanding
+    field_id: shares_outstanding_diluted
+    confidence: high
+    notes: Diluted share count.
+
+  - concept: ifrs-full:InterestRevenueCalculatedUsingEffectiveInterestMethod
+    field_id: bank_interest_income
+    confidence: medium
+    notes: Bank-focused mapping if issuer classified as bank.
+  - concept: ifrs-full:InterestExpense
+    field_id: bank_interest_expense
+    confidence: medium
+    notes: Requires sector-gated mapping for banks.
+  - concept: ifrs-full:LoansAndAdvancesToCustomers
+    field_id: bank_total_loans_net
+    confidence: medium
+    notes: Often net of impairment allowances.
+  - concept: ifrs-full:DepositsFromCustomers
+    field_id: bank_customer_deposits
+    confidence: medium
+    notes: Common for European bank reporters.
+
+  - concept: ifrs-full:InsuranceRevenue
+    field_id: ins_earned_premiums
+    confidence: medium
+    notes: IFRS 17 insurance revenue anchor.
+  - concept: ifrs-full:InsuranceServiceExpense
+    field_id: ins_claims_incurred
+    confidence: medium
+    notes: Claims and related service expense proxy.
+  - concept: ifrs-full:InsuranceContractLiabilities
+    field_id: ins_insurance_contract_liabilities
+    confidence: medium
+    notes: Insurance liability anchor under IFRS 17.
+
+  # Common IFRS aliases seen in practice
+  - concept: ifrs-full:ProfitLossFromOperatingActivities
+    field_id: operating_income_ebit
+    confidence: high
+    notes: Operating result alias used by several issuers.
+  - concept: ifrs-full:FinanceCosts
+    field_id: finance_costs
+    confidence: high
+    notes: Core finance cost concept.
+  - concept: ifrs-full:FinanceIncomeCost
+    field_id: net_finance_income_expense
+    confidence: high
+    notes: Net finance income/expense combined concept.
+  - concept: ifrs-full:ShorttermBorrowings
+    field_id: short_term_debt
+    confidence: high
+    notes: Alias for current borrowings concept.
+  - concept: ifrs-full:LongtermBorrowings
+    field_id: long_term_debt
+    confidence: high
+    notes: Alias for non-current borrowings concept.
+  - concept: ifrs-full:CurrentLeaseLiabilities
+    field_id: lease_liabilities_current
+    confidence: high
+    notes: Alias for current lease liabilities.
+  - concept: ifrs-full:NoncurrentLeaseLiabilities
+    field_id: lease_liabilities_noncurrent
+    confidence: high
+    notes: Alias for non-current lease liabilities.
+  - concept: ifrs-full:CashFlowsFromUsedInOperatingActivities
+    field_id: cash_flow_from_operations
+    confidence: high
+    notes: Alias for net cash flows from operating activities.
+  - concept: ifrs-full:CashFlowsFromUsedInInvestingActivities
+    field_id: cash_flow_from_investing
+    confidence: high
+    notes: Alias for net cash flows from investing activities.
+  - concept: ifrs-full:CashFlowsFromUsedInFinancingActivities
+    field_id: cash_flow_from_financing
+    confidence: high
+    notes: Alias for net cash flows from financing activities.
+  - concept: ifrs-full:IncomeTaxesPaidClassifiedAsOperatingActivities
+    field_id: income_taxes_paid_cash
+    confidence: medium
+    notes: Alias where refunds are not netted in the concept name.
+  - concept: ifrs-full:DividendsPaidToEquityHoldersOfParentClassifiedAsFinancingActivities
+    field_id: dividends_paid_total
+    confidence: high
+    notes: Preferred dividends paid cash flow for parent owners.
+  - concept: ifrs-full:PurchaseOfPropertyPlantAndEquipmentIntangibleAssetsOtherThanGoodwillInvestmentPropertyAndOtherNoncurrentAssets
+    field_id: capex_purchase_ppe
+    confidence: low
+    notes: Broad capex concept used as fallback when pure PPE purchase is unavailable.

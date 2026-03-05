@@ -1,0 +1,91 @@
+﻿paths:
+  runs_dir: runs
+  data_dir: data
+  raw_dir: data/raw
+  processed_dir: data/processed
+
+includes:
+  sources: configs/sources.yaml
+  thresholds: configs/thresholds.yaml
+
+market_index_ticker: "^OSEAX"
+
+ir_reports:
+  mapping_csv: config/ir_sources.csv
+  rate_limit_sec: 1.0
+  timeout_sec: 20
+
+wft_opt_strategy_a:
+  weights_prior:
+    quality: 0.4
+    value: 0.3
+    lowrisk: 0.2
+    balance: 0.1
+  weights_bounds: [0.0, 0.7]
+  weights_reg_lambda: 0.5
+
+decision:
+  quality_strategy: baseline
+  dividend_min_score: 0
+  max_price_age_days: 7
+  min_fresh_price_coverage: 0.50
+  candidate_required_fields:
+    - intrinsic_value
+    - market_cap
+    - mos
+    - mos_req
+    - quality_score
+    - roic_wacc_spread
+    - adj_close
+    - ma200
+    - mad
+    - index_price
+    - index_ma200
+  candidate_min_required_fields: 8
+  candidate_min_required_ratio: 0.75
+  value_qc:
+    enabled: true
+    min_samples_for_distribution: 30
+    iqr_multiplier: 3.0
+  data_quality:
+    outlier_min_samples: 10
+    outlier_mad_threshold: 6.0
+    stale_fundamentals_days: 450
+  media_red_flags:
+    enabled: true
+    days_back: 30
+    max_headlines: 30
+    terms:
+      - bankrupt
+      - bankruptcy
+      - insolvency
+      - investigation
+      - fraud
+      - lawsuit
+      - warning
+      - profit warning
+      - guidance cut
+      - downgrade
+      - delisting
+      - rights issue
+      - dilution
+      - loss
+      - operating loss
+      - covenant breach
+      - liquidity crisis
+      - accounting
+
+refresh_prices_daily:
+  min_universe_coverage: 0.60
+  min_relative_coverage_vs_existing: 0.80
+  max_absolute_coverage_drop_vs_existing: 0.15
+
+financials_enrichment:
+  enabled: true
+  tiers_config: config/financials_field_tiers.yaml
+  include_reports_y_bridge: true
+
+valuation:
+  prefer_quarterly_reports: true
+  require_quarterly_reports: true
+  max_quarterly_report_age_days: 220
