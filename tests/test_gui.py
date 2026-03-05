@@ -17,6 +17,9 @@ from src.gui import (
     format_result_label,
     is_previewable_result,
     list_recent_result_files,
+    calculate_timing_label,
+    calculate_trust_score,
+    resolve_active_run_dir,
     validate_asof,
     write_test_result_page,
 )
@@ -288,3 +291,58 @@ def test_extract_decision_sections_from_markdown_splits_main_sections():
     assert "Nyheter" in out["media"]
     assert "Beslutningsskjema" in out["schema"]
     assert "Kvalitetssikring" in out["quality"]
+
+
+def test_resolve_active_run_dir_picks_latest_decision_artifact(tmp_path: Path):
+    runs = tmp_path / "runs"
+    run_a = runs / "run_a"
+    run_b = runs / "run_b"
+    run_a.mkdir(parents=True)
+    run_b.mkdir(parents=True)
+    (run_a / "decision.md").write_text("a", encoding="utf-8")
+    time.sleep(0.02)
+    (run_b / "decision_report.html").write_text("<html>b</html>", encoding="utf-8")
+
+    resolved = resolve_active_run_dir(None, runs)
+    assert resolved == run_b
+
+
+def test_calculate_trust_score_applies_rule_penalties():
+    score, status, notes, hard_fail = calculate_trust_score(
+        record={
+            "candidate_data_ok": True,
+            "candidate_data_coverage_ratio": 0.60,
+            "stock_price_age_days": 9,
+            "fresh_stock_price_coverage": 0.40,
+            "value_qc_unresolved_alert_count": 2,
+        },
+        thresholds={
+            "candidate_min_required_ratio": 0.75,
+            "max_price_age_days": 7,
+            "min_fresh_price_coverage": 0.50,
+        },
+        has_decision_files=True,
+    )
+    assert hard_fail is False
+    assert score == 15
+    assert status == "FAIL"
+    assert any("candidate_data_coverage_ratio" in n for n in notes)
+
+
+def test_calculate_trust_score_hard_fail_when_candidate_data_not_ok():
+    score, status, notes, hard_fail = calculate_trust_score(
+        record={"candidate_data_ok": False},
+        thresholds={},
+        has_decision_files=True,
+    )
+    assert hard_fail is True
+    assert score == 0
+    assert status == "FAIL"
+    assert "candidate_data_ok=False" in notes
+
+
+def test_calculate_timing_label_variants():
+    assert calculate_timing_label(True, True, data_blocked=False) == "KJØP OK"
+    assert calculate_timing_label(True, False, data_blocked=False) == "VENT"
+    assert calculate_timing_label(False, True, data_blocked=False) == "NEI"
+    assert calculate_timing_label(True, True, data_blocked=True) == "NEI"
