@@ -383,7 +383,7 @@ def _read_preview_text(path: Path, max_bytes: int = 2_000_000) -> Tuple[str, boo
         return raw.decode("latin-1", errors="replace"), truncated
 
 
-def build_result_preview(path: Path, max_chars: int = 120_000, max_bytes: int = 2_000_000) -> str:
+def build_result_preview(path: Path, max_chars: int = 600_000, max_bytes: int = 2_000_000) -> str:
     if not path.exists():
         return f"File not found:\n{path}"
     if not is_previewable_result(path):
@@ -566,8 +566,8 @@ UI_OUTER_MARGIN = UI_SPACING * 2
 LOG_FLUSH_INTERVAL_MS = 40
 LOG_QUEUE_MAX_CHARS = 400_000
 LOG_MAX_CHARS = 600_000
-PREVIEW_SECTION_MAX_CHARS = 120_000
-HIGHLIGHT_SCAN_MAX_CHARS = 80_000
+PREVIEW_SECTION_MAX_CHARS = 600_000
+HIGHLIGHT_SCAN_MAX_CHARS = 200_000
 HTML_PARSE_SOFT_LIMIT_CHARS = 700_000
 
 
@@ -1226,6 +1226,8 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
             edit.setObjectName("previewEdit")
             edit.setReadOnly(True)
             edit.setUndoRedoEnabled(False)
+            edit.setLineWrapMode(QtWidgets.QTextEdit.WidgetWidth)
+            edit.setWordWrapMode(QtGui.QTextOption.WrapAnywhere)
             return edit
         def _build_overview_page(self) -> None:
             page = QtWidgets.QWidget()
@@ -1575,8 +1577,11 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
             if editor is None:
                 return
             preview_text = str(text or "")
-            if len(preview_text) > PREVIEW_SECTION_MAX_CHARS:
-                preview_text = preview_text[:PREVIEW_SECTION_MAX_CHARS] + "\n\n... [truncated]"
+            limit = PREVIEW_SECTION_MAX_CHARS
+            total_chars = len(preview_text)
+            if total_chars > limit:
+                trimmed = total_chars - limit
+                preview_text = preview_text[:limit] + f"\n\n... [truncated {trimmed:,} chars]"
             editor.setPlainText(preview_text)
             self._apply_flag_highlights(editor, preview_text)
             cur = editor.textCursor()

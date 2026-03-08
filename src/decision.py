@@ -518,6 +518,23 @@ def _empty_candidate_product_demand_summary() -> pd.DataFrame:
             "anchor_growth_used",
             "available_metric_count",
             "driver_metrics_used",
+            "forecast_source",
+            "index_symbol",
+            "market_history_days",
+            "market_ann_return",
+            "market_ann_vol",
+        ]
+    )
+
+
+def _empty_candidate_market_position() -> pd.DataFrame:
+    return pd.DataFrame(
+        columns=[
+            "ticker",
+            "company",
+            "market_position_metric",
+            "value",
+            "comment",
         ]
     )
 
@@ -652,17 +669,159 @@ def _estimate_candidate_demand_inputs(pick: pd.Series, universe_df: pd.DataFrame
     }
 
 
+def _estimate_market_forecast_from_prices(
+    prices_df: pd.DataFrame,
+    pick: pd.Series,
+    asof: str,
+    lookback_years: int = 5,
+) -> dict[str, object]:
+    if prices_df is None or prices_df.empty:
+        return {"source": "fundamental_fallback"}
+
+    px = _canon_cols(prices_df)
+    t_col = _pick(px, ["ticker", "symbol", "yahoo_ticker"])
+    d_col = _pick(px, ["date", "price_date", "datetime", "timestamp", "time"])
+    p_col = _pick(px, ["adj_close", "close", "price", "last"])
+    if not t_col or not d_col or not p_col:
+        return {"source": "fundamental_fallback"}
+
+    idx_raw = str(pick.get("relevant_index_symbol", "")).strip()
+    if not idx_raw:
+        idx_raw = str(pick.get("market_index_ticker", "")).strip()
+    if not idx_raw:
+        return {"source": "fundamental_fallback"}
+
+    idx_candidates = {idx_raw, idx_raw.lstrip("^")}
+    px = px.copy()
+    px[t_col] = px[t_col].astype(str).str.strip()
+    px[d_col] = pd.to_datetime(px[d_col], errors="coerce")
+    px[p_col] = pd.to_numeric(px[p_col], errors="coerce")
+    px = px[px[d_col].notna() & np.isfinite(px[p_col])]
+    if px.empty:
+        return {"source": "fundamental_fallback"}
+
+    asof_ts = pd.to_datetime(asof, errors="coerce")
+    if pd.notna(asof_ts):
+        start_ts = asof_ts - pd.DateOffset(years=max(1, int(lookback_years)))
+        px = px[(px[d_col] <= asof_ts) & (px[d_col] >= start_ts)]
+
+    x = px[px[t_col].isin(idx_candidates)].sort_values(d_col)
+    if len(x) < 60:
+        return {"source": "fundamental_fallback"}
+
+    rets = np.log(x[p_col].astype(float) / x[p_col].astype(float).shift(1))
+    rets = rets.replace([np.inf, -np.inf], np.nan).dropna()
+    if len(rets) < 40:
+        return {"source": "fundamental_fallback"}
+
+    mu = float(rets.mean()) * 252.0
+    vol = float(rets.std(ddof=1)) * np.sqrt(252.0)
+    if not np.isfinite(mu):
+        return {"source": "fundamental_fallback"}
+    if not np.isfinite(vol) or vol <= 0:
+        vol = 0.15
+
+    base = float(np.clip(mu, -0.20, 0.25))
+    bear = float(np.clip(base - (0.5 * vol), -0.25, 0.20))
+    bull = float(np.clip(base + (0.5 * vol), -0.20, 0.35))
+    conf = "HIGH" if len(rets) >= 500 else ("MEDIUM" if len(rets) >= 250 else "LOW")
+    return {
+        "source": "market_data",
+        "index_symbol": idx_raw,
+        "history_days": int(len(rets)),
+        "ann_return": float(mu),
+        "ann_vol": float(vol),
+        "base_cagr": base,
+        "bear_cagr": bear,
+        "bull_cagr": bull,
+        "model_confidence": conf,
+        "driver_metrics_used": "index_log_returns",
+    }
+
+
+def _build_candidate_market_position(pick: pd.Series, universe_df: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    ticker = str(pick.get("ticker", ""))
+    company = str(pick.get("company", ""))
+    u = universe_df.copy() if universe_df is not None else pd.DataFrame()
+
+    def _pctile(col: str) -> float:
+        if col not in u.columns:
+            return float("nan")
+        s = pd.to_numeric(u[col], errors="coerce")
+        v = _to_float(pick.get(col, np.nan))
+        s = s[np.isfinite(s)]
+        if (not np.isfinite(v)) or s.empty:
+            return float("nan")
+        return float((s <= v).mean())
+
+    mcap_pct = _pctile("market_cap")
+    q_pct = _pctile("quality_score")
+    spread_pct = _pctile("roic_wacc_spread")
+    mos_pct = _pctile("mos")
+
+    for label, val in [
+        ("Market cap percentile (univers)", mcap_pct),
+        ("Quality percentile (univers)", q_pct),
+        ("ROIC-WACC percentile (univers)", spread_pct),
+        ("MoS percentile (univers)", mos_pct),
+    ]:
+        rows.append(
+            {
+                "ticker": ticker,
+                "company": company,
+                "market_position_metric": label,
+                "value": f"{val * 100:.1f}%" if np.isfinite(val) else "n/a",
+                "comment": "Hoyere er bedre" if np.isfinite(val) else "Data ikke tilgjengelig",
+            }
+        )
+
+    mcap_pick = _to_float(pick.get("market_cap", np.nan))
+    seg = u.copy()
+    sector = str(pick.get("sector", "")).strip()
+    country = str(pick.get("country", "")).strip()
+    if sector and "sector" in seg.columns:
+        seg = seg[seg["sector"].astype(str).str.strip() == sector]
+    if country and "country" in seg.columns:
+        seg = seg[seg["country"].astype(str).str.strip() == country]
+    seg_m = pd.to_numeric(seg.get("market_cap", pd.Series([], dtype=float)), errors="coerce")
+    seg_m = seg_m[np.isfinite(seg_m)]
+    if np.isfinite(mcap_pick) and not seg_m.empty:
+        rank = int((seg_m > mcap_pick).sum()) + 1
+        rows.append(
+            {
+                "ticker": ticker,
+                "company": company,
+                "market_position_metric": "Storrelse-rang i segment",
+                "value": f"{rank}/{int(len(seg_m))}",
+                "comment": f"Segment=sector:{sector or 'n/a'} country:{country or 'n/a'}",
+            }
+        )
+
+    if not rows:
+        return _empty_candidate_market_position()
+    return pd.DataFrame(rows)
+
+
 def _build_candidate_product_demand_forecast(
     pick: pd.Series,
     universe_df: pd.DataFrame,
     asof: str,
     products: pd.DataFrame,
+    market_inputs: dict[str, object] | None = None,
     horizon_years: int = 3,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     if products is None or products.empty:
         return _empty_candidate_product_demand_forecast(), _empty_candidate_product_demand_summary()
 
     inputs = _estimate_candidate_demand_inputs(pick=pick, universe_df=universe_df)
+    forecast_source = "fundamental_model"
+    if isinstance(market_inputs, dict) and str(market_inputs.get("source", "")).strip().lower() == "market_data":
+        for k in ["base_cagr", "bear_cagr", "bull_cagr", "model_confidence", "driver_metrics_used"]:
+            if k in market_inputs:
+                inputs[k] = market_inputs[k]
+        forecast_source = "market_data"
+
     scenario_cfg = [
         ("bear", float(inputs["bear_cagr"])),
         ("base", float(inputs["base_cagr"])),
@@ -714,6 +873,11 @@ def _build_candidate_product_demand_forecast(
                 "anchor_growth_used": float(inputs["anchor_growth_used"]) if np.isfinite(_to_float(inputs["anchor_growth_used"])) else np.nan,
                 "available_metric_count": int(inputs["available_metric_count"]),
                 "driver_metrics_used": str(inputs["driver_metrics_used"]),
+                "forecast_source": forecast_source,
+                "index_symbol": str((market_inputs or {}).get("index_symbol", "")),
+                "market_history_days": int(pd.to_numeric(pd.Series([(market_inputs or {}).get("history_days")]), errors="coerce").fillna(0).iloc[0]),
+                "market_ann_return": float((market_inputs or {}).get("ann_return")) if np.isfinite(_to_float((market_inputs or {}).get("ann_return"))) else np.nan,
+                "market_ann_vol": float((market_inputs or {}).get("ann_vol")) if np.isfinite(_to_float((market_inputs or {}).get("ann_vol"))) else np.nan,
             }
         ]
     )
@@ -859,6 +1023,7 @@ def _render_candidate_product_demand_md(
     products: pd.DataFrame,
     demand_forecast: pd.DataFrame,
     demand_summary: pd.DataFrame,
+    market_position: pd.DataFrame | None = None,
 ) -> list[str]:
     lines: list[str] = []
     lines.append("## 3) Produkter og markedsforventning")
@@ -872,6 +1037,12 @@ def _render_candidate_product_demand_md(
 
     product_cols = [c for c in ["product_label", "source_field", "value", "value_share", "detail"] if c in products.columns]
     lines.append(_md_table(products[product_cols], max_rows=20))
+
+    if market_position is not None and not market_position.empty:
+        lines.append("")
+        lines.append("### Markedsposisjon")
+        pos_cols = [c for c in ["market_position_metric", "value", "comment"] if c in market_position.columns]
+        lines.append(_md_table(market_position[pos_cols], max_rows=20))
 
     if demand_summary is not None and not demand_summary.empty:
         s = demand_summary.iloc[0]
@@ -888,6 +1059,20 @@ def _render_candidate_product_demand_md(
         metrics_txt = str(s.get("driver_metrics_used", "")).strip()
         if metrics_txt:
             lines.append(f"- Driver metrics used: {metrics_txt}")
+        source_txt = str(s.get("forecast_source", "")).strip()
+        if source_txt:
+            lines.append(f"- Forecast source: {source_txt}")
+        idx_txt = str(s.get("index_symbol", "")).strip()
+        hist_days = int(pd.to_numeric(pd.Series([s.get("market_history_days")]), errors="coerce").fillna(0).iloc[0])
+        ann_ret = _to_float(s.get("market_ann_return"))
+        ann_vol = _to_float(s.get("market_ann_vol"))
+        if idx_txt:
+            ann_txt = (
+                f", annualized return={ann_ret:.1%}, annualized vol={ann_vol:.1%}"
+                if np.isfinite(ann_ret) and np.isfinite(ann_vol)
+                else ""
+            )
+            lines.append(f"- Market data used: index={idx_txt}, history_days={hist_days}{ann_txt}")
         comment = "Ettersporsel ser robust ut i base/bull." if (np.isfinite(base_cagr) and base_cagr >= 0.05) else "Ettersporsel ser moderat/usikker ut."
         lines.append(f"- Kommentar: {comment}")
 
@@ -3210,6 +3395,7 @@ def run(ctx, log) -> int:
         _atomic_write_csv(ctx.run_dir / "candidate_products.csv", _empty_candidate_products())
         _atomic_write_csv(ctx.run_dir / "candidate_product_demand_forecast.csv", _empty_candidate_product_demand_forecast())
         _atomic_write_csv(ctx.run_dir / "candidate_product_demand_summary.csv", _empty_candidate_product_demand_summary())
+        _atomic_write_csv(ctx.run_dir / "candidate_market_position.csv", _empty_candidate_market_position())
         _atomic_write_text(out_md, "\n".join(md))
         log.info(f"decision: wrote {out_csv}")
         log.info(f"decision: wrote {out_md}")
@@ -3243,16 +3429,20 @@ def run(ctx, log) -> int:
     _write_top_candidates_report(ctx.run_dir, ctx.asof, eligible[out_cols], max_rows=top_n)
     _atomic_write_csv(ctx.run_dir / "shortlist.csv", eligible[out_cols].head(top_n))
     candidate_products = _extract_candidate_products(pick)
+    market_inputs = _estimate_market_forecast_from_prices(prices_df=prices_df, pick=pick, asof=ctx.asof, lookback_years=5)
+    candidate_market_position = _build_candidate_market_position(pick=pick, universe_df=df)
     candidate_demand_forecast, candidate_demand_summary = _build_candidate_product_demand_forecast(
         pick=pick,
         universe_df=df,
         asof=ctx.asof,
         products=candidate_products,
+        market_inputs=market_inputs,
         horizon_years=3,
     )
     _atomic_write_csv(ctx.run_dir / "candidate_products.csv", candidate_products)
     _atomic_write_csv(ctx.run_dir / "candidate_product_demand_forecast.csv", candidate_demand_forecast)
     _atomic_write_csv(ctx.run_dir / "candidate_product_demand_summary.csv", candidate_demand_summary)
+    _atomic_write_csv(ctx.run_dir / "candidate_market_position.csv", candidate_market_position)
 
     annual_status, annual_detail = _annual_source_status(pick)
     fundamental_rows = [
@@ -3369,6 +3559,7 @@ def run(ctx, log) -> int:
             products=candidate_products,
             demand_forecast=candidate_demand_forecast,
             demand_summary=candidate_demand_summary,
+            market_position=candidate_market_position,
         )
     )
     md.append("## 4) Nyheter og vurdering")

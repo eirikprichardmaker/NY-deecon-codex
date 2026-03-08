@@ -292,6 +292,24 @@ def find_latest_result_file(base_dir: Path) -> Path | None:
     return hits[0] if hits else None
 
 
+def find_latest_model_run_dir(base_dir: Path) -> Path | None:
+    if not base_dir.exists():
+        return None
+    latest_run: Path | None = None
+    latest_ts = -1.0
+    for decision_csv in base_dir.rglob("decision.csv"):
+        if not decision_csv.is_file():
+            continue
+        try:
+            ts = float(decision_csv.stat().st_mtime)
+        except Exception:
+            continue
+        if ts > latest_ts:
+            latest_ts = ts
+            latest_run = decision_csv.parent
+    return latest_run
+
+
 def format_result_label(path: Path, root_dir: Path) -> str:
     try:
         rel = path.resolve().relative_to(root_dir.resolve()).as_posix()
@@ -782,8 +800,8 @@ class DeeconGui:
     def __init__(self, root: "tk.Tk") -> None:
         self.root = root
         self.root.title("Deecon Pipeline GUI")
-        self.root.geometry("1240x820")
-        self.root.minsize(1080, 720)
+        self.root.geometry("1320x860")
+        self.root.minsize(1120, 740)
         self.proc: subprocess.Popen[str] | None = None
         self.log_queue: queue.Queue[object] = queue.Queue()
         self.last_test_report: Path | None = None
@@ -800,6 +818,8 @@ class DeeconGui:
         self.status_var = tk.StringVar(value="Ready")
         self.command_preview_var = tk.StringVar(value="")
         self.selected_ticker_var = tk.StringVar(value="")
+        self.ticker_query_var = tk.StringVar(value="")
+        self.ticker_feedback_var = tk.StringVar(value="Skriv ticker og trykk 'Vurder ticker'.")
         self.active_run_dir_var = tk.StringVar(value="IKKE FUNNET")
         self.active_run_id_var = tk.StringVar(value="IKKE FUNNET")
         self.active_asof_var = tk.StringVar(value="IKKE FUNNET")
@@ -834,11 +854,15 @@ class DeeconGui:
         self.result_notebook: "ttk.Notebook | None" = None
         self.results_combo: "ttk.Combobox | None" = None
         self.preview_box: "tk.Text | None" = None
+        self.command_preview_label: "ttk.Label | None" = None
+        self.ticker_feedback_label: "ttk.Label | None" = None
+        self.results_tab_index = 0
 
         self._configure_styles()
         self._build_layout()
         self._wire_reactive_updates()
         self._set_status("Ready", tone="ok")
+        self._load_latest_data_on_startup()
         self._poll_logs()
 
     def _configure_styles(self) -> None:
@@ -849,38 +873,51 @@ class DeeconGui:
                 style.theme_use(theme)
                 break
 
-        self.root.option_add("*Font", "{Segoe UI} 10")
+        self.root.option_add("*Font", "{Segoe UI} 11")
+        self.root.option_add("*TCombobox*Listbox.Font", "{Segoe UI} 11")
+        self.root.option_add("*TCombobox*Listbox.Background", "#ffffff")
+        self.root.option_add("*TCombobox*Listbox.Foreground", "#0f172a")
+        self.root.option_add("*TCombobox*Listbox.selectBackground", "#dbeafe")
+        self.root.option_add("*TCombobox*Listbox.selectForeground", "#0f172a")
         self.root.configure(background="#f2f5fa")
 
         style.configure("App.TFrame", background="#f2f5fa")
         style.configure("Hero.TFrame", background="#ffffff", relief="flat")
         style.configure("Card.TFrame", background="#ffffff", relief="flat")
         style.configure("Section.TLabelframe", background="#ffffff", bordercolor="#d8e2f0", borderwidth=1, relief="solid")
-        style.configure("Section.TLabelframe.Label", background="#ffffff", foreground="#1f2a3d", font=("Segoe UI", 10, "bold"))
+        style.configure("Section.TLabelframe.Label", background="#ffffff", foreground="#162235", font=("Segoe UI", 11, "bold"))
         style.configure("Header.TLabel", background="#ffffff", foreground="#0f172a", font=("Segoe UI", 18, "bold"))
-        style.configure("SubHeader.TLabel", background="#ffffff", foreground="#51627a")
-        style.configure("Info.TLabel", background="#ffffff", foreground="#334155")
-        style.configure("Muted.TLabel", background="#ffffff", foreground="#64748b")
-        style.configure("Chip.TLabel", background="#eef2ff", foreground="#334155", padding=(8, 3), font=("Segoe UI", 9, "bold"))
-        style.configure("Primary.TButton", font=("Segoe UI", 10, "bold"))
-        style.configure("Secondary.TButton", font=("Segoe UI", 10))
-        style.configure("Nav.TButton", font=("Segoe UI", 10, "bold"), anchor="w")
-        style.configure("NavActive.TButton", font=("Segoe UI", 10, "bold"), anchor="w")
+        style.configure("SubHeader.TLabel", background="#ffffff", foreground="#30465f")
+        style.configure("Info.TLabel", background="#ffffff", foreground="#102a43")
+        style.configure("Muted.TLabel", background="#ffffff", foreground="#2f435a")
+        style.configure("Chip.TLabel", background="#eef2ff", foreground="#1f3248", padding=(8, 4), font=("Segoe UI", 10, "bold"))
+        style.configure("Primary.TButton", font=("Segoe UI", 10, "bold"), padding=(10, 7))
+        style.configure("Secondary.TButton", font=("Segoe UI", 10), padding=(10, 7))
+        style.configure("Nav.TButton", font=("Segoe UI", 10, "bold"), anchor="w", padding=(10, 6))
+        style.configure("NavActive.TButton", font=("Segoe UI", 10, "bold"), anchor="w", padding=(10, 6))
         style.map("NavActive.TButton", background=[("!disabled", "#dbeafe")], foreground=[("!disabled", "#1d4ed8")])
-        style.configure("DangerBanner.TLabel", background="#fee2e2", foreground="#991b1b", padding=(10, 6), font=("Segoe UI", 10, "bold"))
-        style.configure("WarnBanner.TLabel", background="#fef3c7", foreground="#92400e", padding=(10, 6), font=("Segoe UI", 10, "bold"))
-        style.configure("OkBanner.TLabel", background="#dcfce7", foreground="#166534", padding=(10, 6), font=("Segoe UI", 10, "bold"))
-        style.configure("CardValue.TLabel", background="#ffffff", foreground="#0f172a", justify="left")
-        style.configure("StatusNeutral.TLabel", background="#e7edf7", foreground="#1f2937", padding=(10, 4), font=("Segoe UI", 10, "bold"))
-        style.configure("StatusRun.TLabel", background="#dbeafe", foreground="#1d4ed8", padding=(10, 4), font=("Segoe UI", 10, "bold"))
-        style.configure("StatusOk.TLabel", background="#dcfce7", foreground="#166534", padding=(10, 4), font=("Segoe UI", 10, "bold"))
-        style.configure("StatusWarn.TLabel", background="#fef3c7", foreground="#92400e", padding=(10, 4), font=("Segoe UI", 10, "bold"))
-        style.configure("StatusBad.TLabel", background="#fee2e2", foreground="#991b1b", padding=(10, 4), font=("Segoe UI", 10, "bold"))
+        style.configure("DangerBanner.TLabel", background="#fee2e2", foreground="#7f1d1d", padding=(10, 7), font=("Segoe UI", 10, "bold"))
+        style.configure("WarnBanner.TLabel", background="#fef3c7", foreground="#7a4300", padding=(10, 7), font=("Segoe UI", 10, "bold"))
+        style.configure("OkBanner.TLabel", background="#dcfce7", foreground="#14532d", padding=(10, 7), font=("Segoe UI", 10, "bold"))
+        style.configure("CardValue.TLabel", background="#ffffff", foreground="#0f172a", justify="left", font=("Segoe UI", 10))
+        style.configure("StatusNeutral.TLabel", background="#e7edf7", foreground="#1f2937", padding=(10, 5), font=("Segoe UI", 10, "bold"))
+        style.configure("StatusRun.TLabel", background="#dbeafe", foreground="#1d4ed8", padding=(10, 5), font=("Segoe UI", 10, "bold"))
+        style.configure("StatusOk.TLabel", background="#dcfce7", foreground="#166534", padding=(10, 5), font=("Segoe UI", 10, "bold"))
+        style.configure("StatusWarn.TLabel", background="#fef3c7", foreground="#92400e", padding=(10, 5), font=("Segoe UI", 10, "bold"))
+        style.configure("StatusBad.TLabel", background="#fee2e2", foreground="#991b1b", padding=(10, 5), font=("Segoe UI", 10, "bold"))
         style.configure("Accent.Horizontal.TProgressbar", troughcolor="#e5e7eb", bordercolor="#e5e7eb", background="#2563eb", lightcolor="#2563eb", darkcolor="#2563eb")
         style.configure("TNotebook", background="#f2f5fa", borderwidth=0)
-        style.configure("TNotebook.Tab", padding=(14, 8), font=("Segoe UI", 10, "bold"))
-        style.map("TNotebook.Tab", background=[("selected", "#ffffff")])
-        style.configure("Treeview", rowheight=22)
+        style.configure("TNotebook.Tab", padding=(16, 10), font=("Segoe UI", 10, "bold"))
+        style.map(
+            "TNotebook.Tab",
+            background=[("selected", "#ffffff"), ("!selected", "#e6eef8")],
+            foreground=[("selected", "#0f172a"), ("!selected", "#334155")],
+        )
+        style.configure("Treeview", rowheight=26, font=("Segoe UI", 10), background="#ffffff", fieldbackground="#ffffff", foreground="#0f172a")
+        style.configure("Treeview.Heading", font=("Segoe UI", 10, "bold"), background="#e7edf7", foreground="#0f172a")
+        style.map("Treeview", background=[("selected", "#dbeafe")], foreground=[("selected", "#0f172a")])
+        style.configure("TEntry", padding=(6, 5))
+        style.configure("TCombobox", padding=(6, 5))
 
     def _set_status(self, text: str, tone: str = "neutral") -> None:
         self.status_var.set(text)
@@ -926,7 +963,15 @@ class DeeconGui:
         self.root.bind("<F5>", lambda _e: self._run_model())
         self.root.bind("<Control-r>", lambda _e: self._run_pipeline())
         self.root.bind("<Control-t>", lambda _e: self._run_tests())
+        self.root.bind("<Configure>", self._on_root_resize, add="+")
         self._update_command_preview()
+
+    def _on_root_resize(self, _event=None) -> None:
+        width = max(900, int(self.root.winfo_width()))
+        if self.command_preview_label is not None:
+            self.command_preview_label.configure(wraplength=max(460, width - 880))
+        if self.ticker_feedback_label is not None:
+            self.ticker_feedback_label.configure(wraplength=max(520, width - 500))
 
     def _select_steps_by_names(self, names: Iterable[str]) -> None:
         wanted = {str(n).strip() for n in names if str(n).strip()}
@@ -987,13 +1032,22 @@ class DeeconGui:
 
         run_tab = ttk.Frame(self.tabs, padding=10, style="App.TFrame")
         results_tab = ttk.Frame(self.tabs, padding=10, style="App.TFrame")
-        self.tabs.add(run_tab, text="Kjoring")
         self.tabs.add(results_tab, text="Resultater")
-
-        self._build_run_tab(run_tab)
-
+        self.tabs.add(run_tab, text="Kjoring")
         self._build_results_tab(results_tab)
+        self._build_run_tab(run_tab)
         self._refresh_results()
+
+    def _select_results_main_tab(self) -> None:
+        try:
+            self.tabs.select(self.results_tab_index)
+        except Exception:
+            pass
+
+    def _load_latest_data_on_startup(self) -> None:
+        self._select_results_main_tab()
+        if not self._show_latest_model_run_in_gui(silent=True, refresh=False):
+            self._show_latest_decision_in_gui(silent=True, refresh=False)
 
     def _build_run_tab(self, run_tab: "ttk.Frame") -> None:
         splitter = ttk.Panedwindow(run_tab, orient="horizontal")
@@ -1040,7 +1094,7 @@ class DeeconGui:
             highlightthickness=1,
             highlightbackground="#cbd5e1",
             relief="flat",
-            font=("Segoe UI", 10),
+            font=("Segoe UI", 11),
         )
         self.steps_list.pack(fill="both", expand=True, pady=(6, 0))
         for name, _ in DEFAULT_STEPS:
@@ -1051,7 +1105,14 @@ class DeeconGui:
 
         cmd_box = ttk.LabelFrame(control_col, text="Command Preview", padding=10, style="Section.TLabelframe")
         cmd_box.pack(fill="x", pady=(10, 0))
-        ttk.Label(cmd_box, textvariable=self.command_preview_var, style="Muted.TLabel", wraplength=420, justify="left").pack(anchor="w")
+        self.command_preview_label = ttk.Label(
+            cmd_box,
+            textvariable=self.command_preview_var,
+            style="Info.TLabel",
+            wraplength=520,
+            justify="left",
+        )
+        self.command_preview_label.pack(anchor="w")
 
         actions_box = ttk.LabelFrame(control_col, text="Actions", padding=10, style="Section.TLabelframe")
         actions_box.pack(fill="x", pady=(10, 0))
@@ -1063,9 +1124,10 @@ class DeeconGui:
         self.run_tests_btn.grid(row=1, column=0, sticky="we", pady=(8, 0))
         self.stop_btn = ttk.Button(actions_box, text="Stop", style="Secondary.TButton", command=self._stop_pipeline, state="disabled")
         self.stop_btn.grid(row=1, column=1, sticky="we", padx=(8, 0), pady=(8, 0))
-        ttk.Button(actions_box, text="Show latest decision", style="Secondary.TButton", command=self._show_latest_decision_in_gui).grid(row=2, column=0, sticky="we", pady=(8, 0))
-        ttk.Button(actions_box, text="Show latest test report", style="Secondary.TButton", command=self._show_latest_test_report_in_gui).grid(row=2, column=1, sticky="we", padx=(8, 0), pady=(8, 0))
-        ttk.Button(actions_box, text="Clear log", style="Secondary.TButton", command=self._clear_log).grid(row=3, column=0, columnspan=2, sticky="we", pady=(8, 0))
+        ttk.Button(actions_box, text="Show latest model run", style="Secondary.TButton", command=self._show_latest_model_run_in_gui).grid(row=2, column=0, sticky="we", pady=(8, 0))
+        ttk.Button(actions_box, text="Show latest decision", style="Secondary.TButton", command=self._show_latest_decision_in_gui).grid(row=2, column=1, sticky="we", padx=(8, 0), pady=(8, 0))
+        ttk.Button(actions_box, text="Show latest test report", style="Secondary.TButton", command=self._show_latest_test_report_in_gui).grid(row=3, column=0, columnspan=2, sticky="we", pady=(8, 0))
+        ttk.Button(actions_box, text="Clear log", style="Secondary.TButton", command=self._clear_log).grid(row=4, column=0, columnspan=2, sticky="we", pady=(8, 0))
         actions_box.columnconfigure(0, weight=1)
         actions_box.columnconfigure(1, weight=1)
 
@@ -1087,17 +1149,22 @@ class DeeconGui:
             insertbackground="#d9e4ff",
             relief="flat",
             borderwidth=0,
-            font=("Consolas", 10),
+            font=("Consolas", 11),
+            padx=8,
+            pady=8,
+            spacing1=1,
+            spacing3=1,
         )
-        self.log_box.tag_configure("log_cmd", foreground="#93c5fd")
+        self.log_box.tag_configure("log_cmd", foreground="#bfdbfe")
         self.log_box.tag_configure("log_info", foreground="#cbd5e1")
-        self.log_box.tag_configure("log_warn", foreground="#fbbf24")
-        self.log_box.tag_configure("log_error", foreground="#f87171")
-        self.log_box.tag_configure("log_ok", foreground="#4ade80")
+        self.log_box.tag_configure("log_warn", foreground="#f59e0b")
+        self.log_box.tag_configure("log_error", foreground="#fca5a5")
+        self.log_box.tag_configure("log_ok", foreground="#86efac")
         self.log_box.pack(side="left", fill="both", expand=True)
         yscroll = ttk.Scrollbar(log_box_wrap, orient="vertical", command=self.log_box.yview)
         yscroll.pack(side="right", fill="y")
         self.log_box["yscrollcommand"] = yscroll.set
+        self.log_box.configure(state="disabled")
 
     def _set_text_widget_text(self, widget: "tk.Text", text: str) -> None:
         widget.configure(state="normal")
@@ -1118,18 +1185,36 @@ class DeeconGui:
         toolbar.pack(fill="x", pady=(0, 8))
         toolbar.columnconfigure(1, weight=1)
         toolbar.columnconfigure(4, weight=1)
-        ttk.Label(toolbar, text="Filter", style="Muted.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(toolbar, text="Filter", style="Info.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Entry(toolbar, textvariable=self.result_filter_var).grid(row=0, column=1, sticky="we", padx=(6, 8))
-        ttk.Label(toolbar, textvariable=self.result_stats_var, style="Muted.TLabel").grid(row=0, column=2, sticky="w", padx=(0, 8))
-        ttk.Label(toolbar, text="Resultatfil", style="Muted.TLabel").grid(row=0, column=3, sticky="w")
+        ttk.Label(toolbar, textvariable=self.result_stats_var, style="Info.TLabel").grid(row=0, column=2, sticky="w", padx=(0, 8))
+        ttk.Label(toolbar, text="Resultatfil", style="Info.TLabel").grid(row=0, column=3, sticky="w")
         self.results_combo = ttk.Combobox(toolbar, textvariable=self.result_var, state="readonly")
         self.results_combo.grid(row=0, column=4, sticky="we", padx=(6, 8))
         self.results_combo.bind("<<ComboboxSelected>>", lambda _e: self._preview_selected_result())
         ttk.Button(toolbar, text="Refresh", style="Secondary.TButton", command=self._refresh_results).grid(row=0, column=5, padx=(0, 6))
         ttk.Button(toolbar, text="Latest result", style="Secondary.TButton", command=self._show_latest_result_in_gui).grid(row=0, column=6, padx=(0, 6))
-        ttk.Button(toolbar, text="Latest decision", style="Secondary.TButton", command=self._show_latest_decision_in_gui).grid(row=0, column=7, padx=(0, 6))
-        ttk.Button(toolbar, text="Latest test", style="Secondary.TButton", command=self._show_latest_test_report_in_gui).grid(row=0, column=8, padx=(0, 6))
-        ttk.Button(toolbar, text="Latest DQ", style="Secondary.TButton", command=self._show_latest_dq_report_in_gui).grid(row=0, column=9)
+        ttk.Button(toolbar, text="Latest model run", style="Secondary.TButton", command=self._show_latest_model_run_in_gui).grid(row=0, column=7, padx=(0, 6))
+        ttk.Button(toolbar, text="Latest decision", style="Secondary.TButton", command=self._show_latest_decision_in_gui).grid(row=0, column=8, padx=(0, 6))
+        ttk.Button(toolbar, text="Latest test", style="Secondary.TButton", command=self._show_latest_test_report_in_gui).grid(row=0, column=9, padx=(0, 6))
+        ttk.Button(toolbar, text="Latest DQ", style="Secondary.TButton", command=self._show_latest_dq_report_in_gui).grid(row=0, column=10)
+        ttk.Label(toolbar, text="Ticker", style="Info.TLabel").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        ticker_entry = ttk.Entry(toolbar, textvariable=self.ticker_query_var)
+        ticker_entry.grid(row=1, column=1, columnspan=3, sticky="we", padx=(6, 8), pady=(8, 0))
+        ticker_entry.bind("<Return>", lambda _e: self._evaluate_ticker_query())
+        ttk.Button(toolbar, text="Vurder ticker", style="Secondary.TButton", command=self._evaluate_ticker_query).grid(
+            row=1, column=4, sticky="w", padx=(0, 8), pady=(8, 0)
+        )
+        self.ticker_feedback_label = ttk.Label(
+            toolbar,
+            textvariable=self.ticker_feedback_var,
+            style="Info.TLabel",
+            wraplength=900,
+            justify="left",
+        )
+        self.ticker_feedback_label.grid(
+            row=1, column=5, columnspan=6, sticky="w", pady=(8, 0)
+        )
 
         self.result_notebook = ttk.Notebook(wrap)
         self.result_notebook.pack(fill="both", expand=True)
@@ -1237,17 +1322,17 @@ class DeeconGui:
         }
         self.tab_header_vars[tab_key] = header_vars
 
-        ttk.Label(top, text="Ticker", style="Muted.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(top, text="Ticker", style="Info.TLabel").grid(row=0, column=0, sticky="w")
         combo = ttk.Combobox(top, textvariable=self.selected_ticker_var, state="readonly", width=18)
         combo.grid(row=0, column=1, sticky="w")
         combo.bind("<<ComboboxSelected>>", lambda _e: self._render_results_for_ticker())
         self.ticker_selectors.append(combo)
-        ttk.Label(top, text="Company", style="Muted.TLabel").grid(row=0, column=2, sticky="e", padx=(12, 6))
+        ttk.Label(top, text="Company", style="Info.TLabel").grid(row=0, column=2, sticky="e", padx=(12, 6))
         ttk.Label(top, textvariable=header_vars["company"], style="Info.TLabel").grid(row=0, column=3, sticky="w")
 
-        ttk.Label(top, textvariable=header_vars["run_meta"], style="Muted.TLabel").grid(row=1, column=0, columnspan=4, sticky="w", pady=(4, 0))
-        ttk.Label(top, textvariable=header_vars["config"], style="Muted.TLabel").grid(row=2, column=0, columnspan=4, sticky="w", pady=(2, 0))
-        ttk.Label(top, textvariable=header_vars["sources"], style="Muted.TLabel", wraplength=1080, justify="left").grid(
+        ttk.Label(top, textvariable=header_vars["run_meta"], style="Info.TLabel").grid(row=1, column=0, columnspan=4, sticky="w", pady=(4, 0))
+        ttk.Label(top, textvariable=header_vars["config"], style="Info.TLabel").grid(row=2, column=0, columnspan=4, sticky="w", pady=(2, 0))
+        ttk.Label(top, textvariable=header_vars["sources"], style="Info.TLabel", wraplength=1080, justify="left").grid(
             row=3, column=0, columnspan=4, sticky="w", pady=(2, 0)
         )
         ttk.Label(top, textvariable=header_vars["qc"], style="Info.TLabel").grid(row=4, column=0, columnspan=4, sticky="w", pady=(2, 0))
@@ -1275,21 +1360,28 @@ class DeeconGui:
 
         table_box = ttk.LabelFrame(parent, text=table_title, padding=8, style="Section.TLabelframe")
         table_box.pack(fill="both", expand=True, pady=(0, 6))
-        tree = ttk.Treeview(table_box, columns=table_columns, show="headings", height=10)
+        tree_area = ttk.Frame(table_box, style="Card.TFrame")
+        tree_area.pack(fill="both", expand=True)
+        tree = ttk.Treeview(tree_area, columns=table_columns, show="headings", height=10)
         for col in table_columns:
             tree.heading(col, text=col)
             tree.column(col, width=180, anchor="w", stretch=True)
+        tree.column(table_columns[-1], width=240, anchor="w", stretch=True)
         tree.pack(side="left", fill="both", expand=True)
-        yscroll = ttk.Scrollbar(table_box, orient="vertical", command=tree.yview)
+        yscroll = ttk.Scrollbar(tree_area, orient="vertical", command=tree.yview)
         yscroll.pack(side="right", fill="y")
-        tree.configure(yscrollcommand=yscroll.set)
+        xscroll = ttk.Scrollbar(table_box, orient="horizontal", command=tree.xview)
+        xscroll.pack(fill="x", pady=(6, 0))
+        tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
+        tree.tag_configure("row_even", background="#ffffff")
+        tree.tag_configure("row_odd", background="#f6f9ff")
         self.tab_tables[tab_key] = tree
         self.tab_table_columns[tab_key] = table_columns
 
         if include_preview:
             prev = ttk.LabelFrame(parent, text="Preview / Fallback", padding=8, style="Section.TLabelframe")
             prev.pack(fill="both", expand=True)
-            ttk.Label(prev, textvariable=self.preview_path_var, style="Muted.TLabel").pack(anchor="w")
+            ttk.Label(prev, textvariable=self.preview_path_var, style="Info.TLabel").pack(anchor="w")
             txt = tk.Text(
                 prev,
                 wrap="word",
@@ -1299,11 +1391,15 @@ class DeeconGui:
                 insertbackground="#e2e8f0",
                 relief="flat",
                 borderwidth=0,
-                font=("Consolas", 10),
+                font=("Consolas", 11),
+                padx=8,
+                pady=8,
+                spacing1=1,
+                spacing3=1,
             )
             txt.pack(side="left", fill="both", expand=True, pady=(6, 0))
-            txt.tag_configure("flag_red", foreground="#f87171")
-            txt.tag_configure("flag_green", foreground="#4ade80")
+            txt.tag_configure("flag_red", foreground="#fecaca", background="#7f1d1d")
+            txt.tag_configure("flag_green", foreground="#dcfce7", background="#14532d")
             txt.configure(state="disabled")
             scrollbar = ttk.Scrollbar(prev, orient="vertical", command=txt.yview)
             scrollbar.pack(side="right", fill="y", pady=(6, 0))
@@ -1338,9 +1434,10 @@ class DeeconGui:
             return
         for item in tree.get_children():
             tree.delete(item)
-        for row in rows[:200]:
+        for idx, row in enumerate(rows[:200]):
             values = [str(row.get(col, "")) for col in columns]
-            tree.insert("", "end", values=values)
+            stripe_tag = "row_even" if idx % 2 == 0 else "row_odd"
+            tree.insert("", "end", values=values, tags=(stripe_tag,))
 
     def _pick_config(self) -> None:
         if filedialog is None:
@@ -1532,7 +1629,9 @@ class DeeconGui:
             self._set_status("Stopping...", tone="warn")
 
     def _clear_log(self) -> None:
+        self.log_box.configure(state="normal")
         self.log_box.delete("1.0", tk.END)
+        self.log_box.configure(state="disabled")
 
     def _result_search_roots(self) -> List[Path]:
         roots: List[Path] = []
@@ -2054,6 +2153,110 @@ class DeeconGui:
         ]
         self._populate_table("timing", rows)
 
+    def _get_model_row_for_yahoo_ticker(self, yahoo_ticker: str) -> Dict[str, Any]:
+        decision = self.loaded.dataframes.get("decision", pd.DataFrame())
+        screen = self.loaded.dataframes.get("screen_basic", pd.DataFrame())
+        row: Dict[str, Any] = {}
+        try:
+            row = self._find_row(decision, yahoo_ticker) if yahoo_ticker else {}
+            if not row:
+                row = self._find_row(screen, yahoo_ticker) if yahoo_ticker else {}
+        except Exception as exc:
+            self.join_key_error = str(exc)
+            row = {}
+        return row
+
+    def _find_ticker_label_by_query(self, query: str) -> Tuple[str | None, int]:
+        q = str(query or "").strip().lower()
+        if not q:
+            return None, 0
+
+        exact: List[str] = []
+        prefix: List[str] = []
+        contains: List[str] = []
+        for label, profile in self.ticker_items.items():
+            ticker = str(profile.get("ticker", "")).strip().lower()
+            yahoo_ticker = str(profile.get("yahoo_ticker", "")).strip().lower()
+            company = str(profile.get("company", "")).strip().lower()
+            label_norm = str(label).strip().lower()
+            yahoo_base = yahoo_ticker.split(".", 1)[0]
+
+            if q in {ticker, yahoo_ticker, yahoo_base, company, label_norm}:
+                exact.append(label)
+                continue
+            if ticker.startswith(q) or yahoo_ticker.startswith(q) or yahoo_base.startswith(q) or company.startswith(q):
+                prefix.append(label)
+                continue
+            if q in label_norm or q in company:
+                contains.append(label)
+
+        bucket = exact or prefix or contains
+        if not bucket:
+            return None, 0
+        return bucket[0], len(bucket)
+
+    def _build_ticker_feedback(self, profile: Mapping[str, Any], row: Mapping[str, Any], meta: DataBlockMeta) -> str:
+        ticker = str(profile.get("ticker", "")).strip() or str(profile.get("yahoo_ticker", "")).strip() or "IKKE FUNNET"
+        company = str(profile.get("company", "")).strip() or "IKKE FUNNET"
+        if not row:
+            return (
+                f"{ticker} ({company}): Ingen rad i decision.csv/screen_basic.csv for aktiv run "
+                f"({self.loaded.run_id})."
+            )
+
+        data_blocked = meta.qc_status == "FAIL" or _to_bool(row.get("dq_blocked")) is True
+        timing = calculate_timing_label(
+            fundamental_ok=row.get("fundamental_ok"),
+            technical_ok=row.get("technical_ok"),
+            data_blocked=data_blocked,
+        )
+        if data_blocked:
+            timing = "IKKE BESLUTNINGSGRUNNLAG"
+        reasons = str(
+            row.get("decision_reasons", "")
+            or row.get("reason_fundamental_fail", "")
+            or row.get("reason_technical_fail", "")
+            or "none"
+        ).strip()
+        return (
+            f"{ticker} ({company}): fundamental={_fmt_value(_to_bool(row.get('fundamental_ok')))}, "
+            f"technical={_fmt_value(_to_bool(row.get('technical_ok')))}, timing={timing}, "
+            f"qc={meta.qc_status}, trust={meta.trust_score}, mos={_fmt_percent(row.get('mos'))}, reasons={reasons}"
+        )
+
+    def _evaluate_ticker_query(self) -> None:
+        query = self.ticker_query_var.get().strip()
+        if not query:
+            self.ticker_feedback_var.set("Skriv en ticker først.")
+            self._set_status("Ticker mangler", tone="warn")
+            return
+
+        if not self.ticker_items:
+            self._refresh_results()
+        label, match_count = self._find_ticker_label_by_query(query)
+        if label is None:
+            self.ticker_feedback_var.set(
+                f"Ingen treff for '{query}' i aktiv run ({self.loaded.run_id})."
+            )
+            self._set_status(f"Ingen ticker-treff for {query}", tone="warn")
+            self._select_results_tab("snapshot")
+            return
+
+        self.selected_ticker_var.set(label)
+        self._select_results_tab("snapshot")
+        profile = self.ticker_items.get(label, {"yahoo_ticker": "", "ticker": "", "company": ""})
+        row = self._get_model_row_for_yahoo_ticker(str(profile.get("yahoo_ticker", "")))
+        meta = self._build_meta_for_tab("snapshot", row)
+        feedback = self._build_ticker_feedback(profile, row, meta)
+        if match_count > 1:
+            feedback = f"{feedback} (flere treff, viser beste match: {label})"
+        self.ticker_feedback_var.set(feedback)
+        status_tone = "ok" if meta.qc_status == "PASS" else ("warn" if meta.qc_status == "WARN" else "error")
+        self._set_status(
+            f"Ticker vurdert: {profile.get('ticker') or profile.get('yahoo_ticker') or label}",
+            tone=status_tone,
+        )
+
     def _render_results_for_ticker(self) -> None:
         if not self.tab_cards:
             return
@@ -2073,16 +2276,7 @@ class DeeconGui:
         company = profile.get("company", "")
         self.active_company_var.set(company or "IKKE FUNNET")
 
-        decision = self.loaded.dataframes.get("decision", pd.DataFrame())
-        screen = self.loaded.dataframes.get("screen_basic", pd.DataFrame())
-        row: Dict[str, Any] = {}
-        try:
-            row = self._find_row(decision, yahoo_ticker) if yahoo_ticker else {}
-            if not row:
-                row = self._find_row(screen, yahoo_ticker) if yahoo_ticker else {}
-        except Exception as exc:
-            self.join_key_error = str(exc)
-            row = {}
+        row = self._get_model_row_for_yahoo_ticker(yahoo_ticker)
 
         fallback_text = self._decision_text_fallback()
         if self.preview_box is not None:
@@ -2112,24 +2306,97 @@ class DeeconGui:
                 latest = candidate
         return latest
 
+    def _pick_latest_model_run_dir(self) -> Path | None:
+        latest_run: Path | None = None
+        latest_ts = -1.0
+        for root in self._result_search_roots():
+            candidate = find_latest_model_run_dir(root)
+            if candidate is None:
+                continue
+            marker = candidate / "decision.csv"
+            try:
+                ts = float(marker.stat().st_mtime if marker.exists() else candidate.stat().st_mtime)
+            except Exception:
+                continue
+            if ts > latest_ts:
+                latest_ts = ts
+                latest_run = candidate
+        return latest_run
+
+    def _find_preferred_result_path_for_run(self, run_dir: Path) -> Path | None:
+        preferred_names = (
+            "decision_report.html",
+            "decision.md",
+            "top_candidates.md",
+            "result.html",
+            "result.txt",
+            "data_qc_report.html",
+            "data_quality_report.md",
+            "wft_data_quality_report.md",
+        )
+        for name in preferred_names:
+            candidate = run_dir / name
+            if candidate.exists() and candidate.is_file():
+                return candidate
+
+        try:
+            run_dir_resolved = run_dir.resolve()
+        except Exception:
+            run_dir_resolved = run_dir
+
+        same_run: List[Path] = []
+        for path in self.result_choices.values():
+            try:
+                parent = path.resolve().parent
+            except Exception:
+                parent = path.parent
+            if parent == run_dir_resolved:
+                same_run.append(path)
+        if not same_run:
+            return None
+        same_run.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        return same_run[0]
+
     def _select_results_tab(self, tab_key: str) -> None:
         if self.result_notebook is None:
             return
         tab_order = {"snapshot": 0, "fundamentals": 1, "dq": 2, "timing": 3}
         idx = tab_order.get(tab_key, 0)
         try:
-            self.tabs.select(1)
+            self._select_results_main_tab()
             self.result_notebook.select(idx)
         except Exception:
             pass
 
-    def _show_latest_decision_in_gui(self, silent: bool = False) -> None:
+    def _show_latest_model_run_in_gui(self, silent: bool = False, refresh: bool = True) -> bool:
+        latest_run = self._pick_latest_model_run_dir()
+        if latest_run is None:
+            if not silent:
+                self._show_error("Could not find latest model run (decision.csv) in selected run-dir or runs/.")
+            return False
+        if refresh:
+            self._refresh_results()
+        preferred_path = self._find_preferred_result_path_for_run(latest_run)
+        if preferred_path is not None and self._select_result_path(preferred_path):
+            self._select_results_tab("snapshot")
+            self._set_status(f"Previewing latest model run: {latest_run}", tone="ok")
+            return True
+        self._apply_loaded_run(latest_run)
+        self._render_results_for_ticker()
+        self._select_results_tab("snapshot")
+        self._set_status(f"Loaded latest model run: {latest_run}", tone="ok")
+        return True
+
+    def _show_latest_decision_in_gui(self, silent: bool = False, refresh: bool = True) -> None:
         latest = self._pick_latest(find_latest_decision_artifact)
         if latest is None:
+            if self._show_latest_model_run_in_gui(silent=True, refresh=refresh):
+                return
             if not silent:
                 self._show_error("Could not find decision_report.html/decision.md in selected run-dir or runs/.")
             return
-        self._refresh_results()
+        if refresh:
+            self._refresh_results()
         self._select_result_path(latest)
         self._select_results_tab("snapshot")
         self._set_status(f"Previewing: {latest}", tone="ok")
@@ -2209,12 +2476,16 @@ class DeeconGui:
 
         selected_path = self.result_choices.get(self.result_var.get().strip())
         run_dir = resolve_active_run_dir(selected_path.parent if selected_path is not None else self.run_dir_var.get().strip())
+        self._apply_loaded_run(run_dir)
+
+    def _apply_loaded_run(self, run_dir: Path | None) -> None:
         self.loaded = self._load_run_artifacts(run_dir)
         self.active_run_dir_var.set(str(self.loaded.run_dir) if self.loaded.run_dir is not None else "IKKE FUNNET")
         self.active_run_id_var.set(self.loaded.run_id)
         self.active_asof_var.set(self.loaded.asof)
         self.active_config_path_var.set(self.loaded.config_path)
         self.thresholds = load_decision_thresholds(self.loaded.config_path or self.config_var.get())
+        self.ticker_feedback_var.set("Skriv ticker og trykk 'Vurder ticker'.")
 
         self.ticker_items = self._build_ticker_items()
         ticker_labels = list(self.ticker_items.keys())
@@ -2268,6 +2539,7 @@ class DeeconGui:
         lines = text.splitlines(True)
         if not lines:
             return
+        self.log_box.configure(state="normal")
         for line in lines:
             lo = line.lower()
             tag = "log_info"
@@ -2281,6 +2553,7 @@ class DeeconGui:
                 tag = "log_ok"
             self.log_box.insert(tk.END, line, tag)
         self.log_box.see(tk.END)
+        self.log_box.configure(state="disabled")
 
     def _poll_logs(self) -> None:
         while True:
@@ -2301,20 +2574,17 @@ class DeeconGui:
                     self._refresh_results()
                     if self.last_test_report and self.last_test_report.exists():
                         self._select_result_path(self.last_test_report)
-                        try:
-                            self.tabs.select(1)
-                        except Exception:
-                            pass
+                        self._select_results_main_tab()
                 elif task == "model":
                     self._set_status("Model finished" if rc == 0 else "Model failed", tone=("ok" if rc == 0 else "error"))
                     self._refresh_results()
                     if rc == 0:
-                        self._show_latest_decision_in_gui(silent=True)
+                        self._show_latest_model_run_in_gui(silent=True)
                 else:
                     self._set_status("Finished" if rc == 0 else "Failed", tone=("ok" if rc == 0 else "error"))
                     self._refresh_results()
                     if rc == 0:
-                        self._show_latest_decision_in_gui(silent=True)
+                        self._show_latest_model_run_in_gui(silent=True)
             else:
                 self._append_log(str(msg))
         self.root.after(120, self._poll_logs)

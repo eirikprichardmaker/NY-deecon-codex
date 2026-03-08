@@ -12,6 +12,8 @@ if str(ROOT) not in sys.path:
 from src.decision import (
     _build_decision_report_html,
     _build_candidate_product_demand_forecast,
+    _build_candidate_market_position,
+    _estimate_market_forecast_from_prices,
     _extract_candidate_products,
     _media_assessment_from_scan,
     _media_headlines_frame,
@@ -88,6 +90,59 @@ def test_build_candidate_product_demand_forecast_outputs_scenarios_and_md():
     md_txt = "\n".join(md_lines)
     assert "Products and Demand Outlook" in md_txt
     assert "Base Scenario (Demand Index)" in md_txt
+
+
+def test_estimate_market_forecast_from_prices_uses_index_history():
+    dates = pd.date_range("2024-01-01", periods=320, freq="B")
+    idx_price = 100.0
+    rows = []
+    for i, d in enumerate(dates):
+        idx_price *= (1.0005 if i % 2 == 0 else 1.0002)
+        rows.append({"ticker": "^OSEAX", "date": d, "adj_close": idx_price})
+    prices_df = pd.DataFrame(rows)
+    pick = pd.Series({"relevant_index_symbol": "^OSEAX"})
+
+    out = _estimate_market_forecast_from_prices(prices_df=prices_df, pick=pick, asof="2026-02-16")
+
+    assert out.get("source") == "market_data"
+    assert out.get("index_symbol") == "^OSEAX"
+    assert float(out.get("base_cagr", 0.0)) > -0.25
+
+
+def test_render_candidate_product_demand_md_includes_market_position():
+    products = pd.DataFrame(
+        [{"product_label": "Goods sales", "source_field": "revenue_goods", "value": 70.0, "value_share": 0.7, "detail": "structured_field"}]
+    )
+    forecast = pd.DataFrame(
+        [{"scenario": "base", "product_label": "Goods sales", "forecast_year": 2027, "demand_index": 108.0, "product_demand_index": 75.6, "demand_cagr_assumption": 0.08}]
+    )
+    summary = pd.DataFrame(
+        [{"base_demand_cagr": 0.08, "bear_demand_cagr": 0.03, "bull_demand_cagr": 0.13, "model_confidence": "HIGH", "forecast_source": "market_data"}]
+    )
+    position = pd.DataFrame(
+        [{"market_position_metric": "Market cap percentile (univers)", "value": "82.0%", "comment": "Hoyere er bedre"}]
+    )
+
+    md_lines = _render_candidate_product_demand_md(products, forecast, summary, market_position=position)
+    md_txt = "\n".join(md_lines)
+    assert "Markedsposisjon" in md_txt
+    assert "Forecast source: market_data" in md_txt
+
+
+def test_build_candidate_market_position_has_percentile_rows():
+    universe = _universe_stub()
+    universe["market_cap"] = [1e9 + i * 1e8 for i in range(len(universe))]
+    universe["mos"] = [0.1 + i * 0.01 for i in range(len(universe))]
+    universe["sector"] = "Tech"
+    universe["country"] = "Norway"
+    pick = universe.iloc[-1].copy()
+    pick["ticker"] = "AAA"
+    pick["company"] = "Acme"
+
+    out = _build_candidate_market_position(pick=pick, universe_df=universe)
+    assert not out.empty
+    assert "market_position_metric" in out.columns
+    assert out["market_position_metric"].astype(str).str.contains("percentile", case=False).any()
 
 
 def test_media_assessment_from_scan_levels():
