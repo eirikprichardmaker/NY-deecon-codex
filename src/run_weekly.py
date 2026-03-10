@@ -230,6 +230,16 @@ def main() -> int:
         except Exception as _oc_exc:
             log.warning(f"output_contract: validering feilet (ikke-kritisk): {_oc_exc}")
 
+        # --- n8n ops-lag: oppdater runs/latest-peker ---
+        # Skriver runs/latest/ som en kopi av run_dir-stien slik at n8n
+        # alltid kan lese fra en fast filsti uten å kjenne run_id.
+        try:
+            _latest_ptr = ctx.run_dir.parent / "latest"
+            _latest_ptr.write_text(str(ctx.run_dir), encoding="utf-8")
+            log.info(f"n8n: oppdaterte runs/latest → {ctx.run_dir.name}")
+        except Exception as _ptr_exc:
+            log.warning(f"n8n: kunne ikke skrive runs/latest (ikke-kritisk): {_ptr_exc}")
+
         return 0
 
     except AppError as e:
