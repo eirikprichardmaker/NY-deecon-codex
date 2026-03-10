@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from src.agents.schemas import DossierInput, DossierOutput
 
 if TYPE_CHECKING:
-    from openai import OpenAI
+    from anthropic import Anthropic
 
 logger = logging.getLogger(__name__)
 
@@ -40,30 +40,26 @@ OUTPUT: Respond ONLY with valid JSON matching the required schema."""
 def run_dossier_writer(
     input_data: DossierInput,
     client: Any,
-    model: str = "gpt-4o",
+    model: str = "claude-sonnet-4-6",
 ) -> DossierOutput:
     """
     Run Decision Dossier Writer. On failure, returns minimal valid output.
-    Note: client may be None if openai is not installed — returns fallback.
+    Note: client may be None if anthropic is not installed — returns fallback.
     """
     if client is None:
-        return _fallback_output(input_data, reason="OpenAI-klient ikke tilgjengelig")
+        return _fallback_output(input_data, reason="Anthropic-klient ikke tilgjengelig")
 
     try:
-        response = client.beta.chat.completions.parse(
+        response = client.messages.create(
             model=model,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": json.dumps(
-                    input_data.model_dump(), indent=2, ensure_ascii=False
-                )},
-            ],
-            response_format=DossierOutput,
-            temperature=0.0,
+            max_tokens=2048,
+            system=SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": json.dumps(
+                input_data.model_dump(), indent=2, ensure_ascii=False
+            )}],
         )
-        output = response.choices[0].message.parsed
-        if output is None:
-            raise ValueError("Parsed output er None")
+        text = response.content[0].text
+        output = DossierOutput.model_validate_json(text)
         return output
     except Exception as e:
         logger.error(f"Dossier writer feilet for {input_data.ticker}: {e}")

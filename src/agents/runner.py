@@ -67,11 +67,11 @@ def _build_skeptic_input(row: pd.Series, asof: str) -> SkepticInput:
     )
 
 
-def _get_openai_client(agent_cfg: dict) -> Any:
-    """Oppretter OpenAI-klient. Kaster ImportError hvis openai ikke er installert."""
-    from openai import OpenAI  # lazy import — ikke tilgjengelig i testmiljø
+def _get_anthropic_client(agent_cfg: dict) -> Any:
+    """Oppretter Anthropic-klient. Kaster ImportError hvis anthropic ikke er installert."""
+    from anthropic import Anthropic  # lazy import — ikke tilgjengelig i testmiljø
     api_key = agent_cfg.get("api_key")
-    return OpenAI(api_key=api_key) if api_key else OpenAI()
+    return Anthropic(api_key=api_key) if api_key else Anthropic()
 
 
 def run_skeptic_on_shortlist(
@@ -132,15 +132,15 @@ def run_skeptic_on_shortlist(
         _skeptic_fn = _real_skeptic
         # Hent LLM-klient kun når ekte skeptic-funksjon brukes
         try:
-            client = _get_openai_client(agent_cfg)
+            client = _get_anthropic_client(agent_cfg)
         except (ImportError, Exception) as exc:
-            logger.warning(f"runner: kunne ikke opprette OpenAI-klient: {exc} — bruker client=None")
+            logger.warning(f"runner: kunne ikke opprette Anthropic-klient: {exc} — bruker client=None")
             client = None
     else:
         # Injisert _skeptic_fn i tester — klient ikke nødvendig
         client = None
 
-    model = agent_cfg.get("model", "gpt-4o")
+    model = agent_cfg.get("model", "claude-sonnet-4-6")
     max_retries = int(agent_cfg.get("max_retries", 3))
 
     for _, row in candidates.iterrows():
@@ -256,14 +256,14 @@ def run_quality_on_shortlist(
         from src.agents.business_quality_evaluator import run_quality_evaluator as _real_quality
         _quality_fn = _real_quality
         try:
-            client = _get_openai_client(agent_cfg)
+            client = _get_anthropic_client(agent_cfg)
         except (ImportError, Exception) as exc:
             logger.warning(f"runner: quality: kunne ikke opprette klient: {exc}")
             client = None
     else:
         client = None
 
-    model = agent_cfg.get("model", "gpt-4o")
+    model = agent_cfg.get("model", "claude-sonnet-4-6")
 
     for _, row in candidates.iterrows():
         ticker = str(row.get("ticker", "UNKNOWN"))

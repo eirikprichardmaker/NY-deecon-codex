@@ -92,7 +92,7 @@ valuation:
 
 agents:
   enabled: true
-  model: gpt-4o
+  model: claude-sonnet-4-6
   cost_control:
     max_tickers_to_analyze: 10
 

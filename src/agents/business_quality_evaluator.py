@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from src.agents.schemas import QualityInput, QualityOutput, VetoAction
 
 if TYPE_CHECKING:
-    from openai import OpenAI
+    from anthropic import Anthropic
 
 logger = logging.getLogger(__name__)
 
@@ -91,11 +91,11 @@ def _deterministic_pre_check(inp: QualityInput) -> QualityOutput | None:
 def run_quality_evaluator(
     input_data: QualityInput,
     client: Any,
-    model: str = "gpt-4o",
+    model: str = "claude-sonnet-4-6",
 ) -> QualityOutput:
     """
     Run Business Quality Evaluator. On failure, returns minimal valid output.
-    Note: client may be None if openai is not installed — returns fallback.
+    Note: client may be None if anthropic is not installed — returns fallback.
     """
     # Deterministisk pre-sjekk
     pre = _deterministic_pre_check(input_data)
@@ -104,23 +104,19 @@ def run_quality_evaluator(
         return pre
 
     if client is None:
-        return _fallback_output(input_data, reason="OpenAI-klient ikke tilgjengelig")
+        return _fallback_output(input_data, reason="Anthropic-klient ikke tilgjengelig")
 
     try:
-        response = client.beta.chat.completions.parse(
+        response = client.messages.create(
             model=model,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": json.dumps(
-                    input_data.model_dump(), indent=2, ensure_ascii=False
-                )},
-            ],
-            response_format=QualityOutput,
-            temperature=0.0,
+            max_tokens=1024,
+            system=SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": json.dumps(
+                input_data.model_dump(), indent=2, ensure_ascii=False
+            )}],
         )
-        output = response.choices[0].message.parsed
-        if output is None:
-            raise ValueError("Parsed output er None")
+        text = response.content[0].text
+        output = QualityOutput.model_validate_json(text)
         return output
     except Exception as e:
         logger.error(f"Quality evaluator feilet for {input_data.ticker}: {e}")

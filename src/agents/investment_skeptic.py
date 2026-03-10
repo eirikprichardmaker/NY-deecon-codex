@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from src.agents.schemas import RiskFinding, SkepticInput, SkepticOutput, VetoAction
 
 if TYPE_CHECKING:
-    from openai import OpenAI
+    from anthropic import Anthropic
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +128,7 @@ def _enforce_conservatism(
 def run_skeptic(
     input_data: SkepticInput,
     client: Any,
-    model: str = "gpt-4o",
+    model: str = "claude-sonnet-4-6",
     max_retries: int = 3,
 ) -> SkepticOutput:
     """
@@ -146,18 +146,14 @@ def run_skeptic(
 
     for attempt in range(max_retries):
         try:
-            response = client.beta.chat.completions.parse(
+            response = client.messages.create(
                 model=model,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": user_content},
-                ],
-                response_format=SkepticOutput,
-                temperature=0.0,
+                max_tokens=1024,
+                system=SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": user_content}],
             )
-            output = response.choices[0].message.parsed
-            if output is None:
-                raise ValueError("Parsed output er None")
+            text = response.content[0].text
+            output = SkepticOutput.model_validate_json(text)
             return _enforce_conservatism(output, input_data)
         except Exception as e:
             logger.warning(f"Skeptic forsøk {attempt + 1} feilet: {e}")
