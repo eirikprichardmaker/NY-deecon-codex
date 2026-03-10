@@ -140,6 +140,30 @@ def main() -> int:
 
         log.info("PIPELINE OK")
 
+        # --- Business Quality Evaluator (Agent A) ---
+        # Kjøres etter alle steg. business_quality_evaluator.enabled=false → skip.
+        try:
+            _agent_cfg_q = ctx.cfg.get("agents") or {}
+            _quality_cfg = _agent_cfg_q.get("business_quality_evaluator", {}) or {}
+            if _agent_cfg_q.get("enabled", False) and _quality_cfg.get("enabled", False):
+                import pandas as _pd
+                from src.agents.runner import run_quality_on_shortlist
+
+                _shortlist_csv = ctx.run_dir / "valuation.csv"
+                if _shortlist_csv.exists():
+                    _sq_df = _pd.read_csv(_shortlist_csv)
+                    _quality_results = run_quality_on_shortlist(
+                        _sq_df, run_dir=ctx.run_dir,
+                        agent_cfg=_agent_cfg_q, asof=ctx.asof,
+                    )
+                    log.info(
+                        f"quality: evaluerte {len(_quality_results)} tickers → quality_results.json"
+                    )
+            else:
+                log.info("quality: business_quality_evaluator deaktivert — skip")
+        except Exception as _q_exc:
+            log.warning(f"quality: feilet (ikke-kritisk): {_q_exc}")
+
         # --- Dossier Writer (Agent C) ---
         # Kjøres etter alle steg, leser fra run_dir-output.
         # dossier_writer.enabled=false → skip.
