@@ -3350,6 +3350,32 @@ def run(ctx, log) -> int:
         "model", "reason",
     ] if c in df.columns]
 
+    # --- Investment Skeptic (Agent B) ---
+    # Kjøres på topp-N eligible tickers. VETO_CASH overstyrer KANDIDAT.
+    # agents.enabled=false → bypass (ren deterministisk pipeline).
+    try:
+        _agent_cfg = ctx.cfg.get("agents") or {}
+        if _agent_cfg.get("enabled", False) and not eligible.empty:
+            from src.agents.runner import run_skeptic_on_shortlist
+            from src.agents.schemas import VetoAction
+            _skeptic_results = run_skeptic_on_shortlist(
+                shortlist_df=eligible,
+                run_dir=ctx.run_dir,
+                agent_cfg=_agent_cfg,
+                asof=ctx.asof,
+            )
+            for _ticker, _result in _skeptic_results.items():
+                if _result.veto == VetoAction.VETO_CASH:
+                    _mask = eligible["ticker"] == _ticker
+                    eligible = eligible[~_mask]   # fjern fra eligible
+                    _df_mask = df["ticker"] == _ticker
+                    df.loc[_df_mask, "decision_reasons"] = (
+                        df.loc[_df_mask, "decision_reasons"].fillna("") + ";skeptic_veto"
+                    ).str.lstrip(";")
+                    log.info(f"decision: skeptic VETO_CASH for {_ticker}")
+    except Exception as _agent_exc:
+        log.warning(f"decision: agent-integrasjon feilet (ikke-kritisk): {_agent_exc}")
+
     out_csv = ctx.run_dir / "decision.csv"
     out_md = ctx.run_dir / "decision.md"
 
