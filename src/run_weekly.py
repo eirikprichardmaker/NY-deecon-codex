@@ -96,6 +96,21 @@ def main() -> int:
         log.info(f"config={ctx.config_path}")
         log.info(f"run_dir={ctx.run_dir}")
 
+        try:
+            from src.manifest import write_manifest
+            write_manifest(
+                run_dir=ctx.run_dir,
+                asof=ctx.asof,
+                config_path=ctx.config_path,
+                seed=int(ctx.cfg.get("seed", 0)),
+                ticker_count=0,  # ukjent på dette tidspunktet — oppdateres ikke i v1
+                data_sources=list(ctx.cfg.get("paths", {}).keys()),
+                agent_config=ctx.cfg.get("agents"),
+            )
+            log.info("manifest: wrote manifest.json")
+        except Exception as _manifest_exc:
+            log.warning(f"manifest: kunne ikke skrive manifest (ikke-kritisk): {_manifest_exc}")
+
         if args.dry_run:
             log.info("dry-run: stopping here (no pipeline executed).")
             return 0
