@@ -89,3 +89,16 @@ valuation:
   prefer_quarterly_reports: true
   require_quarterly_reports: true
   max_quarterly_report_age_days: 220
+
+agents:
+  enabled: true
+  model: gpt-4o
+
+  investment_skeptic:
+    enabled: true
+
+  business_quality_evaluator:
+    enabled: true
+
+  dossier_writer:
+    enabled: true
