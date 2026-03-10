@@ -857,6 +857,8 @@ class DeeconGui:
         self.command_preview_label: "ttk.Label | None" = None
         self.ticker_feedback_label: "ttk.Label | None" = None
         self.results_tab_index = 0
+        self.agents_notebook: "ttk.Notebook | None" = None
+        self.strategy_a_text: "tk.Text | None" = None
 
         self._configure_styles()
         self._build_layout()
@@ -1032,10 +1034,13 @@ class DeeconGui:
 
         run_tab = ttk.Frame(self.tabs, padding=10, style="App.TFrame")
         results_tab = ttk.Frame(self.tabs, padding=10, style="App.TFrame")
+        agents_tab = ttk.Frame(self.tabs, padding=10, style="App.TFrame")
         self.tabs.add(results_tab, text="Resultater")
         self.tabs.add(run_tab, text="Kjoring")
+        self.tabs.add(agents_tab, text="Agenter")
         self._build_results_tab(results_tab)
         self._build_run_tab(run_tab)
+        self._build_agents_tab(agents_tab)
         self._refresh_results()
 
     def _select_results_main_tab(self) -> None:
@@ -1166,6 +1171,51 @@ class DeeconGui:
         self.log_box["yscrollcommand"] = yscroll.set
         self.log_box.configure(state="disabled")
 
+    def _build_agents_tab(self, tab: "ttk.Frame") -> None:
+        wrap = ttk.Frame(tab, style="App.TFrame")
+        wrap.pack(fill="both", expand=True)
+
+        toolbar = ttk.LabelFrame(wrap, text="Agent Toolbar", padding=10, style="Section.TLabelframe")
+        toolbar.pack(fill="x", pady=(0, 8))
+        ttk.Button(toolbar, text="Refresh Agents", style="Secondary.TButton", command=self._refresh_agents).pack(side="left")
+
+        self.agents_notebook = ttk.Notebook(wrap)
+        self.agents_notebook.pack(fill="both", expand=True)
+
+        # Strategy A tab
+        strategy_a_tab = ttk.Frame(self.agents_notebook, padding=10, style="App.TFrame")
+        self.agents_notebook.add(strategy_a_tab, text="Strategy A")
+        self._build_strategy_a_tab(strategy_a_tab)
+
+    def _build_strategy_a_tab(self, tab: "ttk.Frame") -> None:
+        self.strategy_a_text = tk.Text(
+            tab,
+            wrap="word",
+            bg="#f8fafc",
+            fg="#0f172a",
+            relief="flat",
+            borderwidth=0,
+            font=("Segoe UI", 11),
+            padx=8,
+            pady=8,
+        )
+        self.strategy_a_text.pack(fill="both", expand=True)
+        yscroll = ttk.Scrollbar(tab, orient="vertical", command=self.strategy_a_text.yview)
+        yscroll.pack(side="right", fill="y")
+        self.strategy_a_text["yscrollcommand"] = yscroll.set
+        self._load_strategy_a_recommendation()
+
+    def _load_strategy_a_recommendation(self) -> None:
+        path = Path("experiments/strategyA_recommendation.md")
+        if path.exists():
+            text = path.read_text(encoding="utf-8")
+        else:
+            text = "Strategy A recommendation not found. Run agent A first."
+        self._set_text_widget_text(self.strategy_a_text, text)
+
+    def _refresh_agents(self) -> None:
+        self._load_strategy_a_recommendation()
+
     def _set_text_widget_text(self, widget: "tk.Text", text: str) -> None:
         widget.configure(state="normal")
         widget.delete("1.0", tk.END)
@@ -1198,6 +1248,7 @@ class DeeconGui:
         ttk.Button(toolbar, text="Latest decision", style="Secondary.TButton", command=self._show_latest_decision_in_gui).grid(row=0, column=8, padx=(0, 6))
         ttk.Button(toolbar, text="Latest test", style="Secondary.TButton", command=self._show_latest_test_report_in_gui).grid(row=0, column=9, padx=(0, 6))
         ttk.Button(toolbar, text="Latest DQ", style="Secondary.TButton", command=self._show_latest_dq_report_in_gui).grid(row=0, column=10)
+        ttk.Button(toolbar, text="Run Model", style="Primary.TButton", command=self._run_model).grid(row=0, column=11, padx=(0, 6))
         ttk.Label(toolbar, text="Ticker", style="Info.TLabel").grid(row=1, column=0, sticky="w", pady=(8, 0))
         ticker_entry = ttk.Entry(toolbar, textvariable=self.ticker_query_var)
         ticker_entry.grid(row=1, column=1, columnspan=3, sticky="we", padx=(6, 8), pady=(8, 0))
