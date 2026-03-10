@@ -3053,6 +3053,29 @@ def run(ctx, log) -> int:
     dq_audit_out = dq_audit.reindex(columns=dq_cols) if not dq_audit.empty else pd.DataFrame(columns=dq_cols)
     _atomic_write_csv(ctx.run_dir / "data_quality_audit.csv", dq_audit_out)
 
+    # DQ v2: kjør regelbasert DQ parallelt med eksisterende (ikke erstatt ennå)
+    try:
+        from src.data_quality.rules import run_dq_rules as _run_dq_rules_v2
+        dq_flags_v2, dq_audit_v2 = _run_dq_rules_v2(df)
+        for c in dq_flags_v2.columns:
+            df[c] = dq_flags_v2[c]
+        _atomic_write_csv(ctx.run_dir / "data_quality_audit_v2.csv", dq_audit_v2)
+        # Logg avvik mellom v1 og v2
+        if "data_quality_fail" in df.columns:
+            v1_fail = df["data_quality_fail"].fillna(False).astype(bool)
+            v2_fail = df["dq_fail_v2"].fillna(False).astype(bool)
+            disagreements = int(((v1_fail != v2_fail)).sum())
+            if disagreements > 0:
+                log.warning(
+                    f"dq_v2: {disagreements} ticker(s) der v1 og v2 er uenige om FAIL "
+                    f"(v1_only={int((v1_fail & ~v2_fail).sum())}, "
+                    f"v2_only={int((~v1_fail & v2_fail).sum())})"
+                )
+            else:
+                log.info("dq_v2: v1 og v2 er enige om alle FAIL-flags")
+    except Exception as _dq_v2_exc:
+        log.warning(f"dq_v2: kunne ikke kjøre DQ v2 (ikke-kritisk): {_dq_v2_exc}")
+
     df["fundamental_ok"] = (
         df["mos"].notna() &
         (df["mos"] >= df["mos_req"]) &
