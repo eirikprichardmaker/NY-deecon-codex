@@ -139,6 +139,73 @@ def main() -> int:
             log.info(f"STEP OK: {step_name}")
 
         log.info("PIPELINE OK")
+
+        # --- Dossier Writer (Agent C) ---
+        # Kjøres etter alle steg, leser fra run_dir-output.
+        # dossier_writer.enabled=false → skip.
+        try:
+            _agent_cfg = ctx.cfg.get("agents") or {}
+            _dossier_cfg = _agent_cfg.get("dossier_writer", {}) or {}
+            if _agent_cfg.get("enabled", False) and _dossier_cfg.get("enabled", False):
+                import csv
+                from src.agents.dossier_writer import build_dossier_input, run_dossier_writer
+                from src.agents.runner import _get_openai_client
+
+                decision_csv = ctx.run_dir / "decision.csv"
+                if decision_csv.exists():
+                    with open(decision_csv, newline="", encoding="utf-8") as f:
+                        rows = list(csv.DictReader(f))
+                    pick = rows[0] if rows else {}
+                    ticker = pick.get("ticker", "UNKNOWN")
+                    final_decision = pick.get("model", pick.get("decision", "CASH"))
+                    valuation_summary = {
+                        k: pick.get(k) for k in
+                        ["mos", "intrinsic_value", "wacc_used", "market_cap",
+                         "adj_close", "quality_score", "roic_wacc_spread"]
+                        if pick.get(k)
+                    }
+                    gate_log = [
+                        {"gate": "fundamental_ok", "passed": pick.get("fundamental_ok")},
+                        {"gate": "technical_ok",   "passed": pick.get("technical_ok")},
+                    ]
+                    try:
+                        _client = _get_openai_client(_agent_cfg)
+                    except (ImportError, Exception):
+                        _client = None
+
+                    dossier_input = build_dossier_input(
+                        ticker=ticker,
+                        asof=ctx.asof,
+                        final_decision=final_decision,
+                        gate_log=gate_log,
+                        valuation_summary=valuation_summary,
+                    )
+                    dossier = run_dossier_writer(
+                        dossier_input,
+                        client=_client,
+                        model=_agent_cfg.get("model", "gpt-4o"),
+                    )
+                    (ctx.run_dir / "decision_agent.md").write_text(
+                        dossier.narrative, encoding="utf-8"
+                    )
+                    (ctx.run_dir / "decision_agent.json").write_text(
+                        dossier.model_dump_json(indent=2), encoding="utf-8"
+                    )
+                    log.info(f"dossier: wrote decision_agent.md for {ticker}")
+        except Exception as _dossier_exc:
+            log.warning(f"dossier: feilet (ikke-kritisk): {_dossier_exc}")
+
+        # --- Output-kontrakt ---
+        try:
+            from src.output_contract import validate_run_outputs
+            _ok, _missing = validate_run_outputs(ctx.run_dir)
+            if not _ok:
+                log.warning(f"output_contract: manglende filer: {_missing}")
+            else:
+                log.info("output_contract: alle påkrevde filer er til stede")
+        except Exception as _oc_exc:
+            log.warning(f"output_contract: validering feilet (ikke-kritisk): {_oc_exc}")
+
         return 0
 
     except AppError as e:
