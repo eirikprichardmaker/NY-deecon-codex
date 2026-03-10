@@ -93,6 +93,8 @@ valuation:
 agents:
   enabled: true
   model: gpt-4o
+  cost_control:
+    max_tickers_to_analyze: 10
 
   investment_skeptic:
     enabled: true
