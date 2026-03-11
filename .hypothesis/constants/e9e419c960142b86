@@ -1,0 +1,4 @@
+# file: /usr/local/py-utils/bin/pytest
+# hypothesis_version: 6.151.9
+
+['.exe', '__main__']

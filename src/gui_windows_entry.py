@@ -3,6 +3,10 @@
 This wrapper keeps relative paths stable in frozen mode and supports
 `--run-module <module>` dispatch so the bundled EXE can execute pipeline/test
 modules without an external Python install.
+
+**NOTE:** exe/GUI build has been deprioritized; this file is retained
+for potential future use but the standard workflow runs the Python
+scripts directly on Windows.
 """
 
 from __future__ import annotations

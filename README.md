@@ -2,6 +2,18 @@
 
 Dette repoet er klargjort for import av kjernefiler fra Børsdata uten å inkludere tunge/binære artefakter.
 
+**Viktig:** kjør hele pipelinen på Windows der dataene ligger (f.eks. `G:\Min disk\NEW DEECON\data`). Codespaces brukes kun til redigering og testing.
+
+**Oppsett:**
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate
+pip install -r requirements.txt   # inkluderer python-dotenv nå
+```
+
+==> Hvis du bruker WSL kan du montere G: som `/mnt/g/`.
+
 ## Status
 - Kilderepo `Borsdata` ble ikke funnet i arbeidsområdet i denne sesjonen.
 - Target-repo `NY-deecon-codex` finnes og inneholder n? pipeline-kode (`src/`, `tools/`, `tests/`, `config/`).
@@ -72,6 +84,10 @@ Registrer to daglige Task Scheduler-jobber (morgen + kveld):
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/register_daily_tasks.ps1 -RunWeeklyDecisionInEvening
 ```
+
+## Import-manifest (forventet innhold fra Børsdata)
+
+> **Nota bene:** Windows GUI / PyInstaller-exe bygg har blitt deprioritert. Filene under `build/pyinstaller` og `dist/` er fjernet og ikke nødvendige for utvikling.
 
 ## Import-manifest (forventet innhold fra Børsdata)
 - `src/`
