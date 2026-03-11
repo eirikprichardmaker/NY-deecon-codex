@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  # n8n: workflow-orkestrator
+  n8n:
+    image: n8nio/n8n:latest
+    restart: unless-stopped
+    environment:
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      - GENERIC_TIMEZONE=Europe/Oslo
+      - N8N_METRICS=true
+      - EXECUTIONS_DATA_PRUNE=true
+      - EXECUTIONS_DATA_MAX_AGE=168   # 7 dager
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://localhost:5678/
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      - deecon-api
+
+  # Deecon FastAPI-tjeneste
+  deecon-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    restart: unless-stopped
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - DEECON_CONFIG=/app/config/config.yaml
+      - DEECON_RUNS_DIR=/app/runs
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config:/app/config:ro
+      - ./data:/app/data:ro
+      - runs_data:/app/runs
+
+volumes:
+  n8n_data:
+  runs_data:

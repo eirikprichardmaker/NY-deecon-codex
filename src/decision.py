@@ -3053,6 +3053,18 @@ def run(ctx, log) -> int:
     dq_audit_out = dq_audit.reindex(columns=dq_cols) if not dq_audit.empty else pd.DataFrame(columns=dq_cols)
     _atomic_write_csv(ctx.run_dir / "data_quality_audit.csv", dq_audit_out)
 
+    # DQ v2: regel-ID-baserte sjekker (supplement til eksisterende, ikke erstatning)
+    try:
+        from src.data_quality.rules import run_dq_rules
+        dq_flags_v2, dq_audit_v2 = run_dq_rules(df)
+        for c in dq_flags_v2.columns:
+            df[c] = dq_flags_v2[c]
+        _atomic_write_csv(ctx.run_dir / "data_quality_audit_v2.csv", dq_audit_v2)
+        log.info(f"decision: DQ v2 — {int(dq_flags_v2['dq_fail_v2'].sum())} tickers med FAIL")
+    except Exception as _dq_v2_err:
+        log.warning(f"decision: DQ v2 feilet (ikke-kritisk): {_dq_v2_err}")
+        _atomic_write_csv(ctx.run_dir / "data_quality_audit_v2.csv", pd.DataFrame())
+
     df["fundamental_ok"] = (
         df["mos"].notna() &
         (df["mos"] >= df["mos_req"]) &
@@ -3205,6 +3217,26 @@ def run(ctx, log) -> int:
     df["value_qc_unresolved_alert_count"] = 0
     df["value_qc_unresolved_metrics"] = ""
     _write_ma200_sanity_report(ctx.run_dir, ctx.asof, df)
+
+    # decision_reasons.json — maskinlesbar per-ticker beslutningslogg
+    try:
+        _dr_records = []
+        for _, _r in df.iterrows():
+            _dr_records.append({
+                "ticker": str(_r.get("ticker", "")),
+                "fundamental_ok": bool(_r.get("fundamental_ok", False)),
+                "technical_ok": bool(_r.get("technical_ok", False)),
+                "eligible": bool(_r.get("eligible", False)),
+                "decision_reasons": str(_r.get("decision_reasons", "")),
+                "dq_fail_rules": str(_r.get("dq_fail_rules", "")),
+                "dq_warn_rules": str(_r.get("dq_warn_rules", "")),
+            })
+        _atomic_write_text(
+            ctx.run_dir / "decision_reasons.json",
+            json.dumps({"asof": ctx.asof, "run_id": ctx.run_id, "decisions": _dr_records}, indent=2, ensure_ascii=False),
+        )
+    except Exception as _dr_err:
+        log.warning(f"decision: decision_reasons.json feilet (ikke-kritisk): {_dr_err}")
 
     strategy_screen_cols: list[str] = []
     if use_dividend_strategy:

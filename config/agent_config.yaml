@@ -1,0 +1,50 @@
+agents:
+  # false = bypass alle agenter, ren deterministisk pipeline
+  enabled: true
+  model: "claude-sonnet-4-6"
+  fallback_model: "claude-haiku-4-5-20251001"
+  max_retries: 3
+  max_input_tokens: 8000
+  max_output_tokens: 2000
+  temperature: 0.0  # Determinisme
+
+  business_quality:
+    enabled: false          # Slås på i fase 4
+    veto_on_weak: true
+    min_evidence_tokens: 200
+
+  investment_skeptic:
+    enabled: true           # Slås på i fase 2
+    terminal_value_max_pct: 0.60
+    sensitivity_flip_threshold: 0.20  # ±20% perturbation
+
+  dossier_writer:
+    enabled: true           # Slås på i fase 3
+    cost_control:
+      max_tickers_to_analyze: 5
+      cache_ttl_hours: 24
+      per_run_budget_usd: 1.00  # Hard tak per kjøring
+
+data_quality:
+  critical_fields:
+    - adj_close
+    - market_cap
+    - shares_outstanding
+    - ma200
+    - index_ma200
+    - intrinsic_value
+    - wacc_used
+    - roic_current
+    - fcf_yield
+    - nd_ebitda
+    - ev_ebit
+  stale_fundamentals_days: 450
+  outlier_mad_threshold: 6.0
+  required_fields_coverage_min: 0.80
+  trust_levels:
+    esef_quarterly: 100
+    esef_annual: 90
+    annual_report_pdf: 70
+    borsdata_aggregated: 50
+    calculated: 30
+    estimated: 10

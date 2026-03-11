@@ -859,6 +859,45 @@ class DeeconGui:
         self.results_tab_index = 0
         self.agents_notebook: "ttk.Notebook | None" = None
         self.strategy_a_text: "tk.Text | None" = None
+        self.agent_valuation_text: "tk.Text | None" = None
+        self.agent_screening_text: "tk.Text | None" = None
+        self.agent_decision_text: "tk.Text | None" = None
+        self.agents_run_dir_var = tk.StringVar(value="Ingen kjøring lastet")
+
+        # LLM agent result viewers (Agent A, B, C)
+        self._llm_agent_texts: Dict[str, "tk.Text | None"] = {
+            "skeptic": None, "dossier": None, "quality": None
+        }
+        self._llm_agent_status_vars: Dict[str, "tk.StringVar"] = {
+            "skeptic": tk.StringVar(value="Ingen resultater lastet"),
+            "dossier": tk.StringVar(value="Ingen resultater lastet"),
+            "quality": tk.StringVar(value="Ingen resultater lastet"),
+        }
+
+        # Per-agent state: keyed by agent id ("factor", "valuation", "decision")
+        self._agent_procs: Dict[str, "subprocess.Popen[str] | None"] = {
+            "factor": None, "valuation": None, "decision": None,
+        }
+        self._agent_log_queues: Dict[str, "queue.Queue[object]"] = {
+            "factor": queue.Queue(), "valuation": queue.Queue(), "decision": queue.Queue(),
+        }
+        self._agent_log_texts: Dict[str, "tk.Text | None"] = {
+            "factor": None, "valuation": None, "decision": None,
+        }
+        self._agent_result_texts: Dict[str, "tk.Text | None"] = {
+            "factor": None, "valuation": None, "decision": None,
+        }
+        self._agent_status_vars: Dict[str, "tk.StringVar"] = {
+            "factor": tk.StringVar(value="Klar"),
+            "valuation": tk.StringVar(value="Klar"),
+            "decision": tk.StringVar(value="Klar"),
+        }
+        self._agent_run_btns: Dict[str, "ttk.Button | None"] = {
+            "factor": None, "valuation": None, "decision": None,
+        }
+        self._agent_stop_btns: Dict[str, "ttk.Button | None"] = {
+            "factor": None, "valuation": None, "decision": None,
+        }
 
         self._configure_styles()
         self._build_layout()
@@ -866,6 +905,7 @@ class DeeconGui:
         self._set_status("Ready", tone="ok")
         self._load_latest_data_on_startup()
         self._poll_logs()
+        self._poll_agent_logs()
 
     def _configure_styles(self) -> None:
         style = ttk.Style(self.root)
@@ -918,8 +958,14 @@ class DeeconGui:
         style.configure("Treeview", rowheight=26, font=("Segoe UI", 10), background="#ffffff", fieldbackground="#ffffff", foreground="#0f172a")
         style.configure("Treeview.Heading", font=("Segoe UI", 10, "bold"), background="#e7edf7", foreground="#0f172a")
         style.map("Treeview", background=[("selected", "#dbeafe")], foreground=[("selected", "#0f172a")])
-        style.configure("TEntry", padding=(6, 5))
-        style.configure("TCombobox", padding=(6, 5))
+        style.configure("TEntry", foreground="#0f172a", fieldbackground="#f8fafc", padding=(6, 5))
+        style.map("TEntry", foreground=[("disabled", "#94a3b8")], fieldbackground=[("disabled", "#f1f5f9")])
+        style.configure("TCombobox", foreground="#0f172a", fieldbackground="#f8fafc", padding=(6, 5))
+        style.map(
+            "TCombobox",
+            foreground=[("readonly", "#0f172a"), ("disabled", "#94a3b8"), ("focus", "#0f172a")],
+            fieldbackground=[("readonly", "#f8fafc"), ("disabled", "#f1f5f9")],
+        )
 
     def _set_status(self, text: str, tone: str = "neutral") -> None:
         self.status_var.set(text)
@@ -1035,12 +1081,15 @@ class DeeconGui:
         run_tab = ttk.Frame(self.tabs, padding=10, style="App.TFrame")
         results_tab = ttk.Frame(self.tabs, padding=10, style="App.TFrame")
         agents_tab = ttk.Frame(self.tabs, padding=10, style="App.TFrame")
+        llm_agents_tab = ttk.Frame(self.tabs, padding=10, style="App.TFrame")
         self.tabs.add(results_tab, text="Resultater")
         self.tabs.add(run_tab, text="Kjoring")
         self.tabs.add(agents_tab, text="Agenter")
+        self.tabs.add(llm_agents_tab, text="AI Agenter")
         self._build_results_tab(results_tab)
         self._build_run_tab(run_tab)
         self._build_agents_tab(agents_tab)
+        self._build_llm_agents_tab(llm_agents_tab)
         self._refresh_results()
 
     def _select_results_main_tab(self) -> None:
@@ -1171,50 +1220,378 @@ class DeeconGui:
         self.log_box["yscrollcommand"] = yscroll.set
         self.log_box.configure(state="disabled")
 
+    # ------------------------------------------------------------------ #
+    # Agents tab                                                           #
+    # ------------------------------------------------------------------ #
+
+    _AGENT_SPECS: "List[Tuple[str, str, str, str, List[str], List[str]]]" = [
+        (
+            "factor",
+            "Faktor & Kvalitetsagent",
+            "src.agents.factor_agent",
+            "Beregner faktorer (quality/value/lowrisk/balance) og kapitalkostnad (WACC/COE).\n"
+            "Krever: data/processed/master.parquet",
+            [],
+            [],
+        ),
+        (
+            "valuation",
+            "Verdsettelses-agent",
+            "src.agents.valuation_agent",
+            "Beregner intrinsic value via DCF/DDM/RIM og margin of safety (MOS).\n"
+            "Krever: data/processed/master.parquet (med faktorer fra Faktor-agent)",
+            ["valuation.csv", "valuation_sensitivity.csv"],
+            [],
+        ),
+        (
+            "decision",
+            "Beslutnings-agent",
+            "src.agents.decision_agent",
+            "Screening (MOS/kvalitet/teknisk), rangering og endelig valg — maks 1 aksje ellers CASH.\n"
+            "Krever: data/processed/master_valued.parquet + valuation.csv",
+            ["decision.md", "decision.csv"],
+            ["screen_basic.csv", "shortlist.csv"],
+        ),
+    ]
+
     def _build_agents_tab(self, tab: "ttk.Frame") -> None:
         wrap = ttk.Frame(tab, style="App.TFrame")
         wrap.pack(fill="both", expand=True)
 
-        toolbar = ttk.LabelFrame(wrap, text="Agent Toolbar", padding=10, style="Section.TLabelframe")
-        toolbar.pack(fill="x", pady=(0, 8))
-        ttk.Button(toolbar, text="Refresh Agents", style="Secondary.TButton", command=self._refresh_agents).pack(side="left")
-
         self.agents_notebook = ttk.Notebook(wrap)
         self.agents_notebook.pack(fill="both", expand=True)
 
-        # Strategy A tab
-        strategy_a_tab = ttk.Frame(self.agents_notebook, padding=10, style="App.TFrame")
-        self.agents_notebook.add(strategy_a_tab, text="Strategy A")
-        self._build_strategy_a_tab(strategy_a_tab)
+        for agent_id, label, _module, desc, primary_files, secondary_files in self._AGENT_SPECS:
+            agent_tab = ttk.Frame(self.agents_notebook, padding=8, style="App.TFrame")
+            self.agents_notebook.add(agent_tab, text=label)
+            self._build_single_agent_tab(agent_tab, agent_id, label, desc, primary_files, secondary_files)
 
-    def _build_strategy_a_tab(self, tab: "ttk.Frame") -> None:
-        self.strategy_a_text = tk.Text(
-            tab,
-            wrap="word",
-            bg="#f8fafc",
-            fg="#0f172a",
-            relief="flat",
-            borderwidth=0,
-            font=("Segoe UI", 11),
-            padx=8,
-            pady=8,
+    def _build_single_agent_tab(
+        self,
+        tab: "ttk.Frame",
+        agent_id: str,
+        label: str,
+        desc: str,
+        primary_files: "List[str]",
+        secondary_files: "List[str]",
+    ) -> None:
+        # Header
+        hdr = ttk.LabelFrame(tab, text=label, padding=10, style="Section.TLabelframe")
+        hdr.pack(fill="x", pady=(0, 6))
+        ttk.Label(hdr, text=desc, style="Muted.TLabel", wraplength=900, justify="left").pack(anchor="w")
+
+        # Controls row
+        ctrl = ttk.Frame(hdr, style="App.TFrame")
+        ctrl.pack(fill="x", pady=(8, 0))
+
+        run_btn = ttk.Button(
+            ctrl, text="Kjør agent", style="Primary.TButton",
+            command=lambda aid=agent_id: self._run_agent(aid),
         )
-        self.strategy_a_text.pack(fill="both", expand=True)
-        yscroll = ttk.Scrollbar(tab, orient="vertical", command=self.strategy_a_text.yview)
-        yscroll.pack(side="right", fill="y")
-        self.strategy_a_text["yscrollcommand"] = yscroll.set
-        self._load_strategy_a_recommendation()
+        run_btn.pack(side="left")
+        self._agent_run_btns[agent_id] = run_btn
 
-    def _load_strategy_a_recommendation(self) -> None:
-        path = Path("experiments/strategyA_recommendation.md")
-        if path.exists():
-            text = path.read_text(encoding="utf-8")
+        stop_btn = ttk.Button(
+            ctrl, text="Stop", style="Secondary.TButton", state="disabled",
+            command=lambda aid=agent_id: self._stop_agent(aid),
+        )
+        stop_btn.pack(side="left", padx=(6, 0))
+        self._agent_stop_btns[agent_id] = stop_btn
+
+        ttk.Button(
+            ctrl, text="Vis resultater", style="Secondary.TButton",
+            command=lambda aid=agent_id: self._refresh_agent_results(aid),
+        ).pack(side="left", padx=(6, 0))
+
+        ttk.Label(ctrl, text="Status:", style="Info.TLabel").pack(side="left", padx=(16, 4))
+        ttk.Label(ctrl, textvariable=self._agent_status_vars[agent_id], style="Info.TLabel").pack(side="left")
+
+        # Split pane: log left, results right
+        pane = ttk.Panedwindow(tab, orient="horizontal")
+        pane.pack(fill="both", expand=True, pady=(6, 0))
+
+        log_frame = ttk.LabelFrame(pane, text="Logg", padding=4, style="Section.TLabelframe")
+        result_frame = ttk.LabelFrame(pane, text="Resultater", padding=4, style="Section.TLabelframe")
+        pane.add(log_frame, weight=1)
+        pane.add(result_frame, weight=1)
+
+        log_text = self._make_scrolled_text(log_frame, bg="#0f1722", fg="#e2e8f0", font=("Consolas", 9))
+        self._agent_log_texts[agent_id] = log_text
+        self._configure_log_tags(log_text)
+
+        result_text = self._make_scrolled_text(result_frame, bg="#f8fafc", fg="#0f172a", font=("Segoe UI", 10))
+        self._agent_result_texts[agent_id] = result_text
+
+        all_files = primary_files + secondary_files
+        if all_files:
+            placeholder = "Kjør agenten for å se resultater.\nForventede filer:\n  " + "\n  ".join(all_files)
         else:
-            text = "Strategy A recommendation not found. Run agent A first."
-        self._set_text_widget_text(self.strategy_a_text, text)
+            placeholder = "Kjør agenten for å se resultater."
+        self._set_text_widget_text(result_text, placeholder)
+
+    def _make_scrolled_text(
+        self, parent: "ttk.Frame", bg: str, fg: str, font: tuple
+    ) -> "tk.Text":
+        frame = ttk.Frame(parent, style="App.TFrame")
+        frame.pack(fill="both", expand=True)
+        text = tk.Text(
+            frame, wrap="word", bg=bg, fg=fg,
+            relief="flat", borderwidth=0, font=font, padx=6, pady=6,
+        )
+        text.pack(side="left", fill="both", expand=True)
+        yscroll = ttk.Scrollbar(frame, orient="vertical", command=text.yview)
+        yscroll.pack(side="right", fill="y")
+        text["yscrollcommand"] = yscroll.set
+        return text
+
+    def _configure_log_tags(self, text: "tk.Text") -> None:
+        text.tag_configure("flag_red", foreground="#fca5a5")
+        text.tag_configure("flag_green", foreground="#86efac")
+
+    def _run_agent(self, agent_id: str) -> None:
+        if self._agent_procs.get(agent_id) is not None:
+            return
+        spec = next((s for s in self._AGENT_SPECS if s[0] == agent_id), None)
+        if spec is None:
+            return
+        module = spec[2]
+        asof = self.asof_var.get().strip()
+        config = self.config_var.get().strip()
+        run_dir = self.run_dir_var.get().strip() or None
+        cmd = build_module_command(module, [
+            "--asof", asof,
+            "--config", config,
+            *(["--run-dir", run_dir] if run_dir else []),
+        ])
+        log_text = self._agent_log_texts[agent_id]
+        log_text.configure(state="normal")
+        log_text.delete("1.0", tk.END)
+        log_text.insert(tk.END, f"$ {' '.join(cmd)}\n\n")
+        log_text.configure(state="disabled")
+
+        self._agent_status_vars[agent_id].set("Kjører...")
+        if self._agent_run_btns[agent_id]:
+            self._agent_run_btns[agent_id].configure(state="disabled")
+        if self._agent_stop_btns[agent_id]:
+            self._agent_stop_btns[agent_id].configure(state="normal")
+
+        q = self._agent_log_queues[agent_id]
+
+        def _stream(proc: "subprocess.Popen[str]", q: "queue.Queue[object]", aid: str) -> None:
+            try:
+                assert proc.stdout is not None
+                for line in proc.stdout:
+                    q.put(("line", aid, line))
+                proc.wait()
+                q.put(("done", aid, proc.returncode))
+            except Exception as exc:
+                q.put(("done", aid, -1))
+                q.put(("line", aid, f"[feil] {exc}\n"))
+
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+            self._agent_procs[agent_id] = proc
+            threading.Thread(target=_stream, args=(proc, q, agent_id), daemon=True).start()
+        except Exception as exc:
+            self._agent_status_vars[agent_id].set(f"Feil: {exc}")
+            if self._agent_run_btns[agent_id]:
+                self._agent_run_btns[agent_id].configure(state="normal")
+            if self._agent_stop_btns[agent_id]:
+                self._agent_stop_btns[agent_id].configure(state="disabled")
+
+    def _stop_agent(self, agent_id: str) -> None:
+        proc = self._agent_procs.get(agent_id)
+        if proc is not None:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+        self._agent_status_vars[agent_id].set("Stoppet")
+
+    def _poll_agent_logs(self) -> None:
+        for agent_id, q in self._agent_log_queues.items():
+            try:
+                while True:
+                    msg = q.get_nowait()
+                    if not isinstance(msg, tuple):
+                        continue
+                    kind = msg[0]
+                    if kind == "line":
+                        _, aid, line = msg
+                        log_text = self._agent_log_texts.get(aid)
+                        if log_text is not None:
+                            log_text.configure(state="normal")
+                            log_text.insert(tk.END, line)
+                            log_text.see(tk.END)
+                            log_text.configure(state="disabled")
+                    elif kind == "done":
+                        _, aid, code = msg
+                        self._agent_procs[aid] = None
+                        if self._agent_run_btns[aid]:
+                            self._agent_run_btns[aid].configure(state="normal")
+                        if self._agent_stop_btns[aid]:
+                            self._agent_stop_btns[aid].configure(state="disabled")
+                        if code == 0:
+                            self._agent_status_vars[aid].set("Ferdig")
+                            self._refresh_agent_results(aid)
+                        else:
+                            self._agent_status_vars[aid].set(f"Feil (kode {code})")
+            except Exception:
+                pass
+        self.root.after(200, self._poll_agent_logs)
+
+    def _refresh_agent_results(self, agent_id: str) -> None:
+        result_text = self._agent_result_texts.get(agent_id)
+        if result_text is None:
+            return
+        run_dir = find_latest_model_run_dir(Path("runs"))
+        if run_dir is None:
+            self._set_text_widget_text(result_text, "Ingen kjøring funnet.")
+            return
+        spec = next((s for s in self._AGENT_SPECS if s[0] == agent_id), None)
+        if spec is None:
+            return
+        primary_files, secondary_files = spec[4], spec[5]
+        sections: List[str] = [f"=== {spec[1]} — {run_dir} ===\n"]
+        for fname in primary_files + secondary_files:
+            path = run_dir / fname
+            if not path.exists():
+                sections.append(f"\n--- {fname}: ikke funnet ---\n")
+                continue
+            sections.append(f"\n--- {fname} ---\n")
+            try:
+                if fname.endswith(".csv"):
+                    df = pd.read_csv(path)
+                    sections.append(df.to_string(index=False, max_rows=200))
+                else:
+                    sections.append(path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                sections.append(f"[feil ved lesing: {exc}]")
+        self._set_text_widget_text(result_text, "\n".join(sections))
 
     def _refresh_agents(self) -> None:
-        self._load_strategy_a_recommendation()
+        for spec in self._AGENT_SPECS:
+            self._refresh_agent_results(spec[0])
+
+    # ------------------------------------------------------------------ #
+    # LLM Agents tab (Agent A, B, C)                                       #
+    # ------------------------------------------------------------------ #
+
+    _LLM_AGENT_SPECS: "List[Tuple[str, str, str, str]]" = [
+        (
+            "skeptic",
+            "B — Investment Skeptic",
+            "skeptic_results.json",
+            "Adversarial gjennomgang av verdsettelsen. Kan kun produsere PASS, VETO_CASH eller REQUEST_REVIEW.\n"
+            "Kjøres automatisk som del av pipeline-steget 'agents'. Aktivert som standard.",
+        ),
+        (
+            "dossier",
+            "C — Decision Dossier Writer",
+            "decision_agent.json",
+            "Skriver revisjonsvennlig beslutningsrapport på norsk. Har ingen veto-rett.\n"
+            "Kjøres automatisk som del av pipeline-steget 'agents'. Aktivert som standard.",
+        ),
+        (
+            "quality",
+            "A — Business Quality Evaluator",
+            "quality_results.json",
+            "Tekst-basert vurdering av moat, governance og regulatorisk risiko fra årsrapporter.\n"
+            "Deaktivert som standard. Aktiveres med business_quality.enabled: true i agent_config.yaml.",
+        ),
+    ]
+
+    def _build_llm_agents_tab(self, tab: "ttk.Frame") -> None:
+        wrap = ttk.Frame(tab, style="App.TFrame")
+        wrap.pack(fill="both", expand=True)
+
+        # Top bar with refresh button
+        top = ttk.Frame(wrap, style="App.TFrame")
+        top.pack(fill="x", pady=(0, 8))
+        ttk.Label(
+            top,
+            text="LLM-agenter kjøres automatisk som del av pipeline-steget 'agents'. "
+                 "Legg til --steps agents ved kjøring for å aktivere dem.",
+            style="Muted.TLabel",
+            wraplength=900,
+            justify="left",
+        ).pack(side="left", fill="x", expand=True)
+        ttk.Button(
+            top, text="Last inn siste resultater", style="Secondary.TButton",
+            command=self._refresh_llm_agents,
+        ).pack(side="right")
+
+        nb = ttk.Notebook(wrap)
+        nb.pack(fill="both", expand=True)
+
+        for key, label, filename, desc in self._LLM_AGENT_SPECS:
+            agent_tab = ttk.Frame(nb, padding=8, style="App.TFrame")
+            nb.add(agent_tab, text=label)
+
+            hdr = ttk.LabelFrame(agent_tab, text=label, padding=10, style="Section.TLabelframe")
+            hdr.pack(fill="x", pady=(0, 6))
+            ttk.Label(hdr, text=desc, style="Muted.TLabel", wraplength=900, justify="left").pack(anchor="w")
+
+            status_row = ttk.Frame(hdr, style="App.TFrame")
+            status_row.pack(fill="x", pady=(6, 0))
+            ttk.Label(status_row, text="Status:", style="Info.TLabel").pack(side="left")
+            ttk.Label(
+                status_row, textvariable=self._llm_agent_status_vars[key], style="Info.TLabel"
+            ).pack(side="left", padx=(4, 0))
+
+            result_text = self._make_scrolled_text(
+                agent_tab, bg="#f8fafc", fg="#0f172a", font=("Segoe UI", 10)
+            )
+            self._llm_agent_texts[key] = result_text
+            self._set_text_widget_text(result_text, f"Trykk 'Last inn siste resultater' for å laste {filename}.")
+
+        # Auto-load on startup
+        tab.after(300, self._refresh_llm_agents)
+
+    def _refresh_llm_agents(self) -> None:
+        """Les siste agent-resultater fra nyeste run-mappe."""
+        import json as _json
+        run_dir = find_latest_model_run_dir(Path("runs"))
+        if run_dir is None:
+            for key in self._llm_agent_texts:
+                self._llm_agent_status_vars[key].set("Ingen kjøring funnet")
+            return
+
+        for key, label, filename, _ in self._LLM_AGENT_SPECS:
+            path = run_dir / filename
+            text_widget = self._llm_agent_texts.get(key)
+            if text_widget is None:
+                continue
+            if not path.exists():
+                self._llm_agent_status_vars[key].set(f"Ikke funnet: {filename}")
+                self._set_text_widget_text(
+                    text_widget,
+                    f"Filen {filename} ble ikke funnet i {run_dir}.\n\n"
+                    "Kjør pipeline med --steps agents for å generere AI-agent-resultater.",
+                )
+                continue
+            try:
+                raw = path.read_text(encoding="utf-8")
+                try:
+                    data = _json.loads(raw)
+                    content = _json.dumps(data, indent=2, ensure_ascii=False)
+                except Exception:
+                    content = raw
+                self._llm_agent_status_vars[key].set(f"Lastet fra {run_dir.name}")
+                self._set_text_widget_text(text_widget, content)
+            except Exception as exc:
+                self._llm_agent_status_vars[key].set(f"Feil: {exc}")
+                self._set_text_widget_text(text_widget, f"[Feil ved lesing: {exc}]")
+
+    def _load_strategy_a_recommendation(self) -> None:
+        pass  # kept for compatibility
 
     def _set_text_widget_text(self, widget: "tk.Text", text: str) -> None:
         widget.configure(state="normal")
@@ -2664,7 +3041,26 @@ def main() -> int:
     if tk is None:
         print("Tkinter is not available in this Python environment.", file=sys.stderr)
         return 1
+
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:
+            try:
+                ctypes.windll.user32.SetProcessDPIAware()
+            except Exception:
+                pass
+
     root = tk.Tk()
+
+    if sys.platform == "win32":
+        try:
+            dpi = root.winfo_fpixels("1i")
+            root.tk.call("tk", "scaling", dpi / 72.0)
+        except Exception:
+            pass
+
     DeeconGui(root)
     root.mainloop()
     return 0

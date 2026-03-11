@@ -651,6 +651,19 @@ def _apply_wft_data_quality(
 
     static_out = _ensure_wft_dq_columns(static_in)
     panel_out = _ensure_wft_dq_columns(panel_in)
+
+    # DQ v2: legg til regel-ID-baserte kolonner (samme regler som i live-pipeline)
+    try:
+        from src.data_quality.rules import run_dq_rules
+        static_v2_flags, _ = run_dq_rules(static_out)
+        for c in static_v2_flags.columns:
+            static_out[c] = static_v2_flags[c]
+        panel_v2_flags, _ = run_dq_rules(panel_out)
+        for c in panel_v2_flags.columns:
+            panel_out[c] = panel_v2_flags[c]
+    except Exception:
+        pass  # DQ v2 er ikke-kritisk i WFT
+
     return static_out, panel_out, static_audit, panel_audit
 
 

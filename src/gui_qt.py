@@ -197,7 +197,7 @@ GREEN_FLAG_TERMS = (
     "kandidat",
     "buy",
     "kjop",
-    "kjÃ¸p",
+    "kjøp",
     "strong",
     "sterk",
     "solid",
@@ -590,6 +590,10 @@ def build_ui_tokens() -> Dict[str, str]:
         "error_soft": "#ffe1e7",
         "log_bg": "#0f1722",
         "log_text": "#d9e4f3",
+        "log_cmd": "#93c5fd",
+        "log_ok": "#86efac",
+        "log_warn": "#fcd34d",
+        "log_error": "#fca5a5",
         "disabled_bg": "#f1f4f8",
         "disabled_text": "#9cadbe",
         "disabled_border": "#d9e0e7",
@@ -699,12 +703,28 @@ QLabel#statusChip[statusTone="error"], QLabel#statusChip[tone="error"] {{
 }}
 QLineEdit, QComboBox, QListWidget, QTextEdit {{
   background: {tokens["surface_alt"]};
+  color: {tokens["text"]};
   border: 1px solid {tokens["border"]};
   border-radius: 12px;
   padding: 8px;
 }}
 QLineEdit:focus, QComboBox:focus, QListWidget:focus, QTextEdit:focus {{
   border: 1px solid {tokens["primary"]};
+}}
+QComboBox QAbstractItemView {{
+  background: {tokens["surface"]};
+  color: {tokens["text"]};
+  border: 1px solid {tokens["border"]};
+  selection-background-color: {tokens["primary_soft"]};
+  selection-color: {tokens["primary"]};
+}}
+QListWidget::item {{
+  color: {tokens["text"]};
+  padding: 4px 8px;
+}}
+QListWidget::item:selected {{
+  background: {tokens["primary_soft"]};
+  color: {tokens["primary"]};
 }}
 QListWidget#sideNav {{
   border: none;
@@ -902,7 +922,7 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
 
 
     class DeeconGui(QtWidgets.QMainWindow):
-        page_keys = ["overview", "decision", "tests", "dq"]
+        page_keys = ["overview", "decision", "tests", "dq", "agents"]
 
         def __init__(self) -> None:
             super().__init__()
@@ -1000,7 +1020,7 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
             nav_l.addWidget(nav_title)
             self.side_nav = QtWidgets.QListWidget()
             self.side_nav.setObjectName("sideNav")
-            self.side_nav.addItems(["Oversikt", "Decision", "Tests", "DQ"])
+            self.side_nav.addItems(["Oversikt", "Decision", "Tests", "DQ", "Agenter"])
             self.side_nav.setCurrentRow(0)
             nav_l.addWidget(self.side_nav, 1)
             body.addWidget(nav_card, 0)
@@ -1019,6 +1039,7 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
             self._build_decision_page()
             self._build_tests_page()
             self._build_dq_page()
+            self._build_agents_page()
 
         def _wire_events(self) -> None:
             self.side_nav.currentRowChanged.connect(self.pages.setCurrentIndex)
@@ -1077,56 +1098,80 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
 
         def _build_run_page(self) -> QtWidgets.QWidget:
             panel = QtWidgets.QWidget()
-            layout = QtWidgets.QHBoxLayout(panel)
+            layout = QtWidgets.QVBoxLayout(panel)
             layout.setContentsMargins(0, 0, 0, 0)
-            layout.setSpacing(UI_OUTER_MARGIN)
+            layout.setSpacing(UI_SPACING)
 
-            left = QtWidgets.QWidget()
-            left_l = QtWidgets.QVBoxLayout(left)
-            left_l.setContentsMargins(0, 0, 0, 0)
-            left_l.setSpacing(UI_OUTER_MARGIN)
-            layout.addWidget(left, 0)
+            # --- Hoved-rad: dato + stor Kjør modell-knapp + stop ---
+            top_row = QtWidgets.QHBoxLayout()
+            top_row.setSpacing(UI_SPACING)
+            asof_label = QtWidgets.QLabel("Dato:")
+            self.asof_edit = QtWidgets.QLineEdit(_dt.date.today().isoformat())
+            self.asof_edit.setFixedWidth(120)
+            self.run_model_btn = QtWidgets.QPushButton("  Kjør modell  (F5)")
+            self._set_button_variant(self.run_model_btn, "primary")
+            self.run_model_btn.setMinimumHeight(40)
+            self.run_model_btn.clicked.connect(self._run_model)
+            self.stop_btn = QtWidgets.QPushButton("Stop (Esc)")
+            self._set_button_variant(self.stop_btn, "destructive")
+            self.stop_btn.setEnabled(False)
+            self.stop_btn.clicked.connect(self._stop_pipeline)
+            top_row.addWidget(asof_label)
+            top_row.addWidget(self.asof_edit)
+            top_row.addWidget(self.run_model_btn, 1)
+            top_row.addWidget(self.stop_btn)
+            layout.addLayout(top_row)
 
-            right = QtWidgets.QWidget()
-            right_l = QtWidgets.QVBoxLayout(right)
-            right_l.setContentsMargins(0, 0, 0, 0)
-            right_l.setSpacing(UI_OUTER_MARGIN)
-            layout.addWidget(right, 1)
+            # --- Live Log ---
+            log_group = QtWidgets.QGroupBox("Live Log")
+            log_l = QtWidgets.QVBoxLayout(log_group)
+            log_l.setContentsMargins(UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN)
+            log_l.setSpacing(UI_SPACING)
+            self.log_edit = QtWidgets.QTextEdit()
+            self.log_edit.setObjectName("logEdit")
+            self.log_edit.setReadOnly(True)
+            self.log_edit.setUndoRedoEnabled(False)
+            log_l.addWidget(self.log_edit)
+            layout.addWidget(log_group, 1)
 
+            # --- Avansert (sammenleggbar) ---
+            avansert_toggle = QtWidgets.QPushButton("▶  Avansert")
+            avansert_toggle.setCheckable(True)
+            avansert_toggle.setChecked(False)
+            self._set_button_variant(avansert_toggle, "secondary")
+            layout.addWidget(avansert_toggle)
+
+            avansert_panel = QtWidgets.QWidget()
+            avansert_panel.setVisible(False)
+            avansert_l = QtWidgets.QVBoxLayout(avansert_panel)
+            avansert_l.setContentsMargins(0, 0, 0, 0)
+            avansert_l.setSpacing(UI_OUTER_MARGIN)
+
+            avansert_top = QtWidgets.QHBoxLayout()
+            avansert_top.setSpacing(UI_OUTER_MARGIN)
+
+            # Run Setup (skjult i avansert)
             setup = QtWidgets.QGroupBox("Run Setup")
             setup_l = QtWidgets.QVBoxLayout(setup)
             setup_l.setContentsMargins(UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN)
             setup_l.setSpacing(UI_SPACING)
-            self.asof_edit = QtWidgets.QLineEdit(_dt.date.today().isoformat())
             self.config_edit = QtWidgets.QLineEdit(r"config\config.yaml")
             self.run_dir_edit = QtWidgets.QLineEdit("")
             self._add_labeled_field(
-                setup_l,
-                key="asof",
-                label_text="Asof (YYYY-MM-DD)",
-                help_text="ISO-format dato for deterministisk as-of kjoring.",
-                edit=self.asof_edit,
+                setup_l, key="config", label_text="Config",
+                help_text="Config-fil for CLI-kjøringen.",
+                edit=self.config_edit, browse_handler=self._pick_config,
             )
             self._add_labeled_field(
-                setup_l,
-                key="config",
-                label_text="Config",
-                help_text="Velg config-fil som brukes av CLI-kjoringen.",
-                edit=self.config_edit,
-                browse_handler=self._pick_config,
-            )
-            self._add_labeled_field(
-                setup_l,
-                key="run_dir",
-                label_text="Run dir (valgfri, ma eksistere)",
-                help_text="Hvis satt ma mappen finnes. Bruk Browse.",
-                edit=self.run_dir_edit,
-                browse_handler=self._pick_run_dir,
+                setup_l, key="run_dir", label_text="Run dir (valgfri)",
+                help_text="Hvis satt må mappen finnes.",
+                edit=self.run_dir_edit, browse_handler=self._pick_run_dir,
             )
             self.dry_run_box = QtWidgets.QCheckBox("Dry run")
             setup_l.addWidget(self.dry_run_box)
-            left_l.addWidget(setup)
+            avansert_top.addWidget(setup)
 
+            # Steps (skjult i avansert)
             steps_group = QtWidgets.QGroupBox("Steps")
             steps_l = QtWidgets.QVBoxLayout(steps_group)
             steps_l.setContentsMargins(UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN)
@@ -1153,36 +1198,27 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
             for name, _ in OPTIONAL_STEPS:
                 self.steps_list.addItem(f"{name} (optional)")
             steps_l.addWidget(self.steps_list, 1)
-            left_l.addWidget(steps_group, 1)
+            avansert_top.addWidget(steps_group)
+            avansert_l.addLayout(avansert_top)
 
+            # Command Preview + ekstra knapper (skjult i avansert)
             cmd_group = QtWidgets.QGroupBox("Command Preview")
             cmd_l = QtWidgets.QVBoxLayout(cmd_group)
             cmd_l.setContentsMargins(UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN)
-            cmd_l.setSpacing(UI_SPACING)
             self.command_preview_label = QtWidgets.QLabel("")
             self.command_preview_label.setWordWrap(True)
             self.command_preview_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
             cmd_l.addWidget(self.command_preview_label)
-            left_l.addWidget(cmd_group)
+            avansert_l.addWidget(cmd_group)
 
-            act_group = QtWidgets.QGroupBox("Actions")
-            act_l = QtWidgets.QGridLayout(act_group)
-            act_l.setContentsMargins(UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN)
-            act_l.setHorizontalSpacing(UI_SPACING)
-            act_l.setVerticalSpacing(UI_SPACING)
-            self.run_model_btn = QtWidgets.QPushButton("Run model (F5)")
-            self._set_button_variant(self.run_model_btn, "primary")
-            self.run_model_btn.clicked.connect(self._run_model)
+            act_row = QtWidgets.QHBoxLayout()
+            act_row.setSpacing(UI_SPACING)
             self.run_btn = QtWidgets.QPushButton("Run pipeline (Ctrl+R)")
             self._set_button_variant(self.run_btn, "secondary")
             self.run_btn.clicked.connect(self._run_pipeline)
             self.run_tests_btn = QtWidgets.QPushButton("Run tests (Ctrl+T)")
             self._set_button_variant(self.run_tests_btn, "secondary")
             self.run_tests_btn.clicked.connect(self._run_tests)
-            self.stop_btn = QtWidgets.QPushButton("Stop (Esc)")
-            self._set_button_variant(self.stop_btn, "destructive")
-            self.stop_btn.clicked.connect(self._stop_pipeline)
-            self.stop_btn.setEnabled(False)
             show_dec_btn = QtWidgets.QPushButton("Latest decision")
             show_test_btn = QtWidgets.QPushButton("Latest test")
             show_dq_btn = QtWidgets.QPushButton("Latest DQ")
@@ -1193,26 +1229,17 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
             show_test_btn.clicked.connect(self._show_latest_test_report_in_gui)
             show_dq_btn.clicked.connect(self._show_latest_dq_report_in_gui)
             clear_log_btn.clicked.connect(self._clear_log)
-            act_l.addWidget(self.run_model_btn, 0, 0)
-            act_l.addWidget(self.run_btn, 0, 1)
-            act_l.addWidget(self.run_tests_btn, 1, 0)
-            act_l.addWidget(self.stop_btn, 1, 1)
-            act_l.addWidget(show_dec_btn, 2, 0)
-            act_l.addWidget(show_test_btn, 2, 1)
-            act_l.addWidget(show_dq_btn, 3, 0)
-            act_l.addWidget(clear_log_btn, 3, 1)
-            left_l.addWidget(act_group)
+            for btn in (self.run_btn, self.run_tests_btn, show_dec_btn, show_test_btn, show_dq_btn, clear_log_btn):
+                act_row.addWidget(btn)
+            avansert_l.addLayout(act_row)
 
-            log_group = QtWidgets.QGroupBox("Live Log")
-            log_l = QtWidgets.QVBoxLayout(log_group)
-            log_l.setContentsMargins(UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN)
-            log_l.setSpacing(UI_SPACING)
-            self.log_edit = QtWidgets.QTextEdit()
-            self.log_edit.setObjectName("logEdit")
-            self.log_edit.setReadOnly(True)
-            self.log_edit.setUndoRedoEnabled(False)
-            log_l.addWidget(self.log_edit)
-            right_l.addWidget(log_group, 1)
+            layout.addWidget(avansert_panel)
+            avansert_toggle.toggled.connect(
+                lambda checked: (
+                    avansert_toggle.setText("▼  Avansert" if checked else "▶  Avansert"),
+                    avansert_panel.setVisible(checked),
+                )
+            )
             return panel
 
         def _clear_log(self) -> None:
@@ -1413,6 +1440,142 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
             self.section_path_labels["dq"] = label
             self.section_previews["dq"] = edit
 
+        def _build_agents_page(self) -> None:
+            """Side med 3 faner — én per agent."""
+            page = QtWidgets.QWidget()
+            self.pages.addWidget(page)
+            layout = QtWidgets.QVBoxLayout(page)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(UI_OUTER_MARGIN)
+
+            # Knapperad
+            top = QtWidgets.QGroupBox("Agenter")
+            t_l = QtWidgets.QHBoxLayout(top)
+            t_l.setContentsMargins(UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN)
+            t_l.setSpacing(UI_SPACING)
+            refresh_btn = QtWidgets.QPushButton("Last inn siste resultater")
+            self._set_button_variant(refresh_btn, "secondary")
+            refresh_btn.clicked.connect(self._refresh_agents_page)
+            t_l.addWidget(refresh_btn)
+            t_l.addStretch(1)
+            layout.addWidget(top)
+
+            # Faner: én per agent
+            tabs = QtWidgets.QTabWidget()
+            layout.addWidget(tabs, 1)
+
+            self._agent_previews: Dict[str, QtWidgets.QTextEdit] = {}
+            self._agent_status_labels: Dict[str, QtWidgets.QLabel] = {}
+
+            agent_defs = [
+                (
+                    "B — Investment Skeptic",
+                    "skeptic",
+                    "skeptic_results.json",
+                    "Adversarial gjennomgang av verdsettelsen. Kan kun produsere PASS, VETO_CASH eller REQUEST_REVIEW.\n"
+                    "Aktivert som standard. Kjøres etter deterministisk screening.",
+                ),
+                (
+                    "C — Decision Dossier Writer",
+                    "dossier",
+                    "decision_agent.json",
+                    "Skriver revisjonsvennlig beslutningsrapport på norsk. Har ingen veto-rett.\n"
+                    "Aktivert som standard. Kjøres sist.",
+                ),
+                (
+                    "A — Business Quality Evaluator",
+                    "quality",
+                    "quality_results.json",
+                    "Tekst-basert vurdering av moat, governance og regulatorisk risiko fra årsrapporter.\n"
+                    "Deaktivert som standard (business_quality.enabled: false i agent_config.yaml).",
+                ),
+            ]
+
+            for tab_title, key, filename, description in agent_defs:
+                tab_widget = QtWidgets.QWidget()
+                tab_l = QtWidgets.QVBoxLayout(tab_widget)
+                tab_l.setContentsMargins(UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN, UI_OUTER_MARGIN)
+                tab_l.setSpacing(UI_SPACING)
+
+                desc_label = QtWidgets.QLabel(description)
+                desc_label.setWordWrap(True)
+                desc_label.setProperty("role", "help")
+                tab_l.addWidget(desc_label)
+
+                status_label = QtWidgets.QLabel("Ingen resultater lastet")
+                status_label.setProperty("role", "muted")
+                tab_l.addWidget(status_label)
+                self._agent_status_labels[key] = status_label
+
+                edit = self._create_preview_editor()
+                tab_l.addWidget(edit, 1)
+                self._agent_previews[key] = edit
+
+                tabs.addTab(tab_widget, tab_title)
+
+            # Last inn ved oppstart
+            QtCore.QTimer.singleShot(200, self._refresh_agents_page)
+
+        def _refresh_agents_page(self) -> None:
+            """Les siste agent-resultater fra nyeste run-mappe og vis i fanene."""
+            runs_base = Path("runs")
+            if not runs_base.exists():
+                return
+
+            # Finn nyeste run-mappe med minst én agent-fil
+            agent_files = {"skeptic": "skeptic_results.json", "dossier": "decision_agent.json", "quality": "quality_results.json"}
+            latest_dir: Optional[Path] = None
+            for candidate in sorted(runs_base.rglob("manifest.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+                if latest_dir is None:
+                    latest_dir = candidate.parent
+                    break
+
+            if latest_dir is None:
+                return
+
+            import json as _json
+            for key, filename in agent_files.items():
+                path = latest_dir / filename
+                edit = self._agent_previews.get(key)
+                status = self._agent_status_labels.get(key)
+                if edit is None or status is None:
+                    continue
+                if not path.exists():
+                    status.setText(f"Ingen resultater funnet ({filename})")
+                    edit.setPlainText("")
+                    continue
+                try:
+                    raw = path.read_text(encoding="utf-8")
+                    # For dossier: vis narrative-feltet direkte hvis det finnes
+                    if key == "dossier":
+                        data = _json.loads(raw)
+                        narrative = data.get("narrative", "")
+                        if narrative:
+                            edit.setMarkdown(narrative) if hasattr(edit, "setMarkdown") else edit.setPlainText(narrative)
+                            status.setText(f"Fra: {path}  |  Ticker: {data.get('ticker', '?')}")
+                            continue
+                    # For skeptic og quality: formater JSON pent
+                    data = _json.loads(raw)
+                    lines = []
+                    if isinstance(data, dict):
+                        for ticker, result in data.items():
+                            veto = result.get("veto", "?") if isinstance(result, dict) else "?"
+                            conf = result.get("confidence", "?") if isinstance(result, dict) else "?"
+                            reasoning = result.get("reasoning", "") if isinstance(result, dict) else ""
+                            verdict = result.get("quality_verdict", "") if isinstance(result, dict) else ""
+                            line = f"{'─'*50}\n{ticker}  →  veto={veto}"
+                            if verdict:
+                                line += f"  |  quality={verdict}"
+                            line += f"  |  confidence={conf}"
+                            if reasoning:
+                                line += f"\n{reasoning[:300]}"
+                            lines.append(line)
+                    edit.setPlainText("\n".join(lines) if lines else raw)
+                    status.setText(f"Fra: {path}")
+                except Exception as exc:
+                    edit.setPlainText(f"Feil ved lesing av {filename}: {exc}")
+                    status.setText("Feil")
+
         def _set_status(self, text: str, tone: str = "neutral") -> None:
             t = str(tone).strip().lower()
             mapped = self.style_map["status_tones"].get(t, "neutral")
@@ -1521,13 +1684,13 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
         def _color_for_log_line(self, line: str) -> QtGui.QColor:
             lo = line.lower()
             if line.startswith("$ "):
-                return QtGui.QColor(self.tokens["primary"])
+                return QtGui.QColor(self.tokens["log_cmd"])
             if "[error]" in lo or " fatal:" in lo or "traceback" in lo or " failed" in lo:
-                return QtGui.QColor(self.tokens["error"])
+                return QtGui.QColor(self.tokens["log_error"])
             if "warning" in lo or " warn" in lo:
-                return QtGui.QColor(self.tokens["warn"])
+                return QtGui.QColor(self.tokens["log_warn"])
             if "step ok" in lo or "pipeline ok" in lo or " passed" in lo or "model finished" in lo:
-                return QtGui.QColor(self.tokens["success"])
+                return QtGui.QColor(self.tokens["log_ok"])
             return QtGui.QColor(self.tokens["log_text"])
 
         def _flush_log_queue(self) -> None:
@@ -1685,7 +1848,7 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
                     config_path=config_path,
                     run_dir=self.run_dir_edit.text().strip() or None,
                     dry_run=False,
-                    steps=["valuation", "decision"],
+                    steps=[name for name, _ in DEFAULT_STEPS],
                 )
                 self._start_worker(cmd, task="model")
             except Exception as exc:
@@ -1993,9 +2156,14 @@ def main() -> int:
     if QtWidgets is None or QtCore is None or QtGui is None:
         print("PySide6 is not available in this Python environment. Install requirements and try again.", file=sys.stderr)
         return 1
+    QtWidgets.QApplication.setHighDpiScaleFactorRoundingPolicy(
+        QtCore.Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+    )
     app = QtWidgets.QApplication.instance()
     if app is None:
         app = QtWidgets.QApplication(sys.argv)
+    app.setStyle("Fusion")
+    app.setFont(QtGui.QFont("Segoe UI", 10))
     app.setStyleSheet(build_light_qss(build_ui_tokens()))
     win = DeeconGui()
     win.show()

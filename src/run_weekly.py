@@ -28,6 +28,7 @@ DEFAULT_STEPS: List[Step] = [
 
 OPTIONAL_STEPS: List[Step] = [
     ("ir_reports", "src.ir_reports"),
+    ("agents", "src.agents_step"),  # AI-agenter: Investment Skeptic + Dossier Writer
 ]
 
 
