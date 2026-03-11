@@ -1,0 +1,4 @@
+# file: /workspaces/NY-deecon-codex/src/agents/investment_skeptic.py
+# hypothesis_version: 6.151.9
+
+[0.0, 0.6, 0.95, 2000, ';', 'RF-DQ001', 'RF-FAILSAFE', 'RF-QUAL001', 'RF-SENS001', 'RF-TV001', '```', 'claude-sonnet-4-6', 'content', 'critical', 'data_quality_warning', 'dcf_sensitivity', 'json', 'other', 'role', 'user']

@@ -1,0 +1,4 @@
+# file: /workspaces/NY-deecon-codex/src/report_watch_validate.py
+# hypothesis_version: 6.151.9
+
+[-1.0, 0.0, 0.3, 0.5, 2.0, 400, 500, '--input', '--output', '--timeout-sec', '--user-agent', '/investor-relations', '/investors', '/press-releases', 'ERROR', 'NO_CANDIDATES', 'OK', 'WARN', '__main__', 'calendar_date_count', 'calendar_score', 'calendar_status', 'calendar_url', 'input_calendar_url', 'input_reports_url', 'manual', 'reports_link_count', 'reports_score', 'reports_status', 'reports_url', 'source', 'status', 'ticker', 'utf-8']

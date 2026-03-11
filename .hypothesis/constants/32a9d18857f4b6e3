@@ -1,0 +1,4 @@
+# file: /workspaces/NY-deecon-codex/src/refresh_prices_daily.py
+# hypothesis_version: 6.151.9
+
+[0.15, 0.6, 0.8, 1.0, '--asof', '--config', '--require-fresh-days', '.parquet', '^', '__main__', 'coerce', 'config', 'config/config.yaml', 'date', 'prices', 'prices.parquet', 'prices_latest_input', 'prices_panel_input', 'processed_dir', 'raw_dir', 'refresh_prices_daily', 'sources', 'symbol', 'ticker', 'tickers.csv', 'yahoo_ticker']

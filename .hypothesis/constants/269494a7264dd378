@@ -1,0 +1,4 @@
+# file: /workspaces/NY-deecon-codex/src/ir_reports.py
+# hypothesis_version: 6.151.9
+
+[1.0, '(?i)(?:', '(?is)<[^>]+>', ',', '.', '.html', '.pdf', '.tmp', 'Content-Type', 'DUPLICATE', 'ERROR', 'INTERNAL', 'NETWORK', 'NO_URL', 'OK', 'ROBOTS_DISALLOW', 'ROBOTS_UNAVAILABLE', 'SKIPPED', 'UNPARSABLE', 'User-Agent', '[^A-Za-z0-9._-]+', '\\s+', '_', 'bytes', 'coerce', 'content_type', 'data', 'driftsresultat', 'earnings per share', 'ebit', 'eps', 'error_code', 'fact_ebit', 'fact_eps', 'fact_revenue', 'golden', 'ignore', 'index.parquet', 'ir', 'ir_facts.parquet', 'ir_reports', 'is_cached', 'last', 'mapping_csv', 'mergesort', 'omsetning', 'omsättning', 'operating profit', 'pdf', 'period', 'rate_limit_sec', 'raw_dir', 'raw_path', 'report', 'report_date', 'resultat per aksje', 'resultat per aktie', 'revenue', 'sales', 'sha256', 'source', 'status', 'text_len', 'ticker', 'timeout_sec', 'unknown', 'url', 'user_agent', 'utf-8', '|']

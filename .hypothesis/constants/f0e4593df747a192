@@ -1,0 +1,4 @@
+# file: /workspaces/NY-deecon-codex/src/data_quality/rules.py
+# hypothesis_version: 6.151.9
+
+[-0.2, 0.25, 0.6, ',', ';', 'DQ-F001', 'DQ-F002', 'DQ-F003', 'DQ-F004', 'DQ-F005', 'DQ-F006', 'DQ-W001', 'DQ-W002', 'DQ-W003', 'DQ-W004', 'FAIL', 'PASS', 'UNKNOWN', 'WARN', 'adj_close', 'aquaculture', 'bank', 'description', 'dq_fail_count_v2', 'dq_fail_rules', 'dq_fail_v2', 'dq_warn_count_v2', 'dq_warn_rules', 'enterprise_value', 'ev_ebit', 'fcf_yield', 'fields', 'index_ma200', 'intrinsic_value', 'ma200', 'market_cap', 'nd_ebitda', 'passed', 'roic_current', 'rule_id', 'sector_group', 'severity', 'shares_outstanding', 'ticker']

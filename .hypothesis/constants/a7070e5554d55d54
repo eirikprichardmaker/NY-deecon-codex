@@ -1,0 +1,4 @@
+# file: /workspaces/NY-deecon-codex/src/common/io.py
+# hypothesis_version: 6.151.9
+
+[1024, '.tmp', '.tmp.parquet', 'rb', 'utf-8']

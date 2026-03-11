@@ -1,0 +1,4 @@
+# file: /workspaces/NY-deecon-codex/src/transform_prices.py
+# hypothesis_version: 6.151.9
+
+[200, '.', '.parquet', '1d', 'Brak danych', 'CO', 'HE', 'No data', 'OL', 'ST', '\\.', '^', '^HEX', '^OMXC25', '^OMXS', '^OSEAX', '_', 'above_ma200', 'adj_close', 'adjclose', 'chart', 'close', 'coerce', 'date', 'datetime', 'events', 'history', 'includeAdjustedClose', 'indicators', 'interval', 'last', 'ma200', 'ma21', 'mad', 'model_data_guard', 'period1', 'period2', 'price', 'price_date', 'prices.*', 'prices.parquet', 'processed_dir', 'quote', 'raw_dir', 'result', 's', 'symbol', 'ticker', 'time', 'timestamp', 'true', 'utf-8', 'volume', 'yahoo_ticker']

@@ -1,0 +1,4 @@
+# file: /workspaces/NY-deecon-codex/src/run_weekly.py
+# hypothesis_version: 6.151.9
+
+['*', ',', '--asof', '--config', '--dry-run', '--list-steps', '--run-dir', '--steps', 'PIPELINE OK', 'Run init OK', 'YYYY-MM-DD', '__main__', 'agents', 'all', 'config\\config.yaml', 'cost_of_capital', 'decision', 'factors', 'freeze_golden', 'ingest', 'ir_reports', 'master', 'run', 'src.agents_step', 'src.build_master', 'src.compute_factors', 'src.cost_of_capital', 'src.decision', 'src.ingest_validate', 'src.ir_reports', 'src.transform_prices', 'src.valuation', 'store_true', 'transform_prices', 'valuation']

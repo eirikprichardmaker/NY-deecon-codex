@@ -1,0 +1,4 @@
+# file: /workspaces/NY-deecon-codex/src/compute_factors.py
+# hypothesis_version: 6.151.9
+
+[0.001, 1.0, 1000.0, 1000000.0, 1000000, 10000000, '[^a-z0-9]+', '_', 'capex_millions', 'coerce', 'compute_factors', 'ebit_proxy', 'ebitda_proxy', 'ev_ebit', 'ev_ebit_current', 'ev_ebit_invalid', 'fcf_invalid', 'fcf_millions', 'fcf_ttm', 'fcf_yield', 'fcf_yield_invalid', 'gp_a', 'gp_a_invalid', 'market_cap', 'market_cap_current', 'master.parquet', 'nd_ebitda', 'nd_ebitda_invalid', 'net_debt', 'net_debt_current', 'ocf_millions', 'osov_score', 'processed_dir', 'roic', 'roic_current', 'roic_invalid', 'ticker', 'units_mismatch_flag']

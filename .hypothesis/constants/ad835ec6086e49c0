@@ -1,0 +1,4 @@
+# file: /workspaces/NY-deecon-codex/src/agents/schemas.py
+# hypothesis_version: 6.151.9
+
+[0.0, 1.0, 500, 2000, 5000, '1.0', 'PASS', 'REQUEST_REVIEW', 'VETO_CASH', 'accounting_risk', 'critical', 'data_quality_warning', 'dcf_sensitivity', 'governance_risk', 'high', 'investment_skeptic', 'liquidity_risk', 'low', 'medium', 'mixed', 'other', 'regulatory_risk', 'strong', 'unknown', 'weak']

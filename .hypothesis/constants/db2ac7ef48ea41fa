@@ -1,0 +1,4 @@
+# file: /workspaces/NY-deecon-codex/src/data_quality/schema_contracts.py
+# hypothesis_version: 6.151.9
+
+[-1.0, 0.0, 0.02, 0.3, 1.0, 'CASH', 'KANDIDAT', 'MANUAL_REVIEW', '^[A-Z0-9\\-\\.]+$']

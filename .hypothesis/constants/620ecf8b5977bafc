@@ -1,0 +1,4 @@
+# file: /workspaces/NY-deecon-codex/src/report_watch.py
+# hypothesis_version: 6.151.9
+
+[400, '%Y-%m-%d', '--db', '--downloads-dir', '--no-download', '--sources-csv', '--timeout-sec', '--user-agent', '--watch-days-after', '--watch-days-before', '.', '.bin', '.pdf', 'Content-Type', 'DATE_CHANGED', 'DISCOVERED', 'DOWNLOADED', 'DOWNLOAD_FAILED', 'ERROR', 'INIT', 'OK', 'User-Agent', '[^A-Za-z0-9._-]+', '\\s+', '^\\d{4}-\\d{2}-\\d{2}$', '_', '__main__', 'a', 'calendar_url', 'coerce', 'data/raw/ir_auto', 'delars', 'delårs', 'financial', 'href', 'html.parser', 'https://', 'interim', 'kvartal', 'manual', 'pdf', 'q1', 'q2', 'q3', 'q4', 'quarter', 'report', 'report.bin', 'report.pdf', 'reports_url', 'results', 'source', 'store_true', 'ticker']

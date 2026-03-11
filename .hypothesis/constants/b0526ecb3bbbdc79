@@ -1,0 +1,4 @@
+# file: /workspaces/NY-deecon-codex/src/agents/data_controller.py
+# hypothesis_version: 6.151.9
+
+[-10000000000000.0, -30.0, -5.0, -2.0, 0.0, 0.6, 2.0, 10.0, 50.0, 100.0, 10000000.0, 100000000000000.0, 1000000000000000.0, '; ', 'NaN', 'None', 'UNKNOWN', 'adj_close', 'allowed', 'blocked_reason', 'diagnostics', 'fcf_yield', 'intrinsic_value', 'market_cap', 'missing', 'missing_fields', 'mos', 'nan', 'nd_ebitda', 'not_numeric', 'null', 'ok', 'out_of_range', 'out_of_range_fields', 'roic_current', 'status', 'ticker', 'value', 'wacc_used']

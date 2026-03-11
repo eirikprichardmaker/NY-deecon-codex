@@ -1,0 +1,4 @@
+# file: /workspaces/NY-deecon-codex/src/agents/sanitizer.py
+# hypothesis_version: 6.151.9
+
+[15000, '(?i)act\\s+as\\s+if', '(?i)system\\s*prompt', '(?i)you\\s+are\\s+now', '\\s+']
