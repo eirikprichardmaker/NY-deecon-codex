@@ -315,10 +315,11 @@ def _run_quality_on_shortlist(
     )
     min_evidence = int(agents_cfg.get("business_quality", {}).get("min_evidence_tokens", 200))
 
+    log = logging.getLogger(__name__)
     try:
         client = _make_anthropic_client()
     except EnvironmentError as e:
-        logger.error(f"_run_quality_on_shortlist: {e}")
+        log.error(f"_run_quality_on_shortlist: {e}")
         return {}
 
     results = {}
@@ -349,9 +350,9 @@ def _run_quality_on_shortlist(
                 q_input, client, model=model, min_evidence_tokens=min_evidence
             )
             results[ticker] = output.model_dump()
-            logger.info(f"Quality [{ticker}]: {output.quality_verdict} / {output.veto}")
+            log.info(f"Quality [{ticker}]: {output.quality_verdict} / {output.veto}")
         except Exception as e:
-            logger.error(f"Quality [{ticker}] feilet: {e}")
+            log.error(f"Quality [{ticker}] feilet: {e}")
 
     return results
 
