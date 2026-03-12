@@ -1,6 +1,7 @@
 agents:
   # false = bypass alle agenter, ren deterministisk pipeline
   enabled: true
+  downloads_dir: "data/raw/ir"
   model: "claude-sonnet-4-6"
   fallback_model: "claude-haiku-4-5-20251001"
   max_retries: 3
