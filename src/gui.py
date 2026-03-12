@@ -1080,33 +1080,20 @@ class DeeconGui:
 
         run_tab = ttk.Frame(self.tabs, padding=10, style="App.TFrame")
         results_tab = ttk.Frame(self.tabs, padding=10, style="App.TFrame")
-        agents_tab = ttk.Frame(self.tabs, padding=10, style="App.TFrame")
         self.tabs.add(results_tab, text="Resultater")
         self.tabs.add(run_tab, text="Kjoring")
-        self.tabs.add(agents_tab, text="Agenter")
 
-        # 3 separate top-level tabs — én per LLM-agent (unngår nestet Notebook)
+        # 3 separate top-level tabs — alfabetisk A, B, C
         _llm_tab_frames: Dict[str, "ttk.Frame"] = {}
-        for key, label, _filename, _desc in self._LLM_AGENT_SPECS:
+        for key, label, _filename, _desc in sorted(self._LLM_AGENT_SPECS, key=lambda s: s[1]):
             llm_tab = ttk.Frame(self.tabs, padding=10, style="App.TFrame")
             self.tabs.add(llm_tab, text=label)
             _llm_tab_frames[key] = llm_tab
 
         self._build_results_tab(results_tab)
         self._build_run_tab(run_tab)
-        try:
-            self._build_agents_tab(agents_tab)
-        except Exception as exc:
-            print(f"ERROR building agents tab: {exc}\n{traceback.format_exc()}", file=sys.stderr)
-            ttk.Label(
-                agents_tab,
-                text=f"[ERROR] Failed to build agents tab:\n{exc}",
-                style="Muted.TLabel",
-                wraplength=900,
-                justify="left"
-            ).pack(padx=10, pady=10)
 
-        for key, label, filename, desc in self._LLM_AGENT_SPECS:
+        for key, label, filename, desc in sorted(self._LLM_AGENT_SPECS, key=lambda s: s[1]):
             llm_tab = _llm_tab_frames[key]
             try:
                 self._build_single_llm_agent_tab(llm_tab, key, label, filename, desc)
@@ -1615,15 +1602,18 @@ class DeeconGui:
         top.pack(fill="x", pady=(0, 8))
         ttk.Label(
             top,
-            text="LLM-agenter kjøres automatisk som del av pipeline-steget 'agents'. "
-                 "Legg til --steps agents ved kjøring for å aktivere dem.",
+            text="LLM-agenter kjøres automatisk som del av pipeline-steget 'agents'.",
             style="Muted.TLabel",
-            wraplength=900,
+            wraplength=700,
             justify="left",
         ).pack(side="left", fill="x", expand=True)
         ttk.Button(
             top, text="Last inn siste resultater", style="Secondary.TButton",
             command=self._refresh_llm_agents,
+        ).pack(side="right", padx=(6, 0))
+        ttk.Button(
+            top, text="Kjør pipeline (agents)", style="Primary.TButton",
+            command=self._run_agents_step,
         ).pack(side="right")
 
         hdr = ttk.LabelFrame(wrap, text=label, padding=10, style="Section.TLabelframe")
@@ -2134,6 +2124,47 @@ class DeeconGui:
                     "finished_at": _dt.datetime.now(),
                 }
             )
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _run_agents_step(self) -> None:
+        """Kjør pipeline med --steps agents fra en agent-fane."""
+        if self.proc is not None and self.proc.poll() is None:
+            self._set_status("Another process is already running", tone="warn")
+            return
+        config_path = self.config_var.get().strip()
+        if not config_path:
+            self._show_error("Config er påkrevd.")
+            return
+        if not Path(config_path).exists():
+            self._show_error(f"Config ikke funnet: {config_path}")
+            return
+        try:
+            cmd = build_run_weekly_command(
+                asof=self.asof_var.get(),
+                config_path=config_path,
+                run_dir=self.run_dir_var.get().strip() or None,
+                dry_run=False,
+                steps=["agents"],
+            )
+        except ValueError as exc:
+            self._show_error(str(exc))
+            return
+        self._append_log(f"$ {' '.join(cmd)}\n")
+        self._set_status("Kjører agents-steg...", tone="running")
+        self._set_busy(True)
+
+        def worker() -> None:
+            started_at = _dt.datetime.now()
+            self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            assert self.proc.stdout is not None
+            for line in self.proc.stdout:
+                self.log_queue.put(line)
+            rc = self.proc.wait()
+            self.log_queue.put(f"\n[exit code: {rc}]\n")
+            self.log_queue.put({"type": "done", "task": "agents", "rc": int(rc),
+                                "started_at": started_at, "finished_at": _dt.datetime.now()})
+            self.root.after(500, self._refresh_llm_agents)
 
         threading.Thread(target=worker, daemon=True).start()
 
