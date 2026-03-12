@@ -179,14 +179,14 @@ def run(ctx, log) -> int:
         log.info("agents_step: dossier_writer deaktivert.")
         return 0
 
-    # Les gate-logg
-    gate_log = _load_gate_log(ctx.run_dir, ticker=str(final_candidates.iloc[0].get("ticker", "")) if not final_candidates.empty else None)
-
     # Finn kandidater etter veto
     final_candidates = decision_df[
         decision_df.get("fundamental_ok", pd.Series(False)).fillna(False).astype(bool)
         & decision_df.get("technical_ok", pd.Series(False)).fillna(False).astype(bool)
     ]
+
+    # Les gate-logg (filtrer til topp kandidat)
+    gate_log = _load_gate_log(ctx.run_dir, ticker=str(final_candidates.iloc[0].get("ticker", "")) if not final_candidates.empty else None)
 
     if final_candidates.empty:
         log.info("agents_step: ingen kandidater etter veto — skriver CASH-rapport.")
