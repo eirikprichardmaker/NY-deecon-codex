@@ -80,14 +80,29 @@ def _parse_date_file(path: Path, fallback_date: str) -> list[dict]:
 
 
 def build_prices_panel(capture_dir: Path, output: Path) -> int:
-    master_path = capture_dir / "instrument_master_global.json.gz"
-    if not master_path.exists():
-        print(f"ERROR: {master_path} not found")
+    # Nordic master has correct Yahoo tickers (.OL, .ST, .CO, .HE)
+    # Global master lacks these suffixes
+    nordic_path = capture_dir / "instrument_master_nordic.json.gz"
+    global_path = capture_dir / "instrument_master_global.json.gz"
+
+    if not nordic_path.exists() and not global_path.exists():
+        print(f"ERROR: instrument master not found in {capture_dir}")
         return 1
 
     print(f"Loading instrument master...")
-    ins_map = _build_ins_map(master_path)
-    print(f"  {len(ins_map)} instruments with yahoo ticker")
+    ins_map: dict[int, str] = {}
+    if nordic_path.exists():
+        ins_map.update(_build_ins_map(nordic_path))
+        print(f"  Nordic: {len(ins_map)} instruments")
+    if global_path.exists():
+        before = len(ins_map)
+        global_map = _build_ins_map(global_path)
+        # Only add global entries not already covered by Nordic
+        for k, v in global_map.items():
+            if k not in ins_map:
+                ins_map[k] = v
+        print(f"  Global: +{len(ins_map) - before} additional instruments")
+    print(f"  Totalt: {len(ins_map)} instruments with yahoo ticker")
 
     by_date_dir = capture_dir / "global_prices" / "by_date"
     if not by_date_dir.exists():
