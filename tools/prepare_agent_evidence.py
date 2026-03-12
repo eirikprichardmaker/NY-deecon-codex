@@ -122,24 +122,34 @@ def _build_financial_summary(ins_id: int, reports_dir: Path) -> str | None:
                         if isinstance(v, list) and len(v) > 0:
                             reports = v
                             break
+            elif isinstance(payload, list):
+                reports = payload
             if not reports:
                 continue
 
-            # Sorter etter dato, ta de 4 nyeste
+            # Sorter etter report_End_Date (Borsdata felt), fallback til year+period
             def get_date(r):
-                return r.get("period", r.get("date", r.get("endDate", "")))
+                return (
+                    r.get("report_End_Date", "")
+                    or r.get("reportEndDate", "")
+                    or f"{r.get('year', 0):04d}-{r.get('period', 0):02d}"
+                )
 
             reports_sorted = sorted(reports, key=get_date, reverse=True)[:4]
 
             lines.append(f"\n## {label}stall (siste perioder)")
             for r in reports_sorted:
-                period = r.get("period", r.get("date", r.get("endDate", "ukjent")))
-                revenues = r.get("revenues", r.get("netRevenue", r.get("revenue")))
-                ebit = r.get("operatingIncome", r.get("ebit", r.get("operatingProfit")))
-                net_income = r.get("netIncome", r.get("profitBeforeTax"))
-                eps = r.get("earningsPerShare", r.get("eps"))
+                end_date = (
+                    r.get("report_End_Date", r.get("reportEndDate", ""))
+                    or f"{r.get('year', '?')}-Q{r.get('period', '?')}"
+                )
+                # Borsdata field names use mixed_Case_With_Underscores
+                revenues = r.get("revenues")
+                ebit = r.get("operating_Income", r.get("operatingIncome"))
+                net_income = r.get("profit_Before_Tax", r.get("profitBeforeTax", r.get("profit_To_Equity_Holders")))
+                eps = r.get("earnings_Per_Share", r.get("earningsPerShare"))
 
-                line = f"  {period}: "
+                line = f"  {end_date}: "
                 parts = []
                 if revenues is not None:
                     parts.append(f"Omsetning={_format_number(revenues)}")
@@ -193,7 +203,7 @@ def _build_holdings_summary(ticker: str, ins_id: int, holdings_files: list[Path]
     return "\n".join(lines) if lines else None
 
 
-def prepare_evidence(asof: str, repo_root: Path) -> None:
+def prepare_evidence(asof: str, repo_root: Path, explicit_tickers: list[str] | None = None) -> None:
     freeze_root = repo_root / "data" / "freeze"
     out_root = repo_root / "data" / "raw" / "ir"
 
@@ -227,28 +237,34 @@ def prepare_evidence(asof: str, repo_root: Path) -> None:
     holdings_files = _find_holdings_files(freeze_root, asof)
     print(f"Holdings-filer: {len(holdings_files)}")
 
-    # Les shortlist for å finne hvilke tickers vi trenger
-    shortlist_path = None
-    runs_root = repo_root / "runs"
-    if runs_root.exists():
-        for run_dir in sorted(runs_root.iterdir(), reverse=True):
-            candidate = run_dir / "shortlist.csv"
-            if candidate.exists():
-                import csv
-                with open(candidate, encoding="utf-8") as f:
-                    reader = csv.DictReader(f)
-                    rows = list(reader)
-                    if rows:
-                        shortlist_path = candidate
-                        tickers = [r["ticker"] for r in rows if r.get("ticker")]
-                        break
-
-    if not shortlist_path:
-        # Fallback: bruk alle tickers i master
-        tickers = list(ticker_to_insid.keys())[:20]
-        print(f"Ingen shortlist funnet — bruker topp {len(tickers)} tickers")
+    # Finn hvilke tickers vi skal generere evidence for
+    if explicit_tickers:
+        # Eksplisitt liste overstyrer alt
+        tickers = [t for t in explicit_tickers if t in ticker_to_insid]
+        missing = [t for t in explicit_tickers if t not in ticker_to_insid]
+        if missing:
+            print(f"ADVARSEL: Disse tickerne ble ikke funnet i master: {missing}")
+        print(f"Eksplisitte tickers: {tickers}")
     else:
-        print(f"Shortlist: {tickers}")
+        import csv
+        tickers = None
+        runs_root = repo_root / "runs"
+        if runs_root.exists():
+            # Finn nyeste shortlist der minst én ticker finnes i master
+            for run_dir in sorted(runs_root.iterdir(), reverse=True):
+                candidate = run_dir / "shortlist.csv"
+                if candidate.exists():
+                    with open(candidate, encoding="utf-8") as f:
+                        reader = csv.DictReader(f)
+                        rows = list(reader)
+                    candidate_tickers = [r["ticker"] for r in rows if r.get("ticker") and r["ticker"] in ticker_to_insid]
+                    if candidate_tickers:
+                        tickers = candidate_tickers
+                        print(f"Shortlist ({candidate}): {tickers}")
+                        break
+        if not tickers:
+            tickers = list(ticker_to_insid.keys())[:20]
+            print(f"Ingen shortlist funnet — bruker topp {len(tickers)} tickers fra master")
 
     # Generer evidence for hver ticker
     for ticker in tickers:
@@ -284,9 +300,11 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Forbered tekstbevis for Agent A fra Borsdata freeze-data")
     ap.add_argument("--asof", default=datetime.today().strftime("%Y-%m-%d"))
     ap.add_argument("--repo", default=".")
+    ap.add_argument("--tickers", default="", help="Kommaseparert liste med tickers, f.eks. TALK,VEI,CAMBI")
     args = ap.parse_args()
 
-    prepare_evidence(asof=args.asof, repo_root=Path(args.repo))
+    explicit = [t.strip().upper() for t in args.tickers.split(",") if t.strip()] if args.tickers else None
+    prepare_evidence(asof=args.asof, repo_root=Path(args.repo), explicit_tickers=explicit)
 
 
 if __name__ == "__main__":
