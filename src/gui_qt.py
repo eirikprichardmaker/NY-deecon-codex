@@ -1460,8 +1460,9 @@ if QtCore is not None and QtGui is not None and QtWidgets is not None:
             t_l.addStretch(1)
             layout.addWidget(top)
 
-            # Faner: én per agent
-            tabs = QtWidgets.QTabWidget()
+            # Faner: én per agent (lagret som instansattributt for å unngå GC)
+            self._agents_tabs = QtWidgets.QTabWidget()
+            tabs = self._agents_tabs
             layout.addWidget(tabs, 1)
 
             self._agent_previews: Dict[str, QtWidgets.QTextEdit] = {}

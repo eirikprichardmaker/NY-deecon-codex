@@ -1081,17 +1081,22 @@ class DeeconGui:
         run_tab = ttk.Frame(self.tabs, padding=10, style="App.TFrame")
         results_tab = ttk.Frame(self.tabs, padding=10, style="App.TFrame")
         agents_tab = ttk.Frame(self.tabs, padding=10, style="App.TFrame")
-        llm_agents_tab = ttk.Frame(self.tabs, padding=10, style="App.TFrame")
         self.tabs.add(results_tab, text="Resultater")
         self.tabs.add(run_tab, text="Kjoring")
         self.tabs.add(agents_tab, text="Agenter")
-        self.tabs.add(llm_agents_tab, text="AI Agenter")
+
+        # 3 separate top-level tabs — én per LLM-agent (unngår nestet Notebook)
+        _llm_tab_frames: Dict[str, "ttk.Frame"] = {}
+        for key, label, _filename, _desc in self._LLM_AGENT_SPECS:
+            llm_tab = ttk.Frame(self.tabs, padding=10, style="App.TFrame")
+            self.tabs.add(llm_tab, text=label)
+            _llm_tab_frames[key] = llm_tab
+
         self._build_results_tab(results_tab)
         self._build_run_tab(run_tab)
         try:
             self._build_agents_tab(agents_tab)
         except Exception as exc:
-            import traceback
             print(f"ERROR building agents tab: {exc}\n{traceback.format_exc()}", file=sys.stderr)
             ttk.Label(
                 agents_tab,
@@ -1100,19 +1105,23 @@ class DeeconGui:
                 wraplength=900,
                 justify="left"
             ).pack(padx=10, pady=10)
-        try:
-            self._build_llm_agents_tab(llm_agents_tab)
-        except Exception as exc:
-            import traceback
-            print(f"ERROR building llm agents tab: {exc}\n{traceback.format_exc()}", file=sys.stderr)
-            ttk.Label(
-                llm_agents_tab,
-                text=f"[ERROR] Failed to build LLM agents tab:\n{exc}",
-                style="Muted.TLabel",
-                wraplength=900,
-                justify="left"
-            ).pack(padx=10, pady=10)
+
+        for key, label, filename, desc in self._LLM_AGENT_SPECS:
+            llm_tab = _llm_tab_frames[key]
+            try:
+                self._build_single_llm_agent_tab(llm_tab, key, label, filename, desc)
+            except Exception as exc:
+                print(f"ERROR building LLM agent tab {key}: {exc}\n{traceback.format_exc()}", file=sys.stderr)
+                ttk.Label(
+                    llm_tab,
+                    text=f"[ERROR] Failed to build agent tab:\n{exc}",
+                    style="Muted.TLabel",
+                    wraplength=900,
+                    justify="left"
+                ).pack(padx=10, pady=10)
+
         self._refresh_results()
+        run_tab.after(500, self._refresh_llm_agents)
 
     def _select_results_main_tab(self) -> None:
         try:
@@ -1589,6 +1598,48 @@ class DeeconGui:
         # Auto-load on startup
         tab.after(300, self._refresh_llm_agents)
         print("[DEBUG] LLM agents tab building completed successfully", file=sys.stderr)
+
+    def _build_single_llm_agent_tab(
+        self,
+        tab: "ttk.Frame",
+        key: str,
+        label: str,
+        filename: str,
+        desc: str,
+    ) -> None:
+        """Bygg innhold for én LLM-agent-fane (toppnivå, ingen nestet Notebook)."""
+        wrap = ttk.Frame(tab, style="App.TFrame")
+        wrap.pack(fill="both", expand=True)
+
+        top = ttk.Frame(wrap, style="App.TFrame")
+        top.pack(fill="x", pady=(0, 8))
+        ttk.Label(
+            top,
+            text="LLM-agenter kjøres automatisk som del av pipeline-steget 'agents'. "
+                 "Legg til --steps agents ved kjøring for å aktivere dem.",
+            style="Muted.TLabel",
+            wraplength=900,
+            justify="left",
+        ).pack(side="left", fill="x", expand=True)
+        ttk.Button(
+            top, text="Last inn siste resultater", style="Secondary.TButton",
+            command=self._refresh_llm_agents,
+        ).pack(side="right")
+
+        hdr = ttk.LabelFrame(wrap, text=label, padding=10, style="Section.TLabelframe")
+        hdr.pack(fill="x", pady=(0, 6))
+        ttk.Label(hdr, text=desc, style="Muted.TLabel", wraplength=900, justify="left").pack(anchor="w")
+
+        status_row = ttk.Frame(hdr, style="App.TFrame")
+        status_row.pack(fill="x", pady=(6, 0))
+        ttk.Label(status_row, text="Status:", style="Info.TLabel").pack(side="left")
+        ttk.Label(
+            status_row, textvariable=self._llm_agent_status_vars[key], style="Info.TLabel"
+        ).pack(side="left", padx=(4, 0))
+
+        result_text = self._make_scrolled_text(wrap, bg="#f8fafc", fg="#0f172a", font=("Segoe UI", 10))
+        self._llm_agent_texts[key] = result_text
+        self._set_text_widget_text(result_text, f"Trykk 'Last inn siste resultater' for å laste {filename}.")
 
     def _refresh_llm_agents(self) -> None:
         """Les siste agent-resultater fra nyeste run-mappe."""
