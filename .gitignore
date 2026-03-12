@@ -22,3 +22,10 @@ runs/
 logs/
 
 tmp/
+
+# secrets
+.env
+*.env
+sk-ant-*.txt
+*api*key*.txt
+*secret*.txt
