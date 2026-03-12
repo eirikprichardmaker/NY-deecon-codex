@@ -59,7 +59,7 @@ def run_dossier_writer(
         try:
             response = client.messages.create(
                 model=model,
-                max_tokens=2000,
+                max_tokens=4000,
                 temperature=0.0,
                 system=SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": user_content}],
