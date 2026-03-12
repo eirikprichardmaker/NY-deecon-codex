@@ -1088,8 +1088,30 @@ class DeeconGui:
         self.tabs.add(llm_agents_tab, text="AI Agenter")
         self._build_results_tab(results_tab)
         self._build_run_tab(run_tab)
-        self._build_agents_tab(agents_tab)
-        self._build_llm_agents_tab(llm_agents_tab)
+        try:
+            self._build_agents_tab(agents_tab)
+        except Exception as exc:
+            import traceback
+            print(f"ERROR building agents tab: {exc}\n{traceback.format_exc()}", file=sys.stderr)
+            ttk.Label(
+                agents_tab,
+                text=f"[ERROR] Failed to build agents tab:\n{exc}",
+                style="Muted.TLabel",
+                wraplength=900,
+                justify="left"
+            ).pack(padx=10, pady=10)
+        try:
+            self._build_llm_agents_tab(llm_agents_tab)
+        except Exception as exc:
+            import traceback
+            print(f"ERROR building llm agents tab: {exc}\n{traceback.format_exc()}", file=sys.stderr)
+            ttk.Label(
+                llm_agents_tab,
+                text=f"[ERROR] Failed to build LLM agents tab:\n{exc}",
+                style="Muted.TLabel",
+                wraplength=900,
+                justify="left"
+            ).pack(padx=10, pady=10)
         self._refresh_results()
 
     def _select_results_main_tab(self) -> None:
@@ -1255,16 +1277,23 @@ class DeeconGui:
     ]
 
     def _build_agents_tab(self, tab: "ttk.Frame") -> None:
+        print("[DEBUG] Building agents tab...", file=sys.stderr)
         wrap = ttk.Frame(tab, style="App.TFrame")
         wrap.pack(fill="both", expand=True)
+        print("[DEBUG] Agents tab wrapper packed", file=sys.stderr)
 
         self.agents_notebook = ttk.Notebook(wrap)
         self.agents_notebook.pack(fill="both", expand=True)
+        print(f"[DEBUG] Agents notebook created with {len(self._AGENT_SPECS)} agents", file=sys.stderr)
 
         for agent_id, label, _module, desc, primary_files, secondary_files in self._AGENT_SPECS:
+            print(f"[DEBUG] Building agent tab for: {agent_id} ({label})", file=sys.stderr)
             agent_tab = ttk.Frame(self.agents_notebook, padding=8, style="App.TFrame")
             self.agents_notebook.add(agent_tab, text=label)
             self._build_single_agent_tab(agent_tab, agent_id, label, desc, primary_files, secondary_files)
+            print(f"[DEBUG] Completed agent tab for: {agent_id}", file=sys.stderr)
+        
+        print("[DEBUG] Agents tab building completed successfully", file=sys.stderr)
 
     def _build_single_agent_tab(
         self,
@@ -1509,8 +1538,10 @@ class DeeconGui:
     ]
 
     def _build_llm_agents_tab(self, tab: "ttk.Frame") -> None:
+        print("[DEBUG] Building LLM agents tab...", file=sys.stderr)
         wrap = ttk.Frame(tab, style="App.TFrame")
         wrap.pack(fill="both", expand=True)
+        print("[DEBUG] LLM agents tab wrapper packed", file=sys.stderr)
 
         # Top bar with refresh button
         top = ttk.Frame(wrap, style="App.TFrame")
@@ -1530,8 +1561,10 @@ class DeeconGui:
 
         nb = ttk.Notebook(wrap)
         nb.pack(fill="both", expand=True)
+        print(f"[DEBUG] LLM agents notebook created with {len(self._LLM_AGENT_SPECS)} agents", file=sys.stderr)
 
         for key, label, filename, desc in self._LLM_AGENT_SPECS:
+            print(f"[DEBUG] Building LLM agent tab for: {key} ({label})", file=sys.stderr)
             agent_tab = ttk.Frame(nb, padding=8, style="App.TFrame")
             nb.add(agent_tab, text=label)
 
@@ -1551,9 +1584,11 @@ class DeeconGui:
             )
             self._llm_agent_texts[key] = result_text
             self._set_text_widget_text(result_text, f"Trykk 'Last inn siste resultater' for å laste {filename}.")
+            print(f"[DEBUG] Completed LLM agent tab for: {key}", file=sys.stderr)
 
         # Auto-load on startup
         tab.after(300, self._refresh_llm_agents)
+        print("[DEBUG] LLM agents tab building completed successfully", file=sys.stderr)
 
     def _refresh_llm_agents(self) -> None:
         """Les siste agent-resultater fra nyeste run-mappe."""
