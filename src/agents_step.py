@@ -180,7 +180,7 @@ def run(ctx, log) -> int:
         return 0
 
     # Les gate-logg
-    gate_log = _load_gate_log(ctx.run_dir)
+    gate_log = _load_gate_log(ctx.run_dir, ticker=str(final_candidates.iloc[0].get("ticker", "")) if not final_candidates.empty else None)
 
     # Finn kandidater etter veto
     final_candidates = decision_df[
@@ -243,14 +243,17 @@ def run(ctx, log) -> int:
 # Hjelpefunksjoner
 # ---------------------------------------------------------------------------
 
-def _load_gate_log(run_dir: Path) -> list[dict]:
-    """Les decision_reasons.json som gate-logg."""
+def _load_gate_log(run_dir: Path, ticker: str | None = None) -> list[dict]:
+    """Les decision_reasons.json som gate-logg. Filtrer til én ticker hvis oppgitt."""
     path = run_dir / "decision_reasons.json"
     if not path.exists():
         return []
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        return data.get("decisions", [])
+        decisions = data.get("decisions", [])
+        if ticker:
+            decisions = [d for d in decisions if d.get("ticker") == ticker]
+        return decisions
     except Exception:
         return []
 
