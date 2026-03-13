@@ -563,7 +563,15 @@ def run(ctx, log) -> int:
     q_stale = q_has_data & q_age_days.notna() & (q_age_days > max_quarterly_age_days)
     q_ok = q_has_data & ~q_stale
 
-    if prefer_quarterly:
+    if use_normalized_fcf:
+        # Normalized mode: use 3y median FCF — do NOT override with quarterly R12 (peak-earnings risk)
+        fcf_m = base_fcf_m.copy()
+        fcf_source = pd.Series("normalized_3y", index=df.index, dtype="object")
+        # Fall back to quarterly R12 only where normalized FCF is missing
+        q_fallback = q_ok & fcf_m.isna()
+        fcf_m = fcf_m.where(~q_fallback, q_fcf_m)
+        fcf_source = fcf_source.where(~q_fallback, "reports_r12_fallback")
+    elif prefer_quarterly:
         fcf_m = base_fcf_m.where(~q_ok, q_fcf_m)
         fcf_source = pd.Series(np.where(q_ok, "reports_r12", "master"), index=df.index, dtype="object")
     else:
