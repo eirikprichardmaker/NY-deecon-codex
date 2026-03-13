@@ -185,15 +185,31 @@ def build_fundamentals_from_freeze(
     include_r12: bool = True,
 ) -> Path:
     freeze_proplus = freeze_root / "borsdata_proplus"
-    freeze_kpi = freeze_root / "borsdata_proplus_freeze"
+    # year/quarter KPI-data: data/freeze/borsdata/{date}/raw/kpi_history/
+    freeze_borsdata = freeze_root / "borsdata"
+    # r12 KPI-data: data/freeze/borsdata_proplus_freeze/{date}/raw/kpi_history/
+    freeze_proplus_freeze = freeze_root / "borsdata_proplus_freeze"
 
     print(f"Instrument master: ", end="")
     master_df = _load_instrument_master(freeze_proplus, asof)
     print(f"{len(master_df)} instrumenter")
 
-    kpi_freeze_dir = _find_freeze_root(freeze_kpi, asof)
-    kpi_history_dir = kpi_freeze_dir / "raw" / "kpi_history"
-    print(f"KPI freeze: {kpi_freeze_dir.name}  ({len(list(kpi_history_dir.glob('*.json.gz')))} batch-filer)")
+    # Finn nyeste borsdata-freeze for year/quarter
+    borsdata_freeze_dir = _find_freeze_root(freeze_borsdata, asof)
+    kpi_history_dir_year = borsdata_freeze_dir / "raw" / "kpi_history"
+    n_year = len(list(kpi_history_dir_year.glob("*.json.gz"))) if kpi_history_dir_year.exists() else 0
+    print(f"KPI year/quarter freeze: {borsdata_freeze_dir.name}  ({n_year} batch-filer)")
+
+    # Finn nyeste proplus_freeze for r12
+    kpi_history_dir_r12: Optional[Path] = None
+    if freeze_proplus_freeze.exists():
+        try:
+            r12_freeze_dir = _find_freeze_root(freeze_proplus_freeze, asof)
+            kpi_history_dir_r12 = r12_freeze_dir / "raw" / "kpi_history"
+            n_r12 = len(list(kpi_history_dir_r12.glob("*.json.gz"))) if kpi_history_dir_r12.exists() else 0
+            print(f"KPI r12 freeze: {r12_freeze_dir.name}  ({n_r12} batch-filer)")
+        except FileNotFoundError:
+            print("KPI r12 freeze: ikke funnet")
 
     want_year = mode in ("year", "both")
     want_quarter = mode in ("quarter", "both")
@@ -217,7 +233,14 @@ def build_fundamentals_from_freeze(
         for reporttype in target_reporttypes:
             if reporttype not in available:
                 continue
-            df = _read_batch_files(kpi_history_dir, kpi_id, reporttype, pricetype)
+            # r12 ligger i proplus_freeze, year/quarter i borsdata
+            if reporttype == "r12":
+                if kpi_history_dir_r12 is None or not kpi_history_dir_r12.exists():
+                    continue
+                kpi_dir = kpi_history_dir_r12
+            else:
+                kpi_dir = kpi_history_dir_year
+            df = _read_batch_files(kpi_dir, kpi_id, reporttype, pricetype)
             if df.empty:
                 print(f"  {name} ({kpi_id}) / {reporttype}: ingen data")
                 continue
