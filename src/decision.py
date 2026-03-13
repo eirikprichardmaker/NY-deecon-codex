@@ -2206,6 +2206,14 @@ def _run_data_quality_checks(df: pd.DataFrame, dec_cfg: dict, asof: str) -> tupl
                              rule_id="DQ_SHARES_NON_POSITIVE", severity="FAIL", field=sh_col, value=row.get(sh_col),
                              group_key=str(group_s.loc[i]), group_n=0, source_fields=source_fields, detail="shares<=0")
 
+        # ROIC implausibility check (> 100% after normalization = likely scale/data error)
+        if row.get("roic_implausible") is True or row.get("roic_implausible") == 1:
+            roic_val = _to_float(row.get("roic_implausible_value", row.get("roic_dec", np.nan)))
+            _append_dq_event(audit_rows, row_index=i, asof=asof, date=row_date, ticker=ticker, ins_id=ins_id, sector=sector_val,
+                             rule_id="DQ_ROIC_IMPLAUSIBLE", severity="WARN", field="roic", value=roic_val,
+                             group_key=str(group_s.loc[i]), group_n=0, source_fields=source_fields,
+                             detail=f"roic={roic_val:.2%} after normalization — likely scale error or bad data")
+
         intrinsic = _to_float(row.get("intrinsic_value", np.nan))
         mos = _to_float(row.get("mos", np.nan))
         mos_req = _to_float(row.get("mos_req", np.nan))
@@ -2599,6 +2607,10 @@ def _value_creation_gate(df: pd.DataFrame, dec_cfg: dict) -> pd.DataFrame:
         np.where(out["value_creation_ok"], "", "roic_wacc_not_persistent_3y"),
         "missing_roic_or_wacc",
     )
+    # Sanity check: ROIC > 100% after normalization is almost certainly a data/scale error
+    implausible_roic = roic.notna() & (roic.abs() > 1.0)
+    out["roic_implausible"] = implausible_roic
+    out["roic_implausible_value"] = roic.where(implausible_roic)
     return out
 
 
