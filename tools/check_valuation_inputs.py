@@ -102,10 +102,10 @@ def main() -> None:
         tv = fn * (1+tg) / (wacc - tg)
         return pv + tv / ((1+wacc)**n)
 
-    W = 115
+    W = 140
     print("=" * W)
     print(f"{'Ticker':<8} {'FCF brukt':>10} {'FCF 3y med':>10} {'EBITDA':>9} {'F/E':>5} "
-          f"{'FCF-kilde':<13} {'WACC':>6} {'MoS':>7} {'ROIC':>8}  Advarsel")
+          f"{'FCF-kilde':<13} {'WACC':>6} {'MoS':>7} {'ROIC':>8} {'NetGjeld':>10} {'Mkt Cap':>9}  Advarsel")
     print("-" * W)
 
     for ticker in candidates:
@@ -147,7 +147,16 @@ def main() -> None:
         roic_val = roic_spread + wacc_val
         roic_str = _fmt(roic_val, pct=True)
 
-        # Advarsler
+        # Net debt and market cap (in millions)
+        net_debt_raw = float(vrow.get("net_debt_used", float("nan"))) if vrow is not None else float("nan")
+        net_debt_m = net_debt_raw / 1e6 if math.isfinite(net_debt_raw) else float("nan")
+        net_debt_str = _fmt(net_debt_m) + "M" if math.isfinite(net_debt_m) else "n/a"
+
+        mcap_raw = float(sl_row.get("market_cap", float("nan"))) if sl_row is not None else float("nan")
+        mcap_m = mcap_raw / 1e6 if math.isfinite(mcap_raw) and mcap_raw > 1e6 else mcap_raw  # normalise
+        mcap_str = _fmt(mcap_m) + "M" if math.isfinite(mcap_m) else "n/a"
+
+        # Advarsler (samles, NetGjeld=0 legges til etter at net_debt_m er kjent)
         warnings = []
         if math.isfinite(roic_val) and abs(roic_val) > 1.0:
             warnings.append(f"ROIC={roic_val:.0%} skala?")
@@ -155,10 +164,14 @@ def main() -> None:
             warnings.append(f"FCF/EBITDA={fe_ratio:.1f}x valuta?")
         if math.isfinite(fcf_val) and math.isfinite(fcf_3y) and fcf_3y > 0 and fcf_val > 3 * fcf_3y:
             warnings.append(f"FCF={fcf_val:.0f}M >> 3y-median={fcf_3y:.0f}M (peak?)")
+
+        # Net debt implausibility check
+        if math.isfinite(net_debt_m) and net_debt_m == 0.0:
+            warnings.append("NetGjeld=0 (mangler?)")
         warn_str = " | ".join(f"⚠️ {w}" for w in warnings) if warnings else "OK"
 
         print(f"{ticker:<8} {fcf_str:>10} {fcf_3y_str:>10} {ebitda_str:>9} {fe_str:>5} "
-              f"{fcf_src:<13} {wacc_val:.0%}:>6 {mos:>7} {roic_str:>8}  {warn_str}")
+              f"{fcf_src:<13} {wacc_val:.0%}:>6 {mos:>7} {roic_str:>8} {net_debt_str:>10} {mcap_str:>9}  {warn_str}")
 
     print("=" * W)
     print("\nForklaring:")
@@ -169,6 +182,9 @@ def main() -> None:
     print("  ⚠️ ROIC skala = ROIC > 100% etter normalisering (sannsynlig datafeil)")
     print("  ⚠️ FCF/EBITDA = FCF > 3× EBITDA (sannsynlig valuta- eller dataproblem)")
     print("  ⚠️ FCF >> 3y  = R12 FCF er mer enn 3× høyere enn historisk median (peak-earnings?)")
+    print("  ⚠️ NetGjeld=0 = Ingen netto gjeld funnet — intrinsic_equity = intrinsic_EV (mulig feil)")
+    print("  NetGjeld      = netto rentebærende gjeld brukt i DCF (trekkes fra EV → equity)")
+    print("  Mkt Cap       = markedsverdi fra shortlist (millioner, lokal valuta)")
 
 
 if __name__ == "__main__":
