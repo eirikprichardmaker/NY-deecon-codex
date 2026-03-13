@@ -410,7 +410,7 @@ def _merge_fundamentals_summary(
 
     merge_cols = [c for c in ["fcf_m_latest", "fcf_m_median_3y", "fcf_m_median_5y",
                                "ebitda_m_latest", "ebit_m_latest", "roic_latest",
-                               "fcf_m_years_available"]
+                               "fcf_m_years_available", "netdebt_m_latest"]
                   if c in summary.columns]
     if not merge_cols:
         return
@@ -490,7 +490,7 @@ def run(ctx, log) -> int:
     fcf_col = _pick_first_col(df, fcf_candidates)
     ocf_col = _pick_first_col(df, ["ocf_millions", "ocf_-_millions", "ocf"])
     capex_col = _pick_first_col(df, ["capex_millions", "capex_-_millions", "capex"])
-    net_debt_col = _pick_first_col(df, ["net_debt_millions", "net_debt_-_current", "net_debt_current", "net_debt"])
+    net_debt_col = _pick_first_col(df, ["net_debt_millions", "net_debt_-_current", "net_debt_current", "net_debt", "netdebt_m_latest"])
     wacc_col = _pick_first_col(df, ["wacc_used", "wacc"])
     coe_col = _pick_first_col(df, ["coe_used", "coe"])
     ticker_col = _pick_first_col(df, ["ticker"])

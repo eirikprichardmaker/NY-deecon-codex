@@ -351,8 +351,13 @@ def _compute_fundamentals_summary(hist: "pd.DataFrame", asof: str, raw_dir: "Pat
                 row["fcf_m_median_5y"] = float("nan")
                 row["fcf_m_years_available"] = 0
 
-            # EBITDA — siste årsverdi
-            for metric, col in [("ebitda_m", "ebitda_m_latest"), ("ebit_m", "ebit_m_latest"), ("roic", "roic_latest")]:
+            # EBITDA, EBIT, ROIC, Net debt — siste årsverdi
+            for metric, col in [
+                ("ebitda_m", "ebitda_m_latest"),
+                ("ebit_m", "ebit_m_latest"),
+                ("roic", "roic_latest"),
+                ("netdebt_m", "netdebt_m_latest"),
+            ]:
                 sub = grp[(grp["metric"] == metric) & (grp["report_type"] == "year")]
                 sub = sub[sub["date"] <= asof_dt].dropna(subset=["value"])
                 row[col] = float(sub.sort_values("date")["value"].iloc[-1]) if not sub.empty else float("nan")
