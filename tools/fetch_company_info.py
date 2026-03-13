@@ -33,13 +33,27 @@ def _load_master(repo: Path) -> dict[str, str]:
     path = _find_nordic_master(repo)
     with gzip.open(path, "rt", encoding="utf-8") as f:
         data = json.load(f)
-    instruments = data if isinstance(data, list) else data.get("instruments", [])
+    # Unwrap payload wrapper (same structure as prepare_agent_evidence)
+    payload = data.get("payload", data) if isinstance(data, dict) else data
+    ins_list: list = []
+    if isinstance(payload, list):
+        ins_list = payload
+    elif isinstance(payload, dict):
+        for key in ("instruments", "instrumentList", "instrumentsList"):
+            if isinstance(payload.get(key), list):
+                ins_list = payload[key]
+                break
+        if not ins_list:
+            for v in payload.values():
+                if isinstance(v, list):
+                    ins_list = v
+                    break
     mapping = {}
-    for inst in instruments:
+    for inst in ins_list:
         ticker = inst.get("ticker") or inst.get("symbol") or ""
-        yahoo = inst.get("yahoo") or inst.get("yahoo_symbol") or ""
+        yahoo = inst.get("yahoo") or inst.get("yahooTicker") or inst.get("yahoo_symbol") or ""
         if ticker and yahoo:
-            mapping[ticker.upper()] = yahoo
+            mapping[str(ticker).upper()] = str(yahoo)
     return mapping
 
 
