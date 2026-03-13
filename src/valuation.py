@@ -410,7 +410,8 @@ def _merge_fundamentals_summary(
 
     merge_cols = [c for c in ["fcf_m_latest", "fcf_m_median_3y", "fcf_m_median_5y",
                                "ebitda_m_latest", "ebit_m_latest", "roic_latest",
-                               "fcf_m_years_available", "netdebt_m_latest"]
+                               "fcf_m_years_available", "fcf_m_cv_3y",
+                               "netdebt_m_latest", "netdebt_ebitda_latest"]
                   if c in summary.columns]
     if not merge_cols:
         return
@@ -704,6 +705,8 @@ def run(ctx, log) -> int:
         "wacc_used": wacc,
         "coe_used": coe,
         "reason": reason.fillna(""),
+        "fcf_implausible": df["fcf_implausible"].values if "fcf_implausible" in df.columns else False,
+        "fcf_ebitda_ratio": df["fcf_ebitda_ratio"].values if "fcf_ebitda_ratio" in df.columns else np.nan,
     })
 
     # B1) valuation_df must be unique on yahoo_ticker

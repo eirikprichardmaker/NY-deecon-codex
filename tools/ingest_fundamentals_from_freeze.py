@@ -345,18 +345,26 @@ def _compute_fundamentals_summary(hist: "pd.DataFrame", asof: str, raw_dir: "Pat
                 row["fcf_m_median_3y"] = float(fcf_3y.median()) if len(fcf_3y) >= 2 else float("nan")
                 row["fcf_m_median_5y"] = float(fcf_5y.median()) if len(fcf_5y) >= 2 else float("nan")
                 row["fcf_m_years_available"] = int(len(fcf_year))
+                # Coefficient of variation (std/|mean|) — høy verdi = syklisk inntjening
+                if len(fcf_3y) >= 2 and fcf_3y.mean() != 0:
+                    cv = fcf_3y.std() / abs(fcf_3y.mean())
+                    row["fcf_m_cv_3y"] = float(cv) if cv == cv else float("nan")
+                else:
+                    row["fcf_m_cv_3y"] = float("nan")
             else:
                 row["fcf_m_latest"] = float("nan")
                 row["fcf_m_median_3y"] = float("nan")
                 row["fcf_m_median_5y"] = float("nan")
                 row["fcf_m_years_available"] = 0
+                row["fcf_m_cv_3y"] = float("nan")
 
-            # EBITDA, EBIT, ROIC, Net debt — siste årsverdi
+            # EBITDA, EBIT, ROIC, Net debt, NetDebt/EBITDA — siste årsverdi
             for metric, col in [
                 ("ebitda_m", "ebitda_m_latest"),
                 ("ebit_m", "ebit_m_latest"),
                 ("roic", "roic_latest"),
                 ("netdebt_m", "netdebt_m_latest"),
+                ("netdebt_ebitda", "netdebt_ebitda_latest"),
             ]:
                 sub = grp[(grp["metric"] == metric) & (grp["report_type"] == "year")]
                 sub = sub[sub["date"] <= asof_dt].dropna(subset=["value"])

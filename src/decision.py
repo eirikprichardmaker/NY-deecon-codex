@@ -2206,6 +2206,14 @@ def _run_data_quality_checks(df: pd.DataFrame, dec_cfg: dict, asof: str) -> tupl
                              rule_id="DQ_SHARES_NON_POSITIVE", severity="FAIL", field=sh_col, value=row.get(sh_col),
                              group_key=str(group_s.loc[i]), group_n=0, source_fields=source_fields, detail="shares<=0")
 
+        # FCF/EBITDA implausibility check (FCF > 3× EBITDA = likely currency mismatch or data error)
+        if row.get("fcf_implausible") is True or row.get("fcf_implausible") == 1:
+            fe_ratio_val = _to_float(row.get("fcf_ebitda_ratio", np.nan))
+            _append_dq_event(audit_rows, row_index=i, asof=asof, date=row_date, ticker=ticker, ins_id=ins_id, sector=sector_val,
+                             rule_id="DQ_FCF_IMPLAUSIBLE", severity="WARN", field="fcf_used_millions", value=fe_ratio_val,
+                             group_key=str(group_s.loc[i]), group_n=0, source_fields=source_fields,
+                             detail=f"FCF/EBITDA={fe_ratio_val:.1f}x — sannsynlig valuta-mismatch eller datafeil")
+
         # ROIC implausibility check (> 100% after normalization = likely scale/data error)
         if row.get("roic_implausible") is True or row.get("roic_implausible") == 1:
             roic_val = _to_float(row.get("roic_implausible_value", row.get("roic_dec", np.nan)))

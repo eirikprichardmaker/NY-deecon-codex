@@ -133,6 +133,8 @@ def main() -> None:
         fcf_src = str(vrow.get("fcf_source", "?"))[:11] if vrow is not None else "n/a"
 
         fcf_3y = float(srow["fcf_m_median_3y"]) if srow is not None and "fcf_m_median_3y" in srow and math.isfinite(float(srow.get("fcf_m_median_3y", float("nan")))) else float("nan")
+        fcf_cv = float(srow.get("fcf_m_cv_3y", float("nan"))) if srow is not None else float("nan")
+        nd_ebitda = float(srow.get("netdebt_ebitda_latest", float("nan"))) if srow is not None else float("nan")
         fcf_3y_str = _fmt(fcf_3y) + "M" if math.isfinite(fcf_3y) else "n/a"
 
         ebitda = float(srow["ebitda_m_latest"]) if srow is not None and "ebitda_m_latest" in srow and math.isfinite(float(srow.get("ebitda_m_latest", float("nan")))) else float("nan")
@@ -168,6 +170,12 @@ def main() -> None:
         # Net debt implausibility check
         if math.isfinite(net_debt_m) and net_debt_m == 0.0:
             warnings.append("NetGjeld=0 (mangler?)")
+        # Leasing-gjeld: stor selskap med nesten ingen finansiell gjeld — kan mangle IFRS16
+        if math.isfinite(net_debt_m) and math.isfinite(mcap_m) and mcap_m > 5000 and abs(net_debt_m) < 200:
+            warnings.append(f"Stor selskap, lav finans.gjeld ({net_debt_m:.0f}M) — sjekk IFRS16 leasing")
+        # Syklisk FCF-risiko: høy variasjonskoeffisient
+        if math.isfinite(fcf_cv) and fcf_cv > 0.75:
+            warnings.append(f"FCF syklisk (CV={fcf_cv:.1f})")
         warn_str = " | ".join(f"⚠️ {w}" for w in warnings) if warnings else "OK"
 
         print(f"{ticker:<8} {fcf_str:>10} {fcf_3y_str:>10} {ebitda_str:>9} {fe_str:>5} "
@@ -183,8 +191,10 @@ def main() -> None:
     print("  ⚠️ FCF/EBITDA = FCF > 3× EBITDA (sannsynlig valuta- eller dataproblem)")
     print("  ⚠️ FCF >> 3y  = R12 FCF er mer enn 3× høyere enn historisk median (peak-earnings?)")
     print("  ⚠️ NetGjeld=0 = Ingen netto gjeld funnet — intrinsic_equity = intrinsic_EV (mulig feil)")
-    print("  NetGjeld      = netto rentebærende gjeld brukt i DCF (trekkes fra EV → equity)")
-    print("  Mkt Cap       = markedsverdi fra shortlist (millioner, lokal valuta)")
+    print("  ⚠️ Stor/lav gjeld = Stor selskap med <200M finansiell gjeld — kan mangle IFRS16 leasing")
+    print("  ⚠️ FCF syklisk  = Variasjonskoeffisient > 0.75 over 3 år — inntjeningen er ustabil")
+    print("  NetGjeld        = netto rentebærende gjeld brukt i DCF (trekkes fra EV → equity)")
+    print("  Mkt Cap         = markedsverdi fra shortlist (millioner, lokal valuta)")
 
 
 if __name__ == "__main__":
