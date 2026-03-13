@@ -361,6 +361,78 @@ def _load_quarterly_r12_fcf_snapshot(
     return out
 
 
+def _merge_fundamentals_summary(
+    df: "pd.DataFrame",
+    raw_dir: Path,
+    asof: str,
+    use_normalized_fcf: bool,
+    log,
+) -> None:
+    """
+    Merger inn normalisert FCF og EBITDA fra fundamentals_summary.parquet (hvis finnes).
+    Endrer df in-place ved å legge til kolonner:
+      - fcf_m_median_3y, fcf_m_median_5y, fcf_m_latest
+      - ebitda_m_latest, ebit_m_latest, roic_latest
+    """
+    # Finn nyeste summary <= asof
+    summary_path: Optional[Path] = None
+    raw_base = raw_dir.parent if raw_dir.name == asof else raw_dir
+    for candidate_dir in sorted(raw_base.iterdir(), reverse=True):
+        if not candidate_dir.is_dir():
+            continue
+        if candidate_dir.name > asof:
+            continue
+        p = candidate_dir / "fundamentals_summary.parquet"
+        if p.exists():
+            summary_path = p
+            break
+    # Also check raw_dir directly
+    if summary_path is None and (raw_dir / "fundamentals_summary.parquet").exists():
+        summary_path = raw_dir / "fundamentals_summary.parquet"
+
+    if summary_path is None:
+        if use_normalized_fcf:
+            log.warning("valuation: use_normalized_fcf=True men fundamentals_summary.parquet ikke funnet. "
+                        "Kjør ingest_fundamentals_from_freeze for å generere den.")
+        return
+
+    try:
+        summary = pd.read_parquet(summary_path)
+    except Exception as e:
+        log.warning(f"valuation: kunne ikke lese {summary_path}: {e}")
+        return
+
+    id_col = "yahoo_ticker" if "yahoo_ticker" in summary.columns else "ticker"
+    if id_col not in summary.columns:
+        return
+
+    summary[id_col] = summary[id_col].astype(str).str.upper().str.strip()
+
+    merge_cols = [c for c in ["fcf_m_latest", "fcf_m_median_3y", "fcf_m_median_5y",
+                               "ebitda_m_latest", "ebit_m_latest", "roic_latest",
+                               "fcf_m_years_available"]
+                  if c in summary.columns]
+    if not merge_cols:
+        return
+
+    # Don't overwrite existing columns
+    new_cols = [c for c in merge_cols if c not in df.columns]
+    if not new_cols:
+        return
+
+    sub = summary[[id_col] + new_cols].drop_duplicates(subset=[id_col])
+    before = len(df)
+    df_key = "yahoo_ticker" if "yahoo_ticker" in df.columns else id_col
+    merged = df.merge(sub.rename(columns={id_col: df_key}), on=df_key, how="left", validate="many_to_one")
+    if len(merged) != before:
+        log.warning(f"valuation: merge med fundamentals_summary endret rowcount {before} → {len(merged)}")
+        return
+    for c in new_cols:
+        df[c] = merged[c].values
+    log.info(f"valuation: merged fundamentals_summary fra {summary_path.parent.name} "
+             f"({', '.join(new_cols)})")
+
+
 def run(ctx, log) -> int:
     """
     Builds:
@@ -405,8 +477,17 @@ def run(ctx, log) -> int:
     if base_dup:
         raise ValueError(f"valuation: master_cost has duplicate yahoo_ticker keys: {base_dup}")
 
-    # Pick columns
-    fcf_col = _pick_first_col(df, ["fcf_millions", "fcf_-_millions", "fcf", "free_cash_flow_millions", "free_cash_flow"])
+    # Merge normalized FCF and EBITDA from fundamentals_summary.parquet (if available)
+    use_normalized_fcf = bool(_cfg_get(ctx.cfg, "valuation.use_normalized_fcf", False))
+    _merge_fundamentals_summary(df, raw_dir, asof_s, use_normalized_fcf, log)
+
+    # Pick columns — normalized FCF (3y median) takes priority when enabled
+    fcf_candidates = (
+        ["fcf_m_median_3y", "fcf_m_median_5y", "fcf_millions", "fcf_-_millions", "fcf", "free_cash_flow_millions", "free_cash_flow"]
+        if use_normalized_fcf
+        else ["fcf_millions", "fcf_-_millions", "fcf", "free_cash_flow_millions", "free_cash_flow"]
+    )
+    fcf_col = _pick_first_col(df, fcf_candidates)
     ocf_col = _pick_first_col(df, ["ocf_millions", "ocf_-_millions", "ocf"])
     capex_col = _pick_first_col(df, ["capex_millions", "capex_-_millions", "capex"])
     net_debt_col = _pick_first_col(df, ["net_debt_millions", "net_debt_-_current", "net_debt_current", "net_debt"])
@@ -505,6 +586,31 @@ def run(ctx, log) -> int:
         "quarterly_fcf_stale_count": int(q_stale.sum()),
         "fcf_source_reports_r12_count": int((fcf_source == "reports_r12").sum()),
     }
+    # FCF/EBITDA sanity check — flag if FCF > 3× EBITDA (likely currency mismatch or stale data)
+    ebitda_col = _pick_first_col(df, ["ebitda_m_latest", "ebitda_m", "ebitda_millions", "ebitda"])
+    if ebitda_col:
+        ebitda_m = _to_num(df[ebitda_col])
+        fcf_ebitda_ratio = fcf_m / ebitda_m.replace(0, np.nan)
+        implausible_fcf = fcf_ebitda_ratio.notna() & (fcf_ebitda_ratio.abs() > 3.0)
+        df["fcf_ebitda_ratio"] = fcf_ebitda_ratio
+        df["fcf_implausible"] = implausible_fcf
+        n_implausible = int(implausible_fcf.sum())
+        if n_implausible > 0:
+            log.warning(
+                f"valuation: {n_implausible} ticker(e) har FCF > 3× EBITDA (sannsynlig data-/valutafeil). "
+                f"Sjekk valuation_input_audit.json for detaljer."
+            )
+        valuation_input_audit["fcf_implausible_count"] = n_implausible
+        if n_implausible > 0:
+            ticker_col_tmp = _pick_first_col(df, ["ticker", "yahoo_ticker"])
+            if ticker_col_tmp:
+                valuation_input_audit["fcf_implausible_tickers"] = df.loc[
+                    implausible_fcf, ticker_col_tmp
+                ].tolist()
+    else:
+        df["fcf_ebitda_ratio"] = np.nan
+        df["fcf_implausible"] = False
+
     _atomic_write_text(
         run_dir / "valuation_input_audit.json",
         json.dumps(valuation_input_audit, ensure_ascii=False, indent=2),

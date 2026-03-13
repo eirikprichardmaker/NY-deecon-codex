@@ -298,8 +298,77 @@ def build_fundamentals_from_freeze(
     }
     (raw_dir / "ingest_meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
+    # Bygg per-ticker summary med normalisert FCF (median siste 3 og 5 år)
+    summary_path = _compute_fundamentals_summary(hist, asof, raw_dir)
+
     print(f"\n[OK] {out_path}  ({len(hist):,} rader, {meta['tickers']} tickers)")
+    if summary_path:
+        print(f"[OK] {summary_path}  (summary per ticker)")
     return out_path
+
+
+def _compute_fundamentals_summary(hist: "pd.DataFrame", asof: str, raw_dir: "Path") -> Optional["Path"]:
+    """
+    Beregner per-ticker summary fra fundamentals_history.parquet.
+
+    Inkluderer:
+      - fcf_m_latest      : siste årsverdi av FCF
+      - fcf_m_median_3y   : median av siste 3 kalenderår (normalisert FCF)
+      - fcf_m_median_5y   : median av siste 5 kalenderår
+      - ebitda_m_latest   : siste årsverdi av EBITDA
+      - ebit_m_latest     : siste årsverdi av EBIT
+      - roic_latest       : siste årsverdi av ROIC
+    """
+    try:
+        asof_dt = pd.to_datetime(asof, errors="coerce")
+        if pd.isna(asof_dt):
+            return None
+
+        id_col = "yahoo_ticker" if "yahoo_ticker" in hist.columns else "ticker"
+        rows = []
+
+        for ticker, grp in hist.groupby(id_col):
+            row: dict = {id_col: ticker}
+
+            # FCF — bruk year-data for historikk (mer stabil enn r12)
+            fcf_year = grp[(grp["metric"] == "fcf_m") & (grp["report_type"] == "year")].copy()
+            fcf_year = fcf_year[fcf_year["date"] <= asof_dt].dropna(subset=["value"])
+            fcf_year = fcf_year.sort_values("date")
+
+            if not fcf_year.empty:
+                row["fcf_m_latest"] = float(fcf_year["value"].iloc[-1])
+                # Siste 3 og 5 kalenderår
+                cutoff_3y = asof_dt - pd.DateOffset(years=3)
+                cutoff_5y = asof_dt - pd.DateOffset(years=5)
+                fcf_3y = fcf_year[fcf_year["date"] >= cutoff_3y]["value"]
+                fcf_5y = fcf_year[fcf_year["date"] >= cutoff_5y]["value"]
+                row["fcf_m_median_3y"] = float(fcf_3y.median()) if len(fcf_3y) >= 2 else float("nan")
+                row["fcf_m_median_5y"] = float(fcf_5y.median()) if len(fcf_5y) >= 2 else float("nan")
+                row["fcf_m_years_available"] = int(len(fcf_year))
+            else:
+                row["fcf_m_latest"] = float("nan")
+                row["fcf_m_median_3y"] = float("nan")
+                row["fcf_m_median_5y"] = float("nan")
+                row["fcf_m_years_available"] = 0
+
+            # EBITDA — siste årsverdi
+            for metric, col in [("ebitda_m", "ebitda_m_latest"), ("ebit_m", "ebit_m_latest"), ("roic", "roic_latest")]:
+                sub = grp[(grp["metric"] == metric) & (grp["report_type"] == "year")]
+                sub = sub[sub["date"] <= asof_dt].dropna(subset=["value"])
+                row[col] = float(sub.sort_values("date")["value"].iloc[-1]) if not sub.empty else float("nan")
+
+            rows.append(row)
+
+        if not rows:
+            return None
+
+        summary = pd.DataFrame(rows)
+        out_path = raw_dir / "fundamentals_summary.parquet"
+        summary.to_parquet(out_path, index=False)
+        return out_path
+    except Exception as e:
+        print(f"  [WARN] kunne ikke bygge fundamentals_summary: {e}")
+        return None
 
 
 def main() -> None:

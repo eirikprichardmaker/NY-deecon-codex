@@ -70,6 +70,20 @@ def main() -> None:
         print(f"(Bruker valuation fra: {val_path.parent.name})\n")
     val = pd.read_csv(val_path)
 
+    # Les fundamentals_summary.parquet for EBITDA og normalisert FCF
+    summary = None
+    for d in sorted((repo / "data" / "raw").iterdir(), reverse=True):
+        p = d / "fundamentals_summary.parquet"
+        if p.exists():
+            try:
+                summary = pd.read_parquet(p)
+                summary_id = "yahoo_ticker" if "yahoo_ticker" in summary.columns else "ticker"
+                summary[summary_id] = summary[summary_id].astype(str).str.upper().str.strip()
+                print(f"(Fundamentals summary fra: {d.name})\n")
+            except Exception:
+                summary = None
+            break
+
     # Filtrer til kandidatene i shortlist
     ticker_col = "ticker" if "ticker" in val.columns else "yahoo_ticker"
     val_cands = val[val[ticker_col].isin(candidates)].copy()
@@ -88,10 +102,11 @@ def main() -> None:
         tv = fn * (1+tg) / (wacc - tg)
         return pv + tv / ((1+wacc)**n)
 
-    print("=" * 95)
-    print(f"{'Ticker':<8} {'FCF brukt':>10} {'FCF-kilde':<14} {'WACC':>6} {'Net gjeld':>10} "
-          f"{'Intrinsic':>12} {'MoS':>7} {'ROIC':>8} {'Advarsel'}")
-    print("-" * 95)
+    W = 115
+    print("=" * W)
+    print(f"{'Ticker':<8} {'FCF brukt':>10} {'FCF 3y med':>10} {'EBITDA':>9} {'F/E':>5} "
+          f"{'FCF-kilde':<13} {'WACC':>6} {'MoS':>7} {'ROIC':>8}  Advarsel")
+    print("-" * W)
 
     for ticker in candidates:
         sl_row = shortlist[shortlist["ticker"] == ticker].iloc[0] if ticker in shortlist["ticker"].values else None
@@ -101,48 +116,59 @@ def main() -> None:
             vrows = val_cands[val_cands[ticker_col] == ticker]
         else:
             vrows = val_cands[val_cands.get("_base", pd.Series()) == ticker]
-
         vrow = vrows.iloc[0] if not vrows.empty else None
 
-        fcf = _fmt(vrow["fcf_used_millions"] if vrow is not None else None) + "M" if vrow is not None and "fcf_used_millions" in val.columns else "n/a"
-        fcf_src = str(vrow.get("fcf_source", "?"))[:12] if vrow is not None else "n/a"
-        wacc = _fmt(vrow["wacc_used"] if vrow is not None else None, pct=True) if vrow is not None else "n/a"
-        net_debt = _fmt(vrow["net_debt_used"] if vrow is not None else None) if vrow is not None else "n/a"
-        intrinsic = _fmt(sl_row["intrinsic_value"] if sl_row is not None else None)
+        # Finn i fundamentals_summary via yahoo_ticker
+        srow = None
+        if summary is not None and vrow is not None:
+            yt = str(vrow.get("yahoo_ticker", "")).upper().strip()
+            smatch = summary[summary[summary_id] == yt]
+            if smatch.empty:
+                # Fallback: match på base ticker
+                smatch = summary[summary[summary_id].str.split(".").str[0] == ticker]
+            srow = smatch.iloc[0] if not smatch.empty else None
+
+        fcf_val = float(vrow["fcf_used_millions"]) if vrow is not None and "fcf_used_millions" in val.columns and math.isfinite(float(vrow.get("fcf_used_millions", float("nan")))) else float("nan")
+        fcf_str = _fmt(fcf_val) + "M" if math.isfinite(fcf_val) else "n/a"
+        fcf_src = str(vrow.get("fcf_source", "?"))[:11] if vrow is not None else "n/a"
+
+        fcf_3y = float(srow["fcf_m_median_3y"]) if srow is not None and "fcf_m_median_3y" in srow and math.isfinite(float(srow.get("fcf_m_median_3y", float("nan")))) else float("nan")
+        fcf_3y_str = _fmt(fcf_3y) + "M" if math.isfinite(fcf_3y) else "n/a"
+
+        ebitda = float(srow["ebitda_m_latest"]) if srow is not None and "ebitda_m_latest" in srow and math.isfinite(float(srow.get("ebitda_m_latest", float("nan")))) else float("nan")
+        ebitda_str = _fmt(ebitda) + "M" if math.isfinite(ebitda) else "n/a"
+
+        fe_ratio = fcf_val / ebitda if math.isfinite(fcf_val) and math.isfinite(ebitda) and ebitda != 0 else float("nan")
+        fe_str = _fmt(fe_ratio, decimals=1) if math.isfinite(fe_ratio) else "n/a"
+
+        wacc_val = float(sl_row["wacc_used"]) if sl_row is not None and "wacc_used" in sl_row else 0.09
         mos = _fmt(sl_row["mos"] if sl_row is not None else None, pct=True)
         roic_spread = float(sl_row["roic_wacc_spread"]) if sl_row is not None and "roic_wacc_spread" in sl_row else float("nan")
-        wacc_val = float(sl_row["wacc_used"]) if sl_row is not None and "wacc_used" in sl_row else 0.09
         roic_val = roic_spread + wacc_val
         roic_str = _fmt(roic_val, pct=True)
 
         # Advarsler
         warnings = []
         if math.isfinite(roic_val) and abs(roic_val) > 1.0:
-            warnings.append(f"⚠️ ROIC={roic_val:.0%} sannsynlig feil")
-        if vrow is not None and "fcf_used_millions" in vrow:
-            try:
-                fcf_m = float(vrow["fcf_used_millions"])
-                mult = dcf_multiplier(wacc=wacc_val)
-                implied_iv = fcf_m * mult * 1e6
-                mcap = float(sl_row["market_cap"]) if sl_row is not None else float("nan")
-                if math.isfinite(implied_iv) and math.isfinite(mcap) and mcap > 0:
-                    ratio = implied_iv / mcap
-                    if ratio > 10:
-                        warnings.append(f"⚠️ FCF={fcf_m:.1f}M gir {ratio:.0f}x mcap")
-            except Exception:
-                pass
+            warnings.append(f"ROIC={roic_val:.0%} skala?")
+        if math.isfinite(fe_ratio) and abs(fe_ratio) > 3.0:
+            warnings.append(f"FCF/EBITDA={fe_ratio:.1f}x valuta?")
+        if math.isfinite(fcf_val) and math.isfinite(fcf_3y) and fcf_3y > 0 and fcf_val > 3 * fcf_3y:
+            warnings.append(f"FCF={fcf_val:.0f}M >> 3y-median={fcf_3y:.0f}M (peak?)")
+        warn_str = " | ".join(f"⚠️ {w}" for w in warnings) if warnings else "OK"
 
-        warn_str = " | ".join(warnings) if warnings else "OK"
+        print(f"{ticker:<8} {fcf_str:>10} {fcf_3y_str:>10} {ebitda_str:>9} {fe_str:>5} "
+              f"{fcf_src:<13} {wacc_val:.0%}:>6 {mos:>7} {roic_str:>8}  {warn_str}")
 
-        print(f"{ticker:<8} {fcf:>10} {fcf_src:<14} {wacc:>6} {net_debt:>10} "
-              f"{intrinsic:>12} {mos:>7} {roic_str:>8}  {warn_str}")
-
-    print("=" * 95)
+    print("=" * W)
     print("\nForklaring:")
-    print("  FCF brukt   = grunnlag for DCF (millioner, lokal valuta)")
-    print("  ROIC        = ROIC etter normalisering (> 100% = sannsynlig datafeil)")
-    print("  ⚠️ ROIC-feil = skalaproblemer i KPI-data fra Borsdata")
-    print("  ⚠️ FCF-ratio = FCF impliserer urealistisk høy intrinsic value vs markedsverdi")
+    print("  FCF brukt   = siste R12 FCF brukt i DCF (millioner, lokal valuta)")
+    print("  FCF 3y med  = median FCF siste 3 år (normalisert, fra fundamentals_summary)")
+    print("  EBITDA      = siste årsverdi EBITDA (fra fundamentals_summary)")
+    print("  F/E         = FCF / EBITDA — bør normalt være < 1.5")
+    print("  ⚠️ ROIC skala = ROIC > 100% etter normalisering (sannsynlig datafeil)")
+    print("  ⚠️ FCF/EBITDA = FCF > 3× EBITDA (sannsynlig valuta- eller dataproblem)")
+    print("  ⚠️ FCF >> 3y  = R12 FCF er mer enn 3× høyere enn historisk median (peak-earnings?)")
 
 
 if __name__ == "__main__":
