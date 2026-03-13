@@ -89,3 +89,4 @@ valuation:
   prefer_quarterly_reports: true
   require_quarterly_reports: true
   max_quarterly_report_age_days: 220
+  use_normalized_fcf: true
