@@ -35,16 +35,26 @@ KPI_SPECS_CORE = KPI_SPECS_FULL[:3]
 KPI_BY_ID: Dict[int, dict] = {s["kpi_id"]: s for s in KPI_SPECS_FULL}
 
 
-def _find_freeze_root(base: Path, asof: str) -> Path:
-    """Finn nyeste freeze-mappe <= asof under base."""
+def _find_freeze_root(base: Path, asof: str, require_subdir: str = "") -> Path:
+    """Finn nyeste freeze-mappe <= asof under base.
+
+    Hvis require_subdir er satt, hopper over mapper som ikke har den undermappen.
+    """
     candidates = sorted([d for d in base.iterdir() if d.is_dir()], reverse=True)
     for d in candidates:
-        if d.name <= asof:
-            return d
-    # Fallback: nyeste uavhengig av dato
-    if candidates:
+        if d.name > asof:
+            continue
+        if require_subdir and not (d / require_subdir).exists():
+            continue
+        return d
+    # Fallback: nyeste som har undermappen (uavhengig av dato)
+    if require_subdir:
+        for d in candidates:
+            if (d / require_subdir).exists():
+                return d
+    elif candidates:
         return candidates[0]
-    raise FileNotFoundError(f"Ingen freeze-mappe funnet under {base}")
+    raise FileNotFoundError(f"Ingen freeze-mappe funnet under {base}" + (f" med {require_subdir}" if require_subdir else ""))
 
 
 def _load_instrument_master(freeze_proplus: Path, asof: str) -> pd.DataFrame:
@@ -62,7 +72,14 @@ def _load_instrument_master(freeze_proplus: Path, asof: str) -> pd.DataFrame:
     with gzip.open(master_path, "rt", encoding="utf-8") as f:
         data = json.load(f)
 
-    instruments = data if isinstance(data, list) else data.get("instruments", data.get("Instruments", []))
+    # Freeze-filer har {"meta": ..., "params": ..., "payload": ...} wrapper
+    if isinstance(data, dict) and "payload" in data:
+        data = data["payload"]
+
+    if isinstance(data, list):
+        instruments = data
+    else:
+        instruments = data.get("instruments", data.get("instrumentList", data.get("Instruments", [])))
     df = pd.json_normalize(instruments)
 
     # Normaliser kolonnenavn
@@ -194,8 +211,8 @@ def build_fundamentals_from_freeze(
     master_df = _load_instrument_master(freeze_proplus, asof)
     print(f"{len(master_df)} instrumenter")
 
-    # Finn nyeste borsdata-freeze for year/quarter
-    borsdata_freeze_dir = _find_freeze_root(freeze_borsdata, asof)
+    # Finn nyeste borsdata-freeze for year/quarter som faktisk har kpi_history
+    borsdata_freeze_dir = _find_freeze_root(freeze_borsdata, asof, require_subdir="raw/kpi_history")
     kpi_history_dir_year = borsdata_freeze_dir / "raw" / "kpi_history"
     n_year = len(list(kpi_history_dir_year.glob("*.json.gz"))) if kpi_history_dir_year.exists() else 0
     print(f"KPI year/quarter freeze: {borsdata_freeze_dir.name}  ({n_year} batch-filer)")
