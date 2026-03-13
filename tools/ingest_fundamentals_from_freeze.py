@@ -288,7 +288,7 @@ def build_fundamentals_from_freeze(
     meta = {
         "asof": asof,
         "source": "freeze",
-        "freeze_date": kpi_freeze_dir.name,
+        "freeze_date": borsdata_freeze_dir.name,
         "kpi_set": kpi_set,
         "mode": mode,
         "include_r12": include_r12,
