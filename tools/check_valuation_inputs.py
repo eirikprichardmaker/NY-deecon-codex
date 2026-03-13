@@ -16,9 +16,11 @@ from pathlib import Path
 
 
 def _find_latest_run(repo: Path) -> Path:
-    runs = sorted((repo / "runs").glob("*/shortlist.csv"))
+    runs = list((repo / "runs").glob("*/shortlist.csv"))
     if not runs:
         raise FileNotFoundError("Ingen runs med shortlist.csv funnet")
+    # Sort by modification time, newest last
+    runs.sort(key=lambda p: p.stat().st_mtime)
     return runs[-1].parent
 
 
