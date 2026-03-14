@@ -514,6 +514,7 @@ def _load_static_universe(master_path: Path) -> pd.DataFrame:
             "value_creation_ok_base": pd.Series(value_creation_ok_base, index=m.index).astype(bool),
             "roic": roic,
             "fcf_yield": fcf_yield,
+            "wacc": wacc,
             "relevant_index_symbol": relevant_index_symbol,
             "relevant_index_key": relevant_index_key,
             "is_bank_proxy": bank_proxy.astype(bool),
@@ -522,6 +523,131 @@ def _load_static_universe(master_path: Path) -> pd.DataFrame:
 
     out = out.sort_values(["k", "market_cap"], ascending=[True, False]).drop_duplicates(subset=["k"], keep="first")
     return out.reset_index(drop=True)
+
+
+def _find_fundamentals_history(raw_dir: Path) -> "Path | None":
+    """Return the most recent fundamentals_history.parquet under raw_dir, or None."""
+    candidates = sorted(raw_dir.glob("*/fundamentals_history.parquet"), reverse=True)
+    if candidates:
+        return candidates[0]
+    direct = raw_dir / "fundamentals_history.parquet"
+    return direct if direct.exists() else None
+
+
+def _pit_fundamentals_for_fold(
+    hist_df: pd.DataFrame,
+    fold_ts: pd.Timestamp,
+    wacc_by_k: dict,
+    pub_lag_days: int = 90,
+    terminal_growth: float = 0.02,
+) -> pd.DataFrame:
+    """Build point-in-time (PIT) fundamentals for a single fold month.
+
+    Only uses observations where date <= fold_ts - pub_lag_days (publication lag).
+    Returns a DataFrame keyed on 'k' with fundamental columns ready to override
+    the static universe for that fold month.
+    """
+    cutoff = fold_ts - pd.Timedelta(days=pub_lag_days)
+    h = hist_df.copy()
+    h["date"] = pd.to_datetime(h["date"], errors="coerce")
+    h = h[h["date"].notna() & (h["date"] <= cutoff)].copy()
+    if h.empty:
+        return pd.DataFrame(columns=[
+            "k", "mos", "roic", "fcf_yield", "ev_ebit", "nd_ebitda",
+            "high_risk_flag", "quality_weak_count", "value_creation_ok_base", "market_cap",
+        ])
+
+    h["k"] = h["yahoo_ticker"].map(_norm_ticker)
+    h = h[h["k"].ne("")].copy()
+
+    # Per (k, metric) keep only the most recent observation before cutoff
+    h_sorted = h.sort_values(["k", "metric", "date"])
+    latest = (
+        h_sorted.groupby(["k", "metric"], as_index=False)
+        .tail(1)[["k", "metric", "value"]]
+        .copy()
+    )
+
+    wide = latest.pivot_table(index="k", columns="metric", values="value", aggfunc="last")
+    wide.columns.name = None
+    wide = wide.reset_index()
+
+    def _gc(name: str) -> pd.Series:
+        return pd.to_numeric(wide[name], errors="coerce") if name in wide.columns else pd.Series(np.nan, index=wide.index)
+
+    roic_raw = _gc("roic")
+    roic = _to_decimal_rate(roic_raw).where(lambda x: x <= 2.0, other=np.nan)
+
+    fcf_m = _gc("fcf_m")
+    mcap_m = _gc("mcap_m")
+    ev_ebit = _gc("ev_ebit")
+    netdebt_m = _gc("netdebt_m")
+    ebitda_m = _gc("ebitda_m")
+
+    nd_ebitda = _gc("netdebt_ebitda")
+    # Fallback: compute from components if direct metric missing
+    computed_nd_ebitda = (netdebt_m / ebitda_m.where(ebitda_m.abs() > 0)).where(ebitda_m.abs() > 0)
+    nd_ebitda = nd_ebitda.where(nd_ebitda.notna(), other=computed_nd_ebitda)
+
+    market_cap = (mcap_m * 1_000_000.0).where(mcap_m.gt(0))
+
+    fcf_yield = (fcf_m / mcap_m).where(mcap_m.gt(0), other=np.nan)
+    fcf_yield = fcf_yield.where(fcf_yield <= 0.50, other=np.nan)
+
+    # Vectorised simplified DCF → PIT MoS
+    wacc_arr = wide["k"].map(lambda k: wacc_by_k.get(str(k), 0.09))
+    wacc_arr = pd.to_numeric(wacc_arr, errors="coerce").fillna(0.09)
+    wacc_arr = wacc_arr.clip(lower=terminal_growth + 0.005)
+
+    valid_dcf = fcf_m.gt(0) & mcap_m.gt(0)
+    iv_ev_m = fcf_m / (wacc_arr - terminal_growth)
+    iv_eq_m = iv_ev_m - netdebt_m.fillna(0.0)
+    mos = (iv_eq_m / mcap_m - 1.0).where(valid_dcf, other=np.nan)
+
+    high_risk_flag = nd_ebitda.fillna(0) >= 3.5  # beta not available PIT
+
+    weak_roic = roic.isna() | (roic <= 0.0)
+    weak_fcf = fcf_yield.isna() | (fcf_yield <= 0.0)
+    weak_nd = nd_ebitda.isna() | (nd_ebitda > 3.5)
+    weak_ev = ev_ebit.isna() | (ev_ebit <= 0) | (ev_ebit > 20.0)
+    quality_weak_count = (
+        weak_roic.astype(int) + weak_fcf.astype(int)
+        + weak_nd.astype(int) + weak_ev.astype(int)
+    )
+
+    value_creation_ok_base = (
+        roic.notna() & wacc_arr.notna() & (roic > wacc_arr)
+    )
+
+    out = pd.DataFrame({
+        "k": wide["k"],
+        "mos": mos,
+        "roic": roic,
+        "fcf_yield": fcf_yield,
+        "ev_ebit": ev_ebit,
+        "nd_ebitda": nd_ebitda,
+        "high_risk_flag": high_risk_flag.astype(bool),
+        "quality_weak_count": quality_weak_count.astype(int),
+        "value_creation_ok_base": value_creation_ok_base.astype(bool),
+        "market_cap": market_cap,
+    })
+    return out.dropna(subset=["k"]).reset_index(drop=True)
+
+
+_PIT_OVERRIDE_COLS = [
+    "mos", "roic", "fcf_yield", "high_risk_flag",
+    "quality_weak_count", "value_creation_ok_base", "market_cap",
+]
+
+
+def _apply_pit_override(month_df: pd.DataFrame, pit_static: pd.DataFrame) -> pd.DataFrame:
+    """Merge PIT fundamentals into a monthly panel slice, overriding static fields."""
+    if pit_static is None or pit_static.empty:
+        return month_df
+    merge_cols = ["k"] + [c for c in _PIT_OVERRIDE_COLS if c in pit_static.columns]
+    pit_sub = pit_static[merge_cols].copy()
+    d = month_df.drop(columns=[c for c in _PIT_OVERRIDE_COLS if c in month_df.columns])
+    return d.merge(pit_sub, on="k", how="left")
 
 
 def _load_monthly_panel(prices_path: Path, static_universe: pd.DataFrame) -> pd.DataFrame:
@@ -805,7 +931,13 @@ def _write_wft_data_quality_report(
     (run_dir / "wft_data_quality_report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _apply_filters(month_df: pd.DataFrame, params: WFTParams) -> pd.DataFrame:
+def _apply_filters(
+    month_df: pd.DataFrame,
+    params: WFTParams,
+    pit_static: "pd.DataFrame | None" = None,
+) -> pd.DataFrame:
+    if pit_static is not None and not pit_static.empty:
+        month_df = _apply_pit_override(month_df, pit_static)
     d = month_df.copy()
     d = _ensure_wft_dq_columns(d)
 
@@ -947,8 +1079,12 @@ def _cash_decision_reasons(d: pd.DataFrame) -> str:
     return _collect_decision_reasons(pd.Series(["|".join(reasons)]))
 
 
-def _pick_ticker_with_reason(month_df: pd.DataFrame, params: WFTParams) -> tuple[str, str]:
-    d = _apply_filters(month_df, params)
+def _pick_ticker_with_reason(
+    month_df: pd.DataFrame,
+    params: WFTParams,
+    pit_static: "pd.DataFrame | None" = None,
+) -> tuple[str, str]:
+    d = _apply_filters(month_df, params, pit_static=pit_static)
     elig = d[d["eligible"]].copy()
     if elig.empty:
         return "CASH", _cash_decision_reasons(d)
@@ -967,11 +1103,15 @@ def _pick_ticker_with_reason(month_df: pd.DataFrame, params: WFTParams) -> tuple
 
 
 def _pick_ticker(month_df: pd.DataFrame, params: WFTParams) -> str:
-    pos, _reason = _pick_ticker_with_reason(month_df, params)
+    pos, _reason = _pick_ticker_with_reason(month_df, params, pit_static=None)
     return pos
 
 
-def _simulate_window(window_df: pd.DataFrame, params: WFTParams) -> pd.DataFrame:
+def _simulate_window(
+    window_df: pd.DataFrame,
+    params: WFTParams,
+    pit_cache: "dict | None" = None,
+) -> pd.DataFrame:
     months = sorted(window_df["month"].dropna().unique().tolist())
     if len(months) < 2:
         return pd.DataFrame(columns=["month", "position", "ret", "decision_reasons"])
@@ -983,7 +1123,8 @@ def _simulate_window(window_df: pd.DataFrame, params: WFTParams) -> pd.DataFrame
         cur = window_df[window_df["month"] == m]
         nxt = window_df[window_df["month"] == n]
 
-        pos, decision_reasons = _pick_ticker_with_reason(cur, params)
+        pit_static = pit_cache.get(pd.Timestamp(m)) if pit_cache is not None else None
+        pos, decision_reasons = _pick_ticker_with_reason(cur, params, pit_static=pit_static)
         if pos == "CASH":
             ret = 0.0
         else:
@@ -1075,13 +1216,14 @@ def tune_params(
     baseline: WFTParams,
     seed: int = 42,
     overfit_guard_eps: float = 0.02,
+    pit_cache: "dict | None" = None,
 ) -> tuple[WFTParams, pd.DataFrame]:
     if not grid:
         raise ValueError("grid empty")
 
     rows = []
     for p in grid:
-        trades = _simulate_window(train_df, p)
+        trades = _simulate_window(train_df, p, pit_cache=pit_cache)
         m = _window_metrics(trades)
         rows.append(
             {
@@ -1130,11 +1272,12 @@ def run_fold(
     grid: list[WFTParams],
     baseline: WFTParams,
     seed: int,
+    pit_cache: "dict | None" = None,
 ) -> tuple[WFTParams, dict, dict, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    chosen, diag = tune_params(train_df, grid, baseline=baseline, seed=seed)
+    chosen, diag = tune_params(train_df, grid, baseline=baseline, seed=seed, pit_cache=pit_cache)
 
-    tuned_trades = _simulate_window(test_df, chosen)
-    base_trades = _simulate_window(test_df, baseline)
+    tuned_trades = _simulate_window(test_df, chosen, pit_cache=pit_cache)
+    base_trades = _simulate_window(test_df, baseline, pit_cache=pit_cache)
 
     tuned_metrics = _window_metrics(tuned_trades)
     base_metrics = _window_metrics(base_trades)
@@ -1239,6 +1382,7 @@ def run_wft(
         cutoff_month = pd.to_datetime(asof).to_period("M").to_timestamp("M")
         panel = panel[pd.to_datetime(panel["month"], errors="coerce") <= cutoff_month].copy()
     decision_cfg = dict((cfg.get("decision", {}) or {}))
+    wft_cfg = dict((cfg.get("wft", {}) or {}))
     dq_asof = _derive_wft_asof(panel, asof=asof)
     static, panel, static_dq_audit, panel_dq_audit = _apply_wft_data_quality(
         static_universe=static,
@@ -1274,6 +1418,34 @@ def run_wft(
     wft_dq_audit.to_csv(run_dir / "wft_data_quality_audit.csv", index=False)
     _write_wft_data_quality_report(run_dir=run_dir, dq_audit=wft_dq_audit, panel=panel)
 
+    # ── Point-in-time fundamentals (STEG 1: look-ahead bias fix) ─────────────
+    pit_cache: "dict | None" = None
+    use_pit = bool(wft_cfg.get("use_pit_fundamentals", False))
+    if use_pit:
+        raw_dir = paths.get("raw_dir", project_root / "data" / "raw")
+        hist_path = _find_fundamentals_history(Path(str(raw_dir)))
+        if hist_path is not None:
+            hist_df = pd.read_parquet(hist_path)
+            # Build today's WACC lookup (partial look-ahead; WACC is acknowledged)
+            wacc_by_k: dict = {}
+            if "wacc" in static.columns:
+                for _, row in static[["k", "wacc"]].dropna().iterrows():
+                    wacc_by_k[str(row["k"])] = float(row["wacc"])
+            pub_lag_days = int(wft_cfg.get("fundamental_pub_lag_days", 90))
+            # Collect every fold month that will be simulated
+            all_fold_months: set = set()
+            for fold in folds:
+                for m in pd.date_range(fold["train_start"], fold["test_end"], freq="ME"):
+                    all_fold_months.add(pd.Timestamp(m))
+            pit_cache = {}
+            for fold_ts in sorted(all_fold_months):
+                pit_cache[fold_ts] = _pit_fundamentals_for_fold(
+                    hist_df=hist_df,
+                    fold_ts=fold_ts,
+                    wacc_by_k=wacc_by_k,
+                    pub_lag_days=pub_lag_days,
+                )
+
     rows: list[dict] = []
     perf_rows: list[dict] = []
 
@@ -1287,6 +1459,7 @@ def run_wft(
             grid=grid,
             baseline=baseline,
             seed=seed + i,
+            pit_cache=pit_cache,
         )
 
         for mode, p, metrics, trades in [

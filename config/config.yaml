@@ -15,6 +15,10 @@ ir_reports:
   rate_limit_sec: 1.0
   timeout_sec: 20
 
+wft:
+  use_pit_fundamentals: true       # STEG 1: use fundamentals_history.parquet for PIT
+  fundamental_pub_lag_days: 90     # days from quarter period-end to public availability
+
 wft_opt_strategy_a:
   weights_prior:
     quality: 0.27   # empirisk fra WFT-optimering (var 0.40)
