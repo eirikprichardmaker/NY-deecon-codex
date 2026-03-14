@@ -21,10 +21,10 @@ wft:
 
 wft_opt_strategy_a:
   weights_prior:
-    quality: 0.27   # empirisk fra WFT-optimering (var 0.40)
-    value: 0.46     # empirisk fra WFT-optimering (var 0.30) — sterkeste signal
-    lowrisk: 0.19   # empirisk fra WFT-optimering (var 0.20)
-    balance: 0.08   # empirisk fra WFT-optimering (var 0.10)
+    quality: 0.35   # ↑ fra 0.27 — STEG 3: GP/A lagt til quality-gruppe
+    value: 0.30     # ↓ fra 0.46 — var for dominant; mer balansert mot quality
+    lowrisk: 0.20   # ↑ fra 0.19
+    balance: 0.15   # ↑ fra 0.08
   weights_bounds: [0.0, 0.7]
   weights_reg_lambda: 0.5
 

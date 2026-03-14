@@ -496,6 +496,8 @@ def _load_static_universe(master_path: Path) -> pd.DataFrame:
 
     value_creation_ok_base = np.where(bank_proxy, bank_value_creation_ok, nonbank_value_creation_ok)
 
+    gp_a = _to_num(m.get("gp_a", pd.Series(np.nan, index=m.index)))
+
     suffix = m["yahoo_ticker"].map(_suffix_from_symbol)
     idx_map = _index_map_by_suffix()
     relevant_index_symbol = suffix.map(idx_map).fillna("")
@@ -514,6 +516,7 @@ def _load_static_universe(master_path: Path) -> pd.DataFrame:
             "value_creation_ok_base": pd.Series(value_creation_ok_base, index=m.index).astype(bool),
             "roic": roic,
             "fcf_yield": fcf_yield,
+            "gp_a": gp_a,
             "wacc": wacc,
             "relevant_index_symbol": relevant_index_symbol,
             "relevant_index_key": relevant_index_key,
@@ -1004,18 +1007,35 @@ def _apply_filters(
 
     d["eligible"] = d["fundamental_ok"] & d["technical_ok"] & (~d["dq_blocked"].astype(bool))
 
-    # Winsorize ROIC and FCF yield at 99th percentile before z-scoring.
-    # Prevents data anomalies (e.g. ROIC=1371%) from dominating quality_score.
-    _ROIC_CAP = 2.0   # 200% ROIC hard cap — extreme but plausible for asset-light businesses
-    _FCF_CAP  = 1.0   # 100% FCF yield cap
+    # Multi-factor quality_score: ROIC (50%) + FCF yield (30%) + GP/A (20%)
+    # Caps align with decision.py constants. Missing sub-factors are dropped
+    # and remaining weights renormalised (same logic as _baseline_quality_score).
+    _ROIC_CAP = 2.0
+    _FCF_CAP  = 1.0
+    _GPA_CAP  = 1.0
+
+    factor_z: dict[str, pd.Series] = {}
+    factor_w: dict[str, float] = {"roic": 0.50, "fcf_yield": 0.30, "gp_a": 0.20}
+
     roic_z = _zscore(d["roic"].clip(upper=_ROIC_CAP))
+    if roic_z.notna().any():
+        factor_z["roic"] = roic_z
+
     fcf_z = _zscore(d["fcf_yield"].clip(upper=_FCF_CAP))
-    if roic_z.notna().any() and fcf_z.notna().any():
-        d["quality_score"] = 0.6 * roic_z + 0.4 * fcf_z
-    elif roic_z.notna().any():
-        d["quality_score"] = roic_z
-    elif fcf_z.notna().any():
-        d["quality_score"] = fcf_z
+    if fcf_z.notna().any():
+        factor_z["fcf_yield"] = fcf_z
+
+    gpa_raw = _to_num(d.get("gp_a", pd.Series(np.nan, index=d.index)))
+    gpa_z = _zscore(gpa_raw.clip(lower=-0.5, upper=_GPA_CAP))
+    if gpa_z.notna().any():
+        factor_z["gp_a"] = gpa_z
+
+    if factor_z:
+        total_w = sum(factor_w[k] for k in factor_z)
+        d["quality_score"] = sum(
+            factor_z[k].fillna(0.0) * (factor_w[k] / total_w)
+            for k in factor_z
+        )
     else:
         d["quality_score"] = np.nan
 

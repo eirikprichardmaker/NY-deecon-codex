@@ -138,9 +138,16 @@ def run(ctx, log) -> int:
     )
     out["fcf_yield_invalid"] = out["fcf_yield"].isna().astype(int)
 
-    # GP/A: not available with current master schema
-    out["gp_a"] = np.nan
-    out["gp_a_invalid"] = 1
+    # GP/A: Gross Profit / Total Assets (Novy-Marx 2013 quality factor)
+    col_gp = "gross_profit" if "gross_profit" in out.columns else None
+    col_ta = "total_assets" if "total_assets" in out.columns else None
+    if col_gp and col_ta:
+        gp = _num(out[col_gp])
+        ta = _num(out[col_ta])
+        out["gp_a"] = safe_div(gp, ta.where(ta > 0))
+    else:
+        out["gp_a"] = np.nan
+    out["gp_a_invalid"] = out["gp_a"].isna().astype(int)
 
     # OSoV score (fallback without GP/A): z(ROIC) + z(FCF-yield) - z(EV/EBIT)
     out["osov_score"] = zscore(out["roic"]) + zscore(out["fcf_yield"]) - zscore(out["ev_ebit"])

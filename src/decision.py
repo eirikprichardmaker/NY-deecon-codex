@@ -2391,39 +2391,97 @@ def _evaluate_numeric_rule(values: pd.Series, rule) -> tuple[pd.Series, pd.Serie
 
 _ROIC_CAP = 2.0   # 200% hard cap before z-scoring — prevents data anomalies from dominating
 _FCF_CAP  = 1.0   # 100% FCF yield cap — prevents one-time events from dominating
+_GPA_CAP  = 1.0   # 100% GP/A cap — asset-light businesses can reach ~0.8
 _MOS_CAP  = 5.0   # 500% MoS cap for value factor — extreme outliers (data errors) excluded
 
+# Weights within the quality sub-factor group (must sum to 1.0)
+_QUALITY_SUBWEIGHTS = {"roic": 0.50, "fcf_yield": 0.30, "gp_a": 0.20}
 
-# Default Strategy A factor weights (empirical from WFT optimization)
+# Default Strategy A factor weights (rebalanced STEG 3: value↓ quality↑)
 _STRATEGY_A_WEIGHTS_DEFAULT = {
-    "quality":  0.27,
-    "value":    0.46,
-    "lowrisk":  0.19,
-    "balance":  0.08,
+    "quality":  0.35,  # ↑ from 0.27 — GP/A added, quality group broader
+    "value":    0.30,  # ↓ from 0.46 — was too dominant vs quality
+    "lowrisk":  0.20,  # ↑ from 0.19
+    "balance":  0.15,  # ↑ from 0.08
 }
+
+# Threshold above which factor correlation triggers a warning
+_FACTOR_CORR_WARN_THRESHOLD = 0.70
 
 
 def _baseline_quality_score(df: pd.DataFrame) -> pd.Series:
+    """Quality sub-score: ROIC (50%) + FCF yield (30%) + GP/A (20%).
+
+    Sub-weights come from _QUALITY_SUBWEIGHTS; missing factors are dropped and
+    remaining weights are renormalised so the score always spans the same range.
+    """
     comps: list[pd.Series] = []
     wts: list[float] = []
+
     if "roic" in df.columns and pd.to_numeric(df["roic"], errors="coerce").notna().any():
         roic_dec = _to_decimal_rate(pd.to_numeric(df["roic"], errors="coerce"))
         comps.append(zscore(roic_dec.clip(upper=_ROIC_CAP)))
-        wts.append(0.60)
+        wts.append(_QUALITY_SUBWEIGHTS["roic"])
     elif "roic_current" in df.columns and pd.to_numeric(df["roic_current"], errors="coerce").notna().any():
         roic_dec = _to_decimal_rate(pd.to_numeric(df["roic_current"], errors="coerce"))
         comps.append(zscore(roic_dec.clip(upper=_ROIC_CAP)))
-        wts.append(0.60)
+        wts.append(_QUALITY_SUBWEIGHTS["roic"])
 
     if "fcf_yield" in df.columns and pd.to_numeric(df["fcf_yield"], errors="coerce").notna().any():
         comps.append(zscore(pd.to_numeric(df["fcf_yield"], errors="coerce").clip(upper=_FCF_CAP)))
-        wts.append(0.40)
+        wts.append(_QUALITY_SUBWEIGHTS["fcf_yield"])
+
+    gpa = pd.to_numeric(df.get("gp_a", pd.Series(np.nan, index=df.index)), errors="coerce")
+    if gpa.notna().any():
+        comps.append(zscore(gpa.clip(lower=-0.5, upper=_GPA_CAP)))
+        wts.append(_QUALITY_SUBWEIGHTS["gp_a"])
 
     if not comps:
         return pd.Series(0.0, index=df.index, dtype=float)
     w = np.array(wts, dtype=float)
     w = w / w.sum()
     return sum(w[i] * comps[i] for i in range(len(comps)))
+
+
+def _compute_factor_correlations(factor_scores: dict) -> pd.DataFrame:
+    """Pearson correlation matrix across Strategy A factor z-scores.
+
+    Only includes pairs where both series have ≥10 valid overlapping observations.
+    Returns a tidy DataFrame with columns [factor_a, factor_b, pearson_r].
+    """
+    keys = sorted(factor_scores.keys())
+    rows = []
+    for i, a in enumerate(keys):
+        for b in keys[i + 1 :]:
+            sa = factor_scores[a].dropna()
+            sb = factor_scores[b].dropna()
+            common = sa.index.intersection(sb.index)
+            if len(common) < 10:
+                continue
+            r = float(np.corrcoef(sa.loc[common].values, sb.loc[common].values)[0, 1])
+            if np.isfinite(r):
+                rows.append({"factor_a": a, "factor_b": b, "pearson_r": round(r, 4)})
+    return pd.DataFrame(rows, columns=["factor_a", "factor_b", "pearson_r"])
+
+
+def _log_factor_correlations(factor_scores: dict) -> str:
+    """Compute factor correlations and warn on high pairwise correlation.
+
+    Returns a compact JSON summary (e.g. for audit columns).
+    """
+    import logging
+    corr_df = _compute_factor_correlations(factor_scores)
+    summary: dict = {}
+    for _, row in corr_df.iterrows():
+        key = f"{row['factor_a']}_{row['factor_b']}"
+        summary[key] = row["pearson_r"]
+        if abs(row["pearson_r"]) >= _FACTOR_CORR_WARN_THRESHOLD:
+            logging.getLogger(__name__).warning(
+                "High factor correlation: %s ↔ %s  r=%.3f  (|r|≥%.2f)",
+                row["factor_a"], row["factor_b"],
+                row["pearson_r"], _FACTOR_CORR_WARN_THRESHOLD,
+            )
+    return json.dumps(summary, separators=(",", ":"))
 
 
 def _strategy_a_composite_score(df: pd.DataFrame, weights: dict | None = None) -> pd.Series:
@@ -2447,7 +2505,7 @@ def _strategy_a_composite_score(df: pd.DataFrame, weights: dict | None = None) -
     factor_scores: dict[str, pd.Series] = {}
 
     # --- quality ---
-    q = _baseline_quality_score(df)  # already handles decimal conversion + capping
+    q = _baseline_quality_score(df)  # handles decimal conversion + capping + GP/A
     if q.notna().any():
         factor_scores["quality"] = q
 
@@ -2459,7 +2517,6 @@ def _strategy_a_composite_score(df: pd.DataFrame, weights: dict | None = None) -
     # --- lowrisk: inverted ND/EBITDA (lower debt load = lower risk) ---
     nd = _as_num_series(df, ["nd_ebitda", "n_debt_ebitda_current", "netdebt_ebitda_latest"])
     if nd.notna().any():
-        # Cap extreme values; net cash companies (nd < 0) get best score
         nd_capped = nd.clip(lower=-3.0, upper=10.0)
         factor_scores["lowrisk"] = zscore(-nd_capped)
 
@@ -2471,6 +2528,10 @@ def _strategy_a_composite_score(df: pd.DataFrame, weights: dict | None = None) -
 
     if not factor_scores:
         return pd.Series(0.0, index=df.index, dtype=float)
+
+    # Log Pearson correlations between factor groups (warn on high collinearity)
+    if len(factor_scores) >= 2:
+        _log_factor_correlations(factor_scores)
 
     # Renormalise weights to available factors
     total_w = sum(w[k] for k in factor_scores)
