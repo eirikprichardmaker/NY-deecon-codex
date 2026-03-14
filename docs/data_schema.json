@@ -1,0 +1,5124 @@
+{
+  "generated_at": "2026-03-14T20:20:06.628850+00:00",
+  "files": {
+    "data/processed/master.parquet": {
+      "path": "G:\\min disk\\new deecon\\data\\processed\\master.parquet",
+      "size_mb": 0.53,
+      "rows": 1741,
+      "columns": {
+        "ticker": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "GIGA": 2,
+            "LUMI": 2,
+            "MOBA": 2,
+            "NTG": 2,
+            "TIETO": 2,
+            "ABG": 1,
+            "ORES": 1,
+            "2020": 1
+          }
+        },
+        "company": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "Nordea Bank": 3,
+            "OMX Large Cap": 3,
+            "OMX Mid Cap": 3,
+            "OMX Small Cap": 3,
+            "Sampo": 3,
+            "TietoEVRY": 3,
+            "Boozt": 2,
+            "Better Collective": 2
+          }
+        },
+        "info_-_country": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "Sweden": 1060,
+            "Norway": 306,
+            "Finland": 205,
+            "Denmark": 170
+          }
+        },
+        "market_cap_-_current": {
+          "dtype": "float",
+          "null_pct": 6.1
+        },
+        "ocf_-_millions": {
+          "dtype": "float",
+          "null_pct": 12.2
+        },
+        "capex_-_millions": {
+          "dtype": "float",
+          "null_pct": 15.1
+        },
+        "fcf_-_millions": {
+          "dtype": "float",
+          "null_pct": 12.2
+        },
+        "net_debt_-_current": {
+          "dtype": "float",
+          "null_pct": 14.5
+        },
+        "n.debt/ebitda_-_current": {
+          "dtype": "float",
+          "null_pct": 33.7
+        },
+        "roic_-_current": {
+          "dtype": "float",
+          "null_pct": 12.9
+        },
+        "ev/ebit_-_current": {
+          "dtype": "float",
+          "null_pct": 9.0
+        },
+        "p/e_-_current": {
+          "dtype": "float",
+          "null_pct": 9.0
+        },
+        "p/s_-_current": {
+          "dtype": "float",
+          "null_pct": 14.8
+        },
+        "base_ticker": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "GIGA": 2,
+            "LUMI": 2,
+            "MOBA": 2,
+            "NTG": 2,
+            "TIETO": 2,
+            "ABG": 1,
+            "ORES": 1,
+            "2020": 1
+          }
+        },
+        "suffix": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            ".ST": 1060,
+            ".OL": 306,
+            ".HE": 205,
+            ".CO": 170
+          }
+        },
+        "date": {
+          "dtype": "datetime",
+          "null_pct": 30.0,
+          "min_date": "2024-01-31",
+          "max_date": "2026-03-11"
+        },
+        "adj_close": {
+          "dtype": "float",
+          "null_pct": 30.0,
+          "p10": 0.4262,
+          "median": 10.8,
+          "p90": 190.1,
+          "min": 0.0012,
+          "max": 8450.0
+        },
+        "volume": {
+          "dtype": "float",
+          "null_pct": 30.0
+        },
+        "ma21": {
+          "dtype": "float",
+          "null_pct": 30.1
+        },
+        "ma200": {
+          "dtype": "float",
+          "null_pct": 32.3,
+          "p10": 0.5925,
+          "median": 11.79,
+          "p90": 190.9,
+          "min": 0.001847,
+          "max": 8345.0
+        },
+        "mad": {
+          "dtype": "float",
+          "null_pct": 32.3,
+          "p10": -0.3783,
+          "median": -0.04169,
+          "p90": 0.2328,
+          "min": -0.9524,
+          "max": 1.915
+        },
+        "above_ma200": {
+          "dtype": "bool",
+          "null_pct": 32.3,
+          "top_values": {
+            "False": 720,
+            "True": 458
+          }
+        },
+        "missing_price_reason": {
+          "dtype": "str",
+          "null_pct": 30.0,
+          "top_values": {
+            "": 1219
+          }
+        },
+        "yahoo_ticker": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "2020.OL": 1,
+            "2CUREX.ST": 1,
+            "4C.ST": 1,
+            "5PG.OL": 1,
+            "MAERSK-A.CO": 1,
+            "MAERSK-B.CO": 1,
+            "AAC.ST": 1,
+            "AAK.ST": 1
+          }
+        },
+        "financials_period_end": {
+          "dtype": "str",
+          "null_pct": 37.2,
+          "top_values": {
+            "2024-12-31": 773,
+            "2025-12-31": 257,
+            "2025-06-30": 10,
+            "2023-12-31": 7,
+            "2025-04-30": 7,
+            "2025-09-30": 6,
+            "2025-03-31": 6,
+            "2025-08-31": 5
+          }
+        },
+        "financials_source": {
+          "dtype": "str",
+          "null_pct": 37.2,
+          "top_values": {
+            "reports_y": 1093,
+            "financials_agent": 1
+          }
+        },
+        "revenue_total": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "cost_of_goods_sold": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "gross_profit": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "sga_expense": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "depreciation_expense": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "amortization_expense": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "operating_income_ebit": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "net_finance_income_expense": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "profit_before_tax": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "income_tax_expense": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "net_income": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "net_income_attributable_to_parent": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "cash_and_cash_equivalents": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "accounts_receivable": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "inventory": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "property_plant_equipment": {
+          "dtype": "float",
+          "null_pct": 37.4
+        },
+        "right_of_use_assets": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "intangible_assets": {
+          "dtype": "float",
+          "null_pct": 37.4
+        },
+        "goodwill": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "deferred_tax_assets": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "total_assets": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "accounts_payable": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "short_term_debt": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "long_term_debt": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "lease_liabilities_current": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "lease_liabilities_noncurrent": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "total_liabilities": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "equity_attributable_to_parent": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "total_equity": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "cash_flow_from_operations": {
+          "dtype": "float",
+          "null_pct": 38.1
+        },
+        "interest_paid_cash": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "income_taxes_paid_cash": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "capex_purchase_ppe": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "cash_flow_from_investing": {
+          "dtype": "float",
+          "null_pct": 38.4
+        },
+        "cash_flow_from_financing": {
+          "dtype": "float",
+          "null_pct": 38.2
+        },
+        "dividends_paid_total": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "net_change_in_cash": {
+          "dtype": "float",
+          "null_pct": 38.2
+        },
+        "fx_effect_on_cash": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "shares_outstanding_basic": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "shares_outstanding_diluted": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "reporting_currency": {
+          "dtype": "str",
+          "null_pct": 37.2,
+          "top_values": {
+            "SEK": 469,
+            "EUR": 231,
+            "NOK": 166,
+            "DKK": 135,
+            "USD": 83,
+            "0": 5,
+            "CAD": 2,
+            "PLN": 1
+          }
+        },
+        "fiscal_year": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "reporting_period_type": {
+          "dtype": "str",
+          "null_pct": 37.2,
+          "top_values": {
+            "annual": 1094
+          }
+        },
+        "rd_expense": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ebitda": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "non_operating_income_expense": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "deferred_tax_liabilities": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "short_term_investments": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "other_current_assets": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "investments_in_associates": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "other_non_current_assets": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "pension_liabilities": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "provisions": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "capex_purchase_intangibles": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "interest_received_cash": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "share_buybacks_paid": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "debt_issued_cash_inflow": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "debt_repaid_cash_outflow": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "lease_principal_repayments": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "treasury_shares": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "impairment_expense": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_net_interest_income": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_fee_commission_income": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_operating_expenses": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_loan_loss_provisions": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_total_loans_gross": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_ecl_allowance": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_total_loans_net": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_customer_deposits": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_total_assets": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_total_equity": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_rwa": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_cet1_capital": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_cet1_ratio": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_npl_ratio": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_liquidity_coverage_ratio": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_gross_written_premiums": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_earned_premiums": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_claims_incurred": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_operating_expenses": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_underwriting_result": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_investment_result": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_profit_before_tax": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_net_income": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_insurance_contract_liabilities": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_reinsurance_contract_assets": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_investment_assets": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_total_assets": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_total_equity": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "financials_guard_anomaly": {
+          "dtype": "bool",
+          "null_pct": 0.0,
+          "top_values": {
+            "False": 1741
+          }
+        },
+        "reason_financials_guard": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "financials_guard_changed_fields": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "financials_guard_fields": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "financials_guard_prev_snapshot": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "financials_guard_current_snapshot": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "dividend_history_years": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "dividend_paid_years": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "dividend_growth_5y": {
+          "dtype": "float",
+          "null_pct": 77.5
+        },
+        "dividend_cagr_5y": {
+          "dtype": "float",
+          "null_pct": 77.5
+        },
+        "profit_growth_5y": {
+          "dtype": "float",
+          "null_pct": 69.5
+        },
+        "payout_ratio": {
+          "dtype": "float",
+          "null_pct": 59.5
+        },
+        "share_count_growth_5y": {
+          "dtype": "float",
+          "null_pct": 51.6
+        },
+        "fcf_margin": {
+          "dtype": "float",
+          "null_pct": 41.2
+        },
+        "ocf_margin": {
+          "dtype": "float",
+          "null_pct": 41.2
+        },
+        "profit_margin": {
+          "dtype": "float",
+          "null_pct": 39.7
+        },
+        "roa": {
+          "dtype": "float",
+          "null_pct": 37.1
+        },
+        "dividend_yield": {
+          "dtype": "float",
+          "null_pct": 37.1
+        },
+        "t2_effective_tax_rate": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_effective_tax_rate_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t2_ebitda_used": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_ebitda_used_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t2_gross_margin": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_gross_margin_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t2_ebit_margin": {
+          "dtype": "float",
+          "null_pct": 39.7
+        },
+        "t2_ebit_margin_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "operating_income_ebit/revenue_total": 1049,
+            "": 692
+          }
+        },
+        "t2_ebitda_margin": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_ebitda_margin_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t2_net_margin": {
+          "dtype": "float",
+          "null_pct": 39.7
+        },
+        "t2_net_margin_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "net_income_attributable_to_parent/revenue_total": 1049,
+            "": 692
+          }
+        },
+        "t2_cfo_margin": {
+          "dtype": "float",
+          "null_pct": 40.7
+        },
+        "t2_cfo_margin_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "cash_flow_from_operations/revenue_total": 1032,
+            "": 709
+          }
+        },
+        "t2_fcf_simple": {
+          "dtype": "float",
+          "null_pct": 38.1
+        },
+        "t2_fcf_simple_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "fallback:cash_flow_from_operations": 1077,
+            "": 664
+          }
+        },
+        "t2_fcf_margin": {
+          "dtype": "float",
+          "null_pct": 40.7
+        },
+        "t2_fcf_margin_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "fallback:cash_flow_from_operations/revenue_total": 1032,
+            "": 709
+          }
+        },
+        "t2_net_debt_excl_leases": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_net_debt_excl_leases_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t2_net_debt_incl_leases": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_net_debt_incl_leases_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t2_nd_ebitda_excl_leases": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_nd_ebitda_excl_leases_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t2_nd_ebitda_incl_leases": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_nd_ebitda_incl_leases_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t2_interest_coverage": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_interest_coverage_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t3_working_capital": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t3_working_capital_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t3_working_capital_to_revenue": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t3_working_capital_to_revenue_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t3_roa": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "t3_roa_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "net_income_attributable_to_parent/total_assets": 1094,
+            "": 647
+          }
+        },
+        "t3_liabilities_to_equity": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "t3_liabilities_to_equity_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "total_liabilities/total_equity": 1094,
+            "": 647
+          }
+        },
+        "t3_cash_conversion": {
+          "dtype": "float",
+          "null_pct": 38.1
+        },
+        "t3_cash_conversion_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "cash_flow_from_operations/net_income_attributable_to_parent": 1077,
+            "": 664
+          }
+        },
+        "ma200_ok": {
+          "dtype": "bool",
+          "null_pct": 0.0,
+          "top_values": {
+            "False": 1283,
+            "True": 458
+          }
+        },
+        "index_ma200_ok": {
+          "dtype": "bool",
+          "null_pct": 0.0,
+          "top_values": {
+            "True": 1741
+          }
+        },
+        "missing_price": {
+          "dtype": "bool",
+          "null_pct": 0.0,
+          "top_values": {
+            "False": 1219,
+            "True": 522
+          }
+        },
+        "missing_technical_data": {
+          "dtype": "bool",
+          "null_pct": 0.0,
+          "top_values": {
+            "False": 1700,
+            "True": 41
+          }
+        },
+        "reason_technical_fail": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "below_ma200": 720,
+            "missing_price": 522,
+            "": 431,
+            "missing_technical_data": 41,
+            "negative_mad": 27
+          }
+        }
+      },
+      "sample_tickers": [
+        "2020",
+        "2CUREX",
+        "4C",
+        "5PG",
+        "MAERSK A",
+        "MAERSK B",
+        "AAC",
+        "AAK",
+        "AAB",
+        "AALLON",
+        "AASB",
+        "ABAS"
+      ],
+      "ticker_count": 1736,
+      "date_min": "2024-01-31",
+      "date_max": "2026-03-11"
+    },
+    "data/processed/master_factors.parquet": {
+      "path": "G:\\min disk\\new deecon\\data\\processed\\master_factors.parquet",
+      "size_mb": 0.63,
+      "rows": 1741,
+      "columns": {
+        "ticker": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "GIGA": 2,
+            "LUMI": 2,
+            "MOBA": 2,
+            "NTG": 2,
+            "TIETO": 2,
+            "ABG": 1,
+            "ORES": 1,
+            "2020": 1
+          }
+        },
+        "company": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "Nordea Bank": 3,
+            "OMX Large Cap": 3,
+            "OMX Mid Cap": 3,
+            "OMX Small Cap": 3,
+            "Sampo": 3,
+            "TietoEVRY": 3,
+            "Boozt": 2,
+            "Better Collective": 2
+          }
+        },
+        "info_country": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "Sweden": 1060,
+            "Norway": 306,
+            "Finland": 205,
+            "Denmark": 170
+          }
+        },
+        "market_cap_current": {
+          "dtype": "float",
+          "null_pct": 6.1
+        },
+        "ocf_millions": {
+          "dtype": "float",
+          "null_pct": 12.2
+        },
+        "capex_millions": {
+          "dtype": "float",
+          "null_pct": 15.1
+        },
+        "fcf_millions": {
+          "dtype": "float",
+          "null_pct": 12.2
+        },
+        "net_debt_current": {
+          "dtype": "float",
+          "null_pct": 14.5,
+          "p10": -37.0,
+          "median": 8.0,
+          "p90": 45.0,
+          "min": -100.0,
+          "max": 966.0
+        },
+        "n_debt_ebitda_current": {
+          "dtype": "float",
+          "null_pct": 33.7,
+          "p10": -2.6,
+          "median": 0.9,
+          "p90": 7.9,
+          "min": -361.7,
+          "max": 1186.0
+        },
+        "roic_current": {
+          "dtype": "float",
+          "null_pct": 12.9
+        },
+        "ev_ebit_current": {
+          "dtype": "float",
+          "null_pct": 9.0
+        },
+        "p_e_current": {
+          "dtype": "float",
+          "null_pct": 9.0
+        },
+        "p_s_current": {
+          "dtype": "float",
+          "null_pct": 14.8
+        },
+        "base_ticker": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "GIGA": 2,
+            "LUMI": 2,
+            "MOBA": 2,
+            "NTG": 2,
+            "TIETO": 2,
+            "ABG": 1,
+            "ORES": 1,
+            "2020": 1
+          }
+        },
+        "suffix": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            ".ST": 1060,
+            ".OL": 306,
+            ".HE": 205,
+            ".CO": 170
+          }
+        },
+        "date": {
+          "dtype": "datetime",
+          "null_pct": 30.0,
+          "min_date": "2024-01-31",
+          "max_date": "2026-03-11"
+        },
+        "adj_close": {
+          "dtype": "float",
+          "null_pct": 30.0,
+          "p10": 0.4262,
+          "median": 10.8,
+          "p90": 190.1,
+          "min": 0.0012,
+          "max": 8450.0
+        },
+        "volume": {
+          "dtype": "float",
+          "null_pct": 30.0
+        },
+        "ma21": {
+          "dtype": "float",
+          "null_pct": 30.1
+        },
+        "ma200": {
+          "dtype": "float",
+          "null_pct": 32.3,
+          "p10": 0.5925,
+          "median": 11.79,
+          "p90": 190.9,
+          "min": 0.001847,
+          "max": 8345.0
+        },
+        "mad": {
+          "dtype": "float",
+          "null_pct": 32.3,
+          "p10": -0.3783,
+          "median": -0.04169,
+          "p90": 0.2328,
+          "min": -0.9524,
+          "max": 1.915
+        },
+        "above_ma200": {
+          "dtype": "bool",
+          "null_pct": 32.3,
+          "top_values": {
+            "False": 720,
+            "True": 458
+          }
+        },
+        "missing_price_reason": {
+          "dtype": "str",
+          "null_pct": 30.0,
+          "top_values": {
+            "": 1219
+          }
+        },
+        "yahoo_ticker": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "2020.OL": 1,
+            "2CUREX.ST": 1,
+            "4C.ST": 1,
+            "5PG.OL": 1,
+            "MAERSK-A.CO": 1,
+            "MAERSK-B.CO": 1,
+            "AAC.ST": 1,
+            "AAK.ST": 1
+          }
+        },
+        "financials_period_end": {
+          "dtype": "str",
+          "null_pct": 37.2,
+          "top_values": {
+            "2024-12-31": 773,
+            "2025-12-31": 257,
+            "2025-06-30": 10,
+            "2023-12-31": 7,
+            "2025-04-30": 7,
+            "2025-09-30": 6,
+            "2025-03-31": 6,
+            "2025-08-31": 5
+          }
+        },
+        "financials_source": {
+          "dtype": "str",
+          "null_pct": 37.2,
+          "top_values": {
+            "reports_y": 1093,
+            "financials_agent": 1
+          }
+        },
+        "revenue_total": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "cost_of_goods_sold": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "gross_profit": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "sga_expense": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "depreciation_expense": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "amortization_expense": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "operating_income_ebit": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "net_finance_income_expense": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "profit_before_tax": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "income_tax_expense": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "net_income": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "net_income_attributable_to_parent": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "cash_and_cash_equivalents": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "accounts_receivable": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "inventory": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "property_plant_equipment": {
+          "dtype": "float",
+          "null_pct": 37.4
+        },
+        "right_of_use_assets": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "intangible_assets": {
+          "dtype": "float",
+          "null_pct": 37.4
+        },
+        "goodwill": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "deferred_tax_assets": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "total_assets": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "accounts_payable": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "short_term_debt": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "long_term_debt": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "lease_liabilities_current": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "lease_liabilities_noncurrent": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "total_liabilities": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "equity_attributable_to_parent": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "total_equity": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "cash_flow_from_operations": {
+          "dtype": "float",
+          "null_pct": 38.1
+        },
+        "interest_paid_cash": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "income_taxes_paid_cash": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "capex_purchase_ppe": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "cash_flow_from_investing": {
+          "dtype": "float",
+          "null_pct": 38.4
+        },
+        "cash_flow_from_financing": {
+          "dtype": "float",
+          "null_pct": 38.2
+        },
+        "dividends_paid_total": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "net_change_in_cash": {
+          "dtype": "float",
+          "null_pct": 38.2
+        },
+        "fx_effect_on_cash": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "shares_outstanding_basic": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "shares_outstanding_diluted": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "reporting_currency": {
+          "dtype": "str",
+          "null_pct": 37.2,
+          "top_values": {
+            "SEK": 469,
+            "EUR": 231,
+            "NOK": 166,
+            "DKK": 135,
+            "USD": 83,
+            "0": 5,
+            "CAD": 2,
+            "PLN": 1
+          }
+        },
+        "fiscal_year": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "reporting_period_type": {
+          "dtype": "str",
+          "null_pct": 37.2,
+          "top_values": {
+            "annual": 1094
+          }
+        },
+        "rd_expense": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ebitda": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "non_operating_income_expense": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "deferred_tax_liabilities": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "short_term_investments": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "other_current_assets": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "investments_in_associates": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "other_non_current_assets": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "pension_liabilities": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "provisions": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "capex_purchase_intangibles": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "interest_received_cash": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "share_buybacks_paid": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "debt_issued_cash_inflow": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "debt_repaid_cash_outflow": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "lease_principal_repayments": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "treasury_shares": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "impairment_expense": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_net_interest_income": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_fee_commission_income": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_operating_expenses": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_loan_loss_provisions": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_total_loans_gross": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_ecl_allowance": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_total_loans_net": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_customer_deposits": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_total_assets": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_total_equity": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_rwa": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_cet1_capital": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_cet1_ratio": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_npl_ratio": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_liquidity_coverage_ratio": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_gross_written_premiums": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_earned_premiums": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_claims_incurred": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_operating_expenses": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_underwriting_result": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_investment_result": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_profit_before_tax": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_net_income": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_insurance_contract_liabilities": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_reinsurance_contract_assets": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_investment_assets": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_total_assets": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_total_equity": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "financials_guard_anomaly": {
+          "dtype": "bool",
+          "null_pct": 0.0,
+          "top_values": {
+            "False": 1741
+          }
+        },
+        "reason_financials_guard": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "financials_guard_changed_fields": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "financials_guard_fields": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "financials_guard_prev_snapshot": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "financials_guard_current_snapshot": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "dividend_history_years": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "dividend_paid_years": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "dividend_growth_5y": {
+          "dtype": "float",
+          "null_pct": 77.5
+        },
+        "dividend_cagr_5y": {
+          "dtype": "float",
+          "null_pct": 77.5
+        },
+        "profit_growth_5y": {
+          "dtype": "float",
+          "null_pct": 69.5
+        },
+        "payout_ratio": {
+          "dtype": "float",
+          "null_pct": 59.5
+        },
+        "share_count_growth_5y": {
+          "dtype": "float",
+          "null_pct": 51.6
+        },
+        "fcf_margin": {
+          "dtype": "float",
+          "null_pct": 41.2
+        },
+        "ocf_margin": {
+          "dtype": "float",
+          "null_pct": 41.2
+        },
+        "profit_margin": {
+          "dtype": "float",
+          "null_pct": 39.7
+        },
+        "roa": {
+          "dtype": "float",
+          "null_pct": 37.1
+        },
+        "dividend_yield": {
+          "dtype": "float",
+          "null_pct": 37.1
+        },
+        "t2_effective_tax_rate": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_effective_tax_rate_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t2_ebitda_used": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_ebitda_used_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t2_gross_margin": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_gross_margin_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t2_ebit_margin": {
+          "dtype": "float",
+          "null_pct": 39.7
+        },
+        "t2_ebit_margin_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "operating_income_ebit/revenue_total": 1049,
+            "": 692
+          }
+        },
+        "t2_ebitda_margin": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_ebitda_margin_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t2_net_margin": {
+          "dtype": "float",
+          "null_pct": 39.7
+        },
+        "t2_net_margin_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "net_income_attributable_to_parent/revenue_total": 1049,
+            "": 692
+          }
+        },
+        "t2_cfo_margin": {
+          "dtype": "float",
+          "null_pct": 40.7
+        },
+        "t2_cfo_margin_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "cash_flow_from_operations/revenue_total": 1032,
+            "": 709
+          }
+        },
+        "t2_fcf_simple": {
+          "dtype": "float",
+          "null_pct": 38.1
+        },
+        "t2_fcf_simple_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "fallback:cash_flow_from_operations": 1077,
+            "": 664
+          }
+        },
+        "t2_fcf_margin": {
+          "dtype": "float",
+          "null_pct": 40.7
+        },
+        "t2_fcf_margin_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "fallback:cash_flow_from_operations/revenue_total": 1032,
+            "": 709
+          }
+        },
+        "t2_net_debt_excl_leases": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_net_debt_excl_leases_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t2_net_debt_incl_leases": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_net_debt_incl_leases_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t2_nd_ebitda_excl_leases": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_nd_ebitda_excl_leases_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t2_nd_ebitda_incl_leases": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_nd_ebitda_incl_leases_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t2_interest_coverage": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_interest_coverage_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t3_working_capital": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t3_working_capital_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t3_working_capital_to_revenue": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t3_working_capital_to_revenue_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t3_roa": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "t3_roa_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "net_income_attributable_to_parent/total_assets": 1094,
+            "": 647
+          }
+        },
+        "t3_liabilities_to_equity": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "t3_liabilities_to_equity_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "total_liabilities/total_equity": 1094,
+            "": 647
+          }
+        },
+        "t3_cash_conversion": {
+          "dtype": "float",
+          "null_pct": 38.1
+        },
+        "t3_cash_conversion_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "cash_flow_from_operations/net_income_attributable_to_parent": 1077,
+            "": 664
+          }
+        },
+        "ma200_ok": {
+          "dtype": "bool",
+          "null_pct": 0.0,
+          "top_values": {
+            "False": 1283,
+            "True": 458
+          }
+        },
+        "index_ma200_ok": {
+          "dtype": "bool",
+          "null_pct": 0.0,
+          "top_values": {
+            "True": 1741
+          }
+        },
+        "missing_price": {
+          "dtype": "bool",
+          "null_pct": 0.0,
+          "top_values": {
+            "False": 1219,
+            "True": 522
+          }
+        },
+        "missing_technical_data": {
+          "dtype": "bool",
+          "null_pct": 0.0,
+          "top_values": {
+            "False": 1700,
+            "True": 41
+          }
+        },
+        "reason_technical_fail": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "below_ma200": 720,
+            "missing_price": 522,
+            "": 431,
+            "missing_technical_data": 41,
+            "negative_mad": 27
+          }
+        },
+        "roic": {
+          "dtype": "float",
+          "null_pct": 12.9,
+          "p10": -111.8,
+          "median": 1.1,
+          "p90": 17.8,
+          "min": -105500.0,
+          "max": 3432.0
+        },
+        "roic_invalid": {
+          "dtype": "int",
+          "null_pct": 0.0
+        },
+        "fcf_ttm": {
+          "dtype": "float",
+          "null_pct": 12.2
+        },
+        "fcf_invalid": {
+          "dtype": "int",
+          "null_pct": 0.0
+        },
+        "market_cap": {
+          "dtype": "float",
+          "null_pct": 6.1,
+          "p10": 26.0,
+          "median": 565.0,
+          "p90": 26000.0,
+          "min": 1.0,
+          "max": 2638000.0
+        },
+        "net_debt": {
+          "dtype": "float",
+          "null_pct": 14.5
+        },
+        "units_mismatch_flag": {
+          "dtype": "int",
+          "null_pct": 0.0
+        },
+        "enterprise_value_proxy": {
+          "dtype": "float",
+          "null_pct": 14.5
+        },
+        "nd_ebitda": {
+          "dtype": "float",
+          "null_pct": 33.7
+        },
+        "nd_ebitda_invalid": {
+          "dtype": "int",
+          "null_pct": 0.0
+        },
+        "ev_ebit": {
+          "dtype": "float",
+          "null_pct": 9.0
+        },
+        "ev_ebit_invalid": {
+          "dtype": "int",
+          "null_pct": 0.0
+        },
+        "ebit_proxy": {
+          "dtype": "float",
+          "null_pct": 15.2
+        },
+        "ebitda_proxy": {
+          "dtype": "float",
+          "null_pct": 35.0
+        },
+        "fcf_yield": {
+          "dtype": "float",
+          "null_pct": 12.2
+        },
+        "fcf_yield_invalid": {
+          "dtype": "int",
+          "null_pct": 0.0
+        },
+        "gp_a": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "gp_a_invalid": {
+          "dtype": "int",
+          "null_pct": 0.0
+        },
+        "osov_score": {
+          "dtype": "float",
+          "null_pct": 16.1
+        }
+      },
+      "sample_tickers": [
+        "2020",
+        "2CUREX",
+        "4C",
+        "5PG",
+        "MAERSK A",
+        "MAERSK B",
+        "AAC",
+        "AAK",
+        "AAB",
+        "AALLON",
+        "AASB",
+        "ABAS"
+      ],
+      "ticker_count": 1736,
+      "date_min": "2024-01-31",
+      "date_max": "2026-03-11"
+    },
+    "data/processed/master_cost.parquet": {
+      "path": "G:\\min disk\\new deecon\\data\\processed\\master_cost.parquet",
+      "size_mb": 0.68,
+      "rows": 1741,
+      "columns": {
+        "ticker": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "GIGA": 2,
+            "LUMI": 2,
+            "MOBA": 2,
+            "NTG": 2,
+            "TIETO": 2,
+            "ABG": 1,
+            "ORES": 1,
+            "2020": 1
+          }
+        },
+        "company": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "Nordea Bank": 3,
+            "OMX Large Cap": 3,
+            "OMX Mid Cap": 3,
+            "OMX Small Cap": 3,
+            "Sampo": 3,
+            "TietoEVRY": 3,
+            "Boozt": 2,
+            "Better Collective": 2
+          }
+        },
+        "info_country": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "Sweden": 1060,
+            "Norway": 306,
+            "Finland": 205,
+            "Denmark": 170
+          }
+        },
+        "market_cap_current": {
+          "dtype": "float",
+          "null_pct": 6.1
+        },
+        "ocf_millions": {
+          "dtype": "float",
+          "null_pct": 12.2
+        },
+        "capex_millions": {
+          "dtype": "float",
+          "null_pct": 15.1
+        },
+        "fcf_millions": {
+          "dtype": "float",
+          "null_pct": 12.2
+        },
+        "net_debt_current": {
+          "dtype": "float",
+          "null_pct": 14.5,
+          "p10": -37.0,
+          "median": 8.0,
+          "p90": 45.0,
+          "min": -100.0,
+          "max": 966.0
+        },
+        "n_debt_ebitda_current": {
+          "dtype": "float",
+          "null_pct": 33.7,
+          "p10": -2.6,
+          "median": 0.9,
+          "p90": 7.9,
+          "min": -361.7,
+          "max": 1186.0
+        },
+        "roic_current": {
+          "dtype": "float",
+          "null_pct": 12.9
+        },
+        "ev_ebit_current": {
+          "dtype": "float",
+          "null_pct": 9.0
+        },
+        "p_e_current": {
+          "dtype": "float",
+          "null_pct": 9.0
+        },
+        "p_s_current": {
+          "dtype": "float",
+          "null_pct": 14.8
+        },
+        "base_ticker": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "GIGA": 2,
+            "LUMI": 2,
+            "MOBA": 2,
+            "NTG": 2,
+            "TIETO": 2,
+            "ABG": 1,
+            "ORES": 1,
+            "2020": 1
+          }
+        },
+        "suffix": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            ".ST": 1060,
+            ".OL": 306,
+            ".HE": 205,
+            ".CO": 170
+          }
+        },
+        "date": {
+          "dtype": "datetime",
+          "null_pct": 30.0,
+          "min_date": "2024-01-31",
+          "max_date": "2026-03-11"
+        },
+        "adj_close": {
+          "dtype": "float",
+          "null_pct": 30.0,
+          "p10": 0.4262,
+          "median": 10.8,
+          "p90": 190.1,
+          "min": 0.0012,
+          "max": 8450.0
+        },
+        "volume": {
+          "dtype": "float",
+          "null_pct": 30.0
+        },
+        "ma21": {
+          "dtype": "float",
+          "null_pct": 30.1
+        },
+        "ma200": {
+          "dtype": "float",
+          "null_pct": 32.3,
+          "p10": 0.5925,
+          "median": 11.79,
+          "p90": 190.9,
+          "min": 0.001847,
+          "max": 8345.0
+        },
+        "mad": {
+          "dtype": "float",
+          "null_pct": 32.3,
+          "p10": -0.3783,
+          "median": -0.04169,
+          "p90": 0.2328,
+          "min": -0.9524,
+          "max": 1.915
+        },
+        "above_ma200": {
+          "dtype": "bool",
+          "null_pct": 32.3,
+          "top_values": {
+            "False": 720,
+            "True": 458
+          }
+        },
+        "missing_price_reason": {
+          "dtype": "str",
+          "null_pct": 30.0,
+          "top_values": {
+            "": 1219
+          }
+        },
+        "yahoo_ticker": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "2020.OL": 1,
+            "2CUREX.ST": 1,
+            "4C.ST": 1,
+            "5PG.OL": 1,
+            "MAERSK-A.CO": 1,
+            "MAERSK-B.CO": 1,
+            "AAC.ST": 1,
+            "AAK.ST": 1
+          }
+        },
+        "financials_period_end": {
+          "dtype": "str",
+          "null_pct": 37.2,
+          "top_values": {
+            "2024-12-31": 773,
+            "2025-12-31": 257,
+            "2025-06-30": 10,
+            "2023-12-31": 7,
+            "2025-04-30": 7,
+            "2025-09-30": 6,
+            "2025-03-31": 6,
+            "2025-08-31": 5
+          }
+        },
+        "financials_source": {
+          "dtype": "str",
+          "null_pct": 37.2,
+          "top_values": {
+            "reports_y": 1093,
+            "financials_agent": 1
+          }
+        },
+        "revenue_total": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "cost_of_goods_sold": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "gross_profit": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "sga_expense": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "depreciation_expense": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "amortization_expense": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "operating_income_ebit": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "net_finance_income_expense": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "profit_before_tax": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "income_tax_expense": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "net_income": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "net_income_attributable_to_parent": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "cash_and_cash_equivalents": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "accounts_receivable": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "inventory": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "property_plant_equipment": {
+          "dtype": "float",
+          "null_pct": 37.4
+        },
+        "right_of_use_assets": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "intangible_assets": {
+          "dtype": "float",
+          "null_pct": 37.4
+        },
+        "goodwill": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "deferred_tax_assets": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "total_assets": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "accounts_payable": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "short_term_debt": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "long_term_debt": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "lease_liabilities_current": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "lease_liabilities_noncurrent": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "total_liabilities": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "equity_attributable_to_parent": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "total_equity": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "cash_flow_from_operations": {
+          "dtype": "float",
+          "null_pct": 38.1
+        },
+        "interest_paid_cash": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "income_taxes_paid_cash": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "capex_purchase_ppe": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "cash_flow_from_investing": {
+          "dtype": "float",
+          "null_pct": 38.4
+        },
+        "cash_flow_from_financing": {
+          "dtype": "float",
+          "null_pct": 38.2
+        },
+        "dividends_paid_total": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "net_change_in_cash": {
+          "dtype": "float",
+          "null_pct": 38.2
+        },
+        "fx_effect_on_cash": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "shares_outstanding_basic": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "shares_outstanding_diluted": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "reporting_currency": {
+          "dtype": "str",
+          "null_pct": 37.2,
+          "top_values": {
+            "SEK": 469,
+            "EUR": 231,
+            "NOK": 166,
+            "DKK": 135,
+            "USD": 83,
+            "0": 5,
+            "CAD": 2,
+            "PLN": 1
+          }
+        },
+        "fiscal_year": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "reporting_period_type": {
+          "dtype": "str",
+          "null_pct": 37.2,
+          "top_values": {
+            "annual": 1094
+          }
+        },
+        "rd_expense": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ebitda": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "non_operating_income_expense": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "deferred_tax_liabilities": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "short_term_investments": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "other_current_assets": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "investments_in_associates": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "other_non_current_assets": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "pension_liabilities": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "provisions": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "capex_purchase_intangibles": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "interest_received_cash": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "share_buybacks_paid": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "debt_issued_cash_inflow": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "debt_repaid_cash_outflow": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "lease_principal_repayments": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "treasury_shares": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "impairment_expense": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_net_interest_income": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_fee_commission_income": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_operating_expenses": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_loan_loss_provisions": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_total_loans_gross": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_ecl_allowance": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_total_loans_net": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_customer_deposits": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_total_assets": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_total_equity": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_rwa": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_cet1_capital": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_cet1_ratio": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_npl_ratio": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_liquidity_coverage_ratio": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_gross_written_premiums": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_earned_premiums": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_claims_incurred": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_operating_expenses": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_underwriting_result": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_investment_result": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_profit_before_tax": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_net_income": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_insurance_contract_liabilities": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_reinsurance_contract_assets": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_investment_assets": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_total_assets": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_total_equity": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "financials_guard_anomaly": {
+          "dtype": "bool",
+          "null_pct": 0.0,
+          "top_values": {
+            "False": 1741
+          }
+        },
+        "reason_financials_guard": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "financials_guard_changed_fields": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "financials_guard_fields": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "financials_guard_prev_snapshot": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "financials_guard_current_snapshot": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "dividend_history_years": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "dividend_paid_years": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "dividend_growth_5y": {
+          "dtype": "float",
+          "null_pct": 77.5
+        },
+        "dividend_cagr_5y": {
+          "dtype": "float",
+          "null_pct": 77.5
+        },
+        "profit_growth_5y": {
+          "dtype": "float",
+          "null_pct": 69.5
+        },
+        "payout_ratio": {
+          "dtype": "float",
+          "null_pct": 59.5
+        },
+        "share_count_growth_5y": {
+          "dtype": "float",
+          "null_pct": 51.6
+        },
+        "fcf_margin": {
+          "dtype": "float",
+          "null_pct": 41.2
+        },
+        "ocf_margin": {
+          "dtype": "float",
+          "null_pct": 41.2
+        },
+        "profit_margin": {
+          "dtype": "float",
+          "null_pct": 39.7
+        },
+        "roa": {
+          "dtype": "float",
+          "null_pct": 37.1
+        },
+        "dividend_yield": {
+          "dtype": "float",
+          "null_pct": 37.1
+        },
+        "t2_effective_tax_rate": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_effective_tax_rate_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t2_ebitda_used": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_ebitda_used_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t2_gross_margin": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_gross_margin_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t2_ebit_margin": {
+          "dtype": "float",
+          "null_pct": 39.7
+        },
+        "t2_ebit_margin_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "operating_income_ebit/revenue_total": 1049,
+            "": 692
+          }
+        },
+        "t2_ebitda_margin": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_ebitda_margin_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t2_net_margin": {
+          "dtype": "float",
+          "null_pct": 39.7
+        },
+        "t2_net_margin_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "net_income_attributable_to_parent/revenue_total": 1049,
+            "": 692
+          }
+        },
+        "t2_cfo_margin": {
+          "dtype": "float",
+          "null_pct": 40.7
+        },
+        "t2_cfo_margin_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "cash_flow_from_operations/revenue_total": 1032,
+            "": 709
+          }
+        },
+        "t2_fcf_simple": {
+          "dtype": "float",
+          "null_pct": 38.1
+        },
+        "t2_fcf_simple_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "fallback:cash_flow_from_operations": 1077,
+            "": 664
+          }
+        },
+        "t2_fcf_margin": {
+          "dtype": "float",
+          "null_pct": 40.7
+        },
+        "t2_fcf_margin_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "fallback:cash_flow_from_operations/revenue_total": 1032,
+            "": 709
+          }
+        },
+        "t2_net_debt_excl_leases": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_net_debt_excl_leases_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t2_net_debt_incl_leases": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_net_debt_incl_leases_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t2_nd_ebitda_excl_leases": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_nd_ebitda_excl_leases_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t2_nd_ebitda_incl_leases": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_nd_ebitda_incl_leases_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t2_interest_coverage": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_interest_coverage_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t3_working_capital": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t3_working_capital_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t3_working_capital_to_revenue": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t3_working_capital_to_revenue_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t3_roa": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "t3_roa_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "net_income_attributable_to_parent/total_assets": 1094,
+            "": 647
+          }
+        },
+        "t3_liabilities_to_equity": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "t3_liabilities_to_equity_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "total_liabilities/total_equity": 1094,
+            "": 647
+          }
+        },
+        "t3_cash_conversion": {
+          "dtype": "float",
+          "null_pct": 38.1
+        },
+        "t3_cash_conversion_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "cash_flow_from_operations/net_income_attributable_to_parent": 1077,
+            "": 664
+          }
+        },
+        "ma200_ok": {
+          "dtype": "bool",
+          "null_pct": 0.0,
+          "top_values": {
+            "False": 1283,
+            "True": 458
+          }
+        },
+        "index_ma200_ok": {
+          "dtype": "bool",
+          "null_pct": 0.0,
+          "top_values": {
+            "True": 1741
+          }
+        },
+        "missing_price": {
+          "dtype": "bool",
+          "null_pct": 0.0,
+          "top_values": {
+            "False": 1219,
+            "True": 522
+          }
+        },
+        "missing_technical_data": {
+          "dtype": "bool",
+          "null_pct": 0.0,
+          "top_values": {
+            "False": 1700,
+            "True": 41
+          }
+        },
+        "reason_technical_fail": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "below_ma200": 720,
+            "missing_price": 522,
+            "": 431,
+            "missing_technical_data": 41,
+            "negative_mad": 27
+          }
+        },
+        "roic": {
+          "dtype": "float",
+          "null_pct": 12.9,
+          "p10": -111.8,
+          "median": 1.1,
+          "p90": 17.8,
+          "min": -105500.0,
+          "max": 3432.0
+        },
+        "roic_invalid": {
+          "dtype": "int",
+          "null_pct": 0.0
+        },
+        "fcf_ttm": {
+          "dtype": "float",
+          "null_pct": 12.2
+        },
+        "fcf_invalid": {
+          "dtype": "int",
+          "null_pct": 0.0
+        },
+        "market_cap": {
+          "dtype": "float",
+          "null_pct": 6.1,
+          "p10": 26.0,
+          "median": 565.0,
+          "p90": 26000.0,
+          "min": 1.0,
+          "max": 2638000.0
+        },
+        "net_debt": {
+          "dtype": "float",
+          "null_pct": 14.5
+        },
+        "units_mismatch_flag": {
+          "dtype": "int",
+          "null_pct": 0.0
+        },
+        "enterprise_value_proxy": {
+          "dtype": "float",
+          "null_pct": 14.5
+        },
+        "nd_ebitda": {
+          "dtype": "float",
+          "null_pct": 33.7
+        },
+        "nd_ebitda_invalid": {
+          "dtype": "int",
+          "null_pct": 0.0
+        },
+        "ev_ebit": {
+          "dtype": "float",
+          "null_pct": 9.0
+        },
+        "ev_ebit_invalid": {
+          "dtype": "int",
+          "null_pct": 0.0
+        },
+        "ebit_proxy": {
+          "dtype": "float",
+          "null_pct": 15.2
+        },
+        "ebitda_proxy": {
+          "dtype": "float",
+          "null_pct": 35.0
+        },
+        "fcf_yield": {
+          "dtype": "float",
+          "null_pct": 12.2
+        },
+        "fcf_yield_invalid": {
+          "dtype": "int",
+          "null_pct": 0.0
+        },
+        "gp_a": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "gp_a_invalid": {
+          "dtype": "int",
+          "null_pct": 0.0
+        },
+        "osov_score": {
+          "dtype": "float",
+          "null_pct": 16.1
+        },
+        "sector_en": {
+          "dtype": "str",
+          "null_pct": 2.4,
+          "top_values": {
+            "Industrials": 328,
+            "Finance & Real Estate": 313,
+            "Information Technology": 243,
+            "Healthcare": 226,
+            "Consumer Discretionary": 189,
+            "": 106,
+            "Consumer Staples": 87,
+            "Materials": 82
+          }
+        },
+        "branch_se": {
+          "dtype": "str",
+          "null_pct": 2.4,
+          "top_values": {
+            "Fastighetsbolag": 113,
+            "Affärs- & IT-System": 109,
+            "": 106,
+            "Investmentbolag": 89,
+            "Medicinsk Utrustning": 80,
+            "Biotech": 66,
+            "Läkemedel": 62,
+            "Banker": 59
+          }
+        },
+        "damodaran_sector": {
+          "dtype": "str",
+          "null_pct": 2.4,
+          "top_values": {
+            "Industrials": 294,
+            "Consumer Discretionary": 187,
+            "Healthcare": 163,
+            "Software": 137,
+            "Financial Services": 121,
+            "Real Estate": 115,
+            "Default": 106,
+            "Technology": 106
+          }
+        },
+        "market": {
+          "dtype": "str",
+          "null_pct": 2.4,
+          "top_values": {
+            "First North": 417,
+            "Large Cap": 245,
+            "Mid Cap": 210,
+            "Small Cap": 209,
+            "Oslo Bors": 196,
+            "Spotlight": 131,
+            "Index": 106,
+            "NGM": 94
+          }
+        },
+        "rf": {
+          "dtype": "float",
+          "null_pct": 0.0
+        },
+        "erp": {
+          "dtype": "float",
+          "null_pct": 0.0
+        },
+        "beta": {
+          "dtype": "float",
+          "null_pct": 2.2,
+          "p10": 0.3,
+          "median": 0.6516,
+          "p90": 1.584,
+          "min": 0.3,
+          "max": 2.5
+        },
+        "beta_source": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "T1_full": 1578,
+            "T1_warn": 57,
+            "T3_country_median": 42,
+            "T2_damodaran(Real Estate)": 12,
+            "T2_damodaran(Financial Services)": 9,
+            "T2_damodaran(Consumer Discretionary)": 8,
+            "T2_damodaran(Industrials)": 7,
+            "T2_damodaran(Oil & Gas)": 5
+          }
+        },
+        "beta_low_confidence": {
+          "dtype": "bool",
+          "null_pct": 0.0,
+          "top_values": {
+            "False": 1635,
+            "True": 106
+          }
+        },
+        "coe": {
+          "dtype": "float",
+          "null_pct": 2.2,
+          "p10": 0.06,
+          "median": 0.06013,
+          "p90": 0.1088,
+          "min": 0.06,
+          "max": 0.165
+        },
+        "cod": {
+          "dtype": "float",
+          "null_pct": 0.0
+        },
+        "cod_bucket": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "net_cash": 611,
+            "no_data": 263,
+            "nd_neg_ebitda": 166,
+            "nd_ebitda_0_1": 150,
+            "nd_ebitda_1_2": 148,
+            "nd_ebitda_gt6": 141,
+            "nd_ebitda_2_3": 123,
+            "nd_ebitda_3_4": 83
+          }
+        },
+        "wacc": {
+          "dtype": "float",
+          "null_pct": 0.0,
+          "p10": 0.06,
+          "median": 0.06196,
+          "p90": 0.1047,
+          "min": 0.06,
+          "max": 0.165
+        },
+        "wacc_source": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "computed": 1596,
+            "coe_only_no_mcap": 106,
+            "fallback_nan": 39
+          }
+        }
+      },
+      "sample_tickers": [
+        "2020",
+        "2CUREX",
+        "4C",
+        "5PG",
+        "MAERSK A",
+        "MAERSK B",
+        "AAC",
+        "AAK",
+        "AAB",
+        "AALLON",
+        "AASB",
+        "ABAS"
+      ],
+      "ticker_count": 1736,
+      "date_min": "2024-01-31",
+      "date_max": "2026-03-11"
+    },
+    "data/processed/master_valued.parquet": {
+      "path": "G:\\min disk\\new deecon\\data\\processed\\master_valued.parquet",
+      "size_mb": 0.9,
+      "rows": 1741,
+      "columns": {
+        "ticker": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "GIGA": 2,
+            "LUMI": 2,
+            "MOBA": 2,
+            "NTG": 2,
+            "TIETO": 2,
+            "ABG": 1,
+            "ORES": 1,
+            "2020": 1
+          }
+        },
+        "company": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "Nordea Bank": 3,
+            "OMX Large Cap": 3,
+            "OMX Mid Cap": 3,
+            "OMX Small Cap": 3,
+            "Sampo": 3,
+            "TietoEVRY": 3,
+            "Boozt": 2,
+            "Better Collective": 2
+          }
+        },
+        "info_country": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "Sweden": 1060,
+            "Norway": 306,
+            "Finland": 205,
+            "Denmark": 170
+          }
+        },
+        "market_cap_current": {
+          "dtype": "float",
+          "null_pct": 6.1
+        },
+        "ocf_millions": {
+          "dtype": "float",
+          "null_pct": 12.2
+        },
+        "capex_millions": {
+          "dtype": "float",
+          "null_pct": 15.1
+        },
+        "fcf_millions": {
+          "dtype": "float",
+          "null_pct": 12.2
+        },
+        "net_debt_current": {
+          "dtype": "float",
+          "null_pct": 14.5,
+          "p10": -37.0,
+          "median": 8.0,
+          "p90": 45.0,
+          "min": -100.0,
+          "max": 966.0
+        },
+        "n_debt_ebitda_current": {
+          "dtype": "float",
+          "null_pct": 33.7,
+          "p10": -2.6,
+          "median": 0.9,
+          "p90": 7.9,
+          "min": -361.7,
+          "max": 1186.0
+        },
+        "roic_current": {
+          "dtype": "float",
+          "null_pct": 12.9
+        },
+        "ev_ebit_current": {
+          "dtype": "float",
+          "null_pct": 9.0
+        },
+        "p_e_current": {
+          "dtype": "float",
+          "null_pct": 9.0
+        },
+        "p_s_current": {
+          "dtype": "float",
+          "null_pct": 14.8
+        },
+        "base_ticker": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "GIGA": 2,
+            "LUMI": 2,
+            "MOBA": 2,
+            "NTG": 2,
+            "TIETO": 2,
+            "ABG": 1,
+            "ORES": 1,
+            "2020": 1
+          }
+        },
+        "suffix": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            ".ST": 1060,
+            ".OL": 306,
+            ".HE": 205,
+            ".CO": 170
+          }
+        },
+        "date": {
+          "dtype": "datetime",
+          "null_pct": 30.0,
+          "min_date": "2024-01-31",
+          "max_date": "2026-03-11"
+        },
+        "adj_close": {
+          "dtype": "float",
+          "null_pct": 30.0,
+          "p10": 0.4262,
+          "median": 10.8,
+          "p90": 190.1,
+          "min": 0.0012,
+          "max": 8450.0
+        },
+        "volume": {
+          "dtype": "float",
+          "null_pct": 30.0
+        },
+        "ma21": {
+          "dtype": "float",
+          "null_pct": 30.1
+        },
+        "ma200": {
+          "dtype": "float",
+          "null_pct": 32.3,
+          "p10": 0.5925,
+          "median": 11.79,
+          "p90": 190.9,
+          "min": 0.001847,
+          "max": 8345.0
+        },
+        "mad": {
+          "dtype": "float",
+          "null_pct": 32.3,
+          "p10": -0.3783,
+          "median": -0.04169,
+          "p90": 0.2328,
+          "min": -0.9524,
+          "max": 1.915
+        },
+        "above_ma200": {
+          "dtype": "bool",
+          "null_pct": 32.3,
+          "top_values": {
+            "False": 720,
+            "True": 458
+          }
+        },
+        "missing_price_reason": {
+          "dtype": "str",
+          "null_pct": 30.0,
+          "top_values": {
+            "": 1219
+          }
+        },
+        "yahoo_ticker": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "2020.OL": 1,
+            "2CUREX.ST": 1,
+            "4C.ST": 1,
+            "5PG.OL": 1,
+            "MAERSK-A.CO": 1,
+            "MAERSK-B.CO": 1,
+            "AAC.ST": 1,
+            "AAK.ST": 1
+          }
+        },
+        "financials_period_end": {
+          "dtype": "str",
+          "null_pct": 37.2,
+          "top_values": {
+            "2024-12-31": 773,
+            "2025-12-31": 257,
+            "2025-06-30": 10,
+            "2023-12-31": 7,
+            "2025-04-30": 7,
+            "2025-09-30": 6,
+            "2025-03-31": 6,
+            "2025-08-31": 5
+          }
+        },
+        "financials_source": {
+          "dtype": "str",
+          "null_pct": 37.2,
+          "top_values": {
+            "reports_y": 1093,
+            "financials_agent": 1
+          }
+        },
+        "revenue_total": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "cost_of_goods_sold": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "gross_profit": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "sga_expense": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "depreciation_expense": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "amortization_expense": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "operating_income_ebit": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "net_finance_income_expense": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "profit_before_tax": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "income_tax_expense": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "net_income": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "net_income_attributable_to_parent": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "cash_and_cash_equivalents": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "accounts_receivable": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "inventory": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "property_plant_equipment": {
+          "dtype": "float",
+          "null_pct": 37.4
+        },
+        "right_of_use_assets": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "intangible_assets": {
+          "dtype": "float",
+          "null_pct": 37.4
+        },
+        "goodwill": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "deferred_tax_assets": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "total_assets": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "accounts_payable": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "short_term_debt": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "long_term_debt": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "lease_liabilities_current": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "lease_liabilities_noncurrent": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "total_liabilities": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "equity_attributable_to_parent": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "total_equity": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "cash_flow_from_operations": {
+          "dtype": "float",
+          "null_pct": 38.1
+        },
+        "interest_paid_cash": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "income_taxes_paid_cash": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "capex_purchase_ppe": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "cash_flow_from_investing": {
+          "dtype": "float",
+          "null_pct": 38.4
+        },
+        "cash_flow_from_financing": {
+          "dtype": "float",
+          "null_pct": 38.2
+        },
+        "dividends_paid_total": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "net_change_in_cash": {
+          "dtype": "float",
+          "null_pct": 38.2
+        },
+        "fx_effect_on_cash": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "shares_outstanding_basic": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "shares_outstanding_diluted": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "reporting_currency": {
+          "dtype": "str",
+          "null_pct": 37.2,
+          "top_values": {
+            "SEK": 469,
+            "EUR": 231,
+            "NOK": 166,
+            "DKK": 135,
+            "USD": 83,
+            "0": 5,
+            "CAD": 2,
+            "PLN": 1
+          }
+        },
+        "fiscal_year": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "reporting_period_type": {
+          "dtype": "str",
+          "null_pct": 37.2,
+          "top_values": {
+            "annual": 1094
+          }
+        },
+        "rd_expense": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ebitda": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "non_operating_income_expense": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "deferred_tax_liabilities": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "short_term_investments": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "other_current_assets": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "investments_in_associates": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "other_non_current_assets": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "pension_liabilities": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "provisions": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "capex_purchase_intangibles": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "interest_received_cash": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "share_buybacks_paid": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "debt_issued_cash_inflow": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "debt_repaid_cash_outflow": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "lease_principal_repayments": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "treasury_shares": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "impairment_expense": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_net_interest_income": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_fee_commission_income": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_operating_expenses": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_loan_loss_provisions": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_total_loans_gross": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_ecl_allowance": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_total_loans_net": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_customer_deposits": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_total_assets": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_total_equity": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_rwa": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_cet1_capital": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_cet1_ratio": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_npl_ratio": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "bank_liquidity_coverage_ratio": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_gross_written_premiums": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_earned_premiums": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_claims_incurred": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_operating_expenses": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_underwriting_result": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_investment_result": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_profit_before_tax": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_net_income": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_insurance_contract_liabilities": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_reinsurance_contract_assets": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_investment_assets": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_total_assets": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "ins_total_equity": {
+          "dtype": "str",
+          "null_pct": 100.0,
+          "top_values": {}
+        },
+        "financials_guard_anomaly": {
+          "dtype": "bool",
+          "null_pct": 0.0,
+          "top_values": {
+            "False": 1741
+          }
+        },
+        "reason_financials_guard": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "financials_guard_changed_fields": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "financials_guard_fields": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "financials_guard_prev_snapshot": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "financials_guard_current_snapshot": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "dividend_history_years": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "dividend_paid_years": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "dividend_growth_5y": {
+          "dtype": "float",
+          "null_pct": 77.5
+        },
+        "dividend_cagr_5y": {
+          "dtype": "float",
+          "null_pct": 77.5
+        },
+        "profit_growth_5y": {
+          "dtype": "float",
+          "null_pct": 69.5
+        },
+        "payout_ratio": {
+          "dtype": "float",
+          "null_pct": 59.5
+        },
+        "share_count_growth_5y": {
+          "dtype": "float",
+          "null_pct": 51.6
+        },
+        "fcf_margin": {
+          "dtype": "float",
+          "null_pct": 41.2
+        },
+        "ocf_margin": {
+          "dtype": "float",
+          "null_pct": 41.2
+        },
+        "profit_margin": {
+          "dtype": "float",
+          "null_pct": 39.7
+        },
+        "roa": {
+          "dtype": "float",
+          "null_pct": 37.1
+        },
+        "dividend_yield": {
+          "dtype": "float",
+          "null_pct": 37.1
+        },
+        "t2_effective_tax_rate": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_effective_tax_rate_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t2_ebitda_used": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_ebitda_used_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t2_gross_margin": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_gross_margin_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t2_ebit_margin": {
+          "dtype": "float",
+          "null_pct": 39.7
+        },
+        "t2_ebit_margin_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "operating_income_ebit/revenue_total": 1049,
+            "": 692
+          }
+        },
+        "t2_ebitda_margin": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_ebitda_margin_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t2_net_margin": {
+          "dtype": "float",
+          "null_pct": 39.7
+        },
+        "t2_net_margin_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "net_income_attributable_to_parent/revenue_total": 1049,
+            "": 692
+          }
+        },
+        "t2_cfo_margin": {
+          "dtype": "float",
+          "null_pct": 40.7
+        },
+        "t2_cfo_margin_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "cash_flow_from_operations/revenue_total": 1032,
+            "": 709
+          }
+        },
+        "t2_fcf_simple": {
+          "dtype": "float",
+          "null_pct": 38.1
+        },
+        "t2_fcf_simple_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "fallback:cash_flow_from_operations": 1077,
+            "": 664
+          }
+        },
+        "t2_fcf_margin": {
+          "dtype": "float",
+          "null_pct": 40.7
+        },
+        "t2_fcf_margin_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "fallback:cash_flow_from_operations/revenue_total": 1032,
+            "": 709
+          }
+        },
+        "t2_net_debt_excl_leases": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_net_debt_excl_leases_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t2_net_debt_incl_leases": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_net_debt_incl_leases_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t2_nd_ebitda_excl_leases": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_nd_ebitda_excl_leases_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t2_nd_ebitda_incl_leases": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_nd_ebitda_incl_leases_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t2_interest_coverage": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t2_interest_coverage_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t3_working_capital": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t3_working_capital_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t3_working_capital_to_revenue": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "t3_working_capital_to_revenue_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 1741
+          }
+        },
+        "t3_roa": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "t3_roa_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "net_income_attributable_to_parent/total_assets": 1094,
+            "": 647
+          }
+        },
+        "t3_liabilities_to_equity": {
+          "dtype": "float",
+          "null_pct": 37.2
+        },
+        "t3_liabilities_to_equity_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "total_liabilities/total_equity": 1094,
+            "": 647
+          }
+        },
+        "t3_cash_conversion": {
+          "dtype": "float",
+          "null_pct": 38.1
+        },
+        "t3_cash_conversion_derived_from": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "cash_flow_from_operations/net_income_attributable_to_parent": 1077,
+            "": 664
+          }
+        },
+        "ma200_ok": {
+          "dtype": "bool",
+          "null_pct": 0.0,
+          "top_values": {
+            "False": 1283,
+            "True": 458
+          }
+        },
+        "index_ma200_ok": {
+          "dtype": "bool",
+          "null_pct": 0.0,
+          "top_values": {
+            "True": 1741
+          }
+        },
+        "missing_price": {
+          "dtype": "bool",
+          "null_pct": 0.0,
+          "top_values": {
+            "False": 1219,
+            "True": 522
+          }
+        },
+        "missing_technical_data": {
+          "dtype": "bool",
+          "null_pct": 0.0,
+          "top_values": {
+            "False": 1700,
+            "True": 41
+          }
+        },
+        "reason_technical_fail": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "below_ma200": 720,
+            "missing_price": 522,
+            "": 431,
+            "missing_technical_data": 41,
+            "negative_mad": 27
+          }
+        },
+        "roic": {
+          "dtype": "float",
+          "null_pct": 12.9,
+          "p10": -111.8,
+          "median": 1.1,
+          "p90": 17.8,
+          "min": -105500.0,
+          "max": 3432.0
+        },
+        "roic_invalid": {
+          "dtype": "int",
+          "null_pct": 0.0
+        },
+        "fcf_ttm": {
+          "dtype": "float",
+          "null_pct": 12.2
+        },
+        "fcf_invalid": {
+          "dtype": "int",
+          "null_pct": 0.0
+        },
+        "market_cap": {
+          "dtype": "float",
+          "null_pct": 6.1,
+          "p10": 26.0,
+          "median": 565.0,
+          "p90": 26000.0,
+          "min": 1.0,
+          "max": 2638000.0
+        },
+        "net_debt": {
+          "dtype": "float",
+          "null_pct": 14.5
+        },
+        "units_mismatch_flag": {
+          "dtype": "int",
+          "null_pct": 0.0
+        },
+        "enterprise_value_proxy": {
+          "dtype": "float",
+          "null_pct": 14.5
+        },
+        "nd_ebitda": {
+          "dtype": "float",
+          "null_pct": 33.7
+        },
+        "nd_ebitda_invalid": {
+          "dtype": "int",
+          "null_pct": 0.0
+        },
+        "ev_ebit": {
+          "dtype": "float",
+          "null_pct": 9.0
+        },
+        "ev_ebit_invalid": {
+          "dtype": "int",
+          "null_pct": 0.0
+        },
+        "ebit_proxy": {
+          "dtype": "float",
+          "null_pct": 15.2
+        },
+        "ebitda_proxy": {
+          "dtype": "float",
+          "null_pct": 35.0
+        },
+        "fcf_yield": {
+          "dtype": "float",
+          "null_pct": 12.2
+        },
+        "fcf_yield_invalid": {
+          "dtype": "int",
+          "null_pct": 0.0
+        },
+        "gp_a": {
+          "dtype": "float",
+          "null_pct": 100.0
+        },
+        "gp_a_invalid": {
+          "dtype": "int",
+          "null_pct": 0.0
+        },
+        "osov_score": {
+          "dtype": "float",
+          "null_pct": 16.1
+        },
+        "sector_en": {
+          "dtype": "str",
+          "null_pct": 2.4,
+          "top_values": {
+            "Industrials": 328,
+            "Finance & Real Estate": 313,
+            "Information Technology": 243,
+            "Healthcare": 226,
+            "Consumer Discretionary": 189,
+            "": 106,
+            "Consumer Staples": 87,
+            "Materials": 82
+          }
+        },
+        "branch_se": {
+          "dtype": "str",
+          "null_pct": 2.4,
+          "top_values": {
+            "Fastighetsbolag": 113,
+            "Affärs- & IT-System": 109,
+            "": 106,
+            "Investmentbolag": 89,
+            "Medicinsk Utrustning": 80,
+            "Biotech": 66,
+            "Läkemedel": 62,
+            "Banker": 59
+          }
+        },
+        "damodaran_sector": {
+          "dtype": "str",
+          "null_pct": 2.4,
+          "top_values": {
+            "Industrials": 294,
+            "Consumer Discretionary": 187,
+            "Healthcare": 163,
+            "Software": 137,
+            "Financial Services": 121,
+            "Real Estate": 115,
+            "Default": 106,
+            "Technology": 106
+          }
+        },
+        "market": {
+          "dtype": "str",
+          "null_pct": 2.4,
+          "top_values": {
+            "First North": 417,
+            "Large Cap": 245,
+            "Mid Cap": 210,
+            "Small Cap": 209,
+            "Oslo Bors": 196,
+            "Spotlight": 131,
+            "Index": 106,
+            "NGM": 94
+          }
+        },
+        "rf": {
+          "dtype": "float",
+          "null_pct": 0.0
+        },
+        "erp": {
+          "dtype": "float",
+          "null_pct": 0.0
+        },
+        "beta": {
+          "dtype": "float",
+          "null_pct": 2.2,
+          "p10": 0.3,
+          "median": 0.6516,
+          "p90": 1.584,
+          "min": 0.3,
+          "max": 2.5
+        },
+        "beta_source": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "T1_full": 1578,
+            "T1_warn": 57,
+            "T3_country_median": 42,
+            "T2_damodaran(Real Estate)": 12,
+            "T2_damodaran(Financial Services)": 9,
+            "T2_damodaran(Consumer Discretionary)": 8,
+            "T2_damodaran(Industrials)": 7,
+            "T2_damodaran(Oil & Gas)": 5
+          }
+        },
+        "beta_low_confidence": {
+          "dtype": "bool",
+          "null_pct": 0.0,
+          "top_values": {
+            "False": 1635,
+            "True": 106
+          }
+        },
+        "coe": {
+          "dtype": "float",
+          "null_pct": 2.2,
+          "p10": 0.06,
+          "median": 0.06013,
+          "p90": 0.1088,
+          "min": 0.06,
+          "max": 0.165
+        },
+        "cod": {
+          "dtype": "float",
+          "null_pct": 0.0
+        },
+        "cod_bucket": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "net_cash": 611,
+            "no_data": 263,
+            "nd_neg_ebitda": 166,
+            "nd_ebitda_0_1": 150,
+            "nd_ebitda_1_2": 148,
+            "nd_ebitda_gt6": 141,
+            "nd_ebitda_2_3": 123,
+            "nd_ebitda_3_4": 83
+          }
+        },
+        "wacc": {
+          "dtype": "float",
+          "null_pct": 0.0,
+          "p10": 0.06,
+          "median": 0.06196,
+          "p90": 0.1047,
+          "min": 0.06,
+          "max": 0.165
+        },
+        "wacc_source": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "computed": 1596,
+            "coe_only_no_mcap": 106,
+            "fallback_nan": 39
+          }
+        },
+        "fcf_m_latest": {
+          "dtype": "float",
+          "null_pct": 5.0
+        },
+        "fcf_m_median_3y": {
+          "dtype": "float",
+          "null_pct": 7.3,
+          "p10": -91.35,
+          "median": 0.0,
+          "p90": 794.3,
+          "min": -50010.0,
+          "max": 39940.0
+        },
+        "fcf_m_median_5y": {
+          "dtype": "float",
+          "null_pct": 7.0
+        },
+        "ebitda_m_latest": {
+          "dtype": "float",
+          "null_pct": 4.6
+        },
+        "ebit_m_latest": {
+          "dtype": "float",
+          "null_pct": 4.6
+        },
+        "roic_latest": {
+          "dtype": "float",
+          "null_pct": 12.6
+        },
+        "fcf_m_years_available": {
+          "dtype": "float",
+          "null_pct": 4.6,
+          "p10": 6.0,
+          "median": 10.0,
+          "p90": 10.0,
+          "min": 0.0,
+          "max": 10.0
+        },
+        "fcf_m_cv_3y": {
+          "dtype": "float",
+          "null_pct": 13.5
+        },
+        "netdebt_m_latest": {
+          "dtype": "float",
+          "null_pct": 4.6
+        },
+        "netdebt_ebitda_latest": {
+          "dtype": "float",
+          "null_pct": 20.8
+        },
+        "quarterly_fcf_millions_x": {
+          "dtype": "float",
+          "null_pct": 38.9
+        },
+        "quarterly_period_end_x": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "2025-12-31": 852,
+            "": 677,
+            "2025-09-30": 94,
+            "2025-06-30": 78,
+            "2025-10-31": 11,
+            "2025-11-30": 7,
+            "2024-06-30": 4,
+            "2024-12-31": 3
+          }
+        },
+        "quarterly_snapshot": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "2026-03-04": 1064,
+            "": 677
+          }
+        },
+        "quarterly_source": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "reports_r12.free_cash_flow": 1064,
+            "": 677
+          }
+        },
+        "quarterly_age_days_x": {
+          "dtype": "float",
+          "null_pct": 38.9
+        },
+        "quarterly_data_ok_x": {
+          "dtype": "bool",
+          "null_pct": 0.0,
+          "top_values": {
+            "True": 1064,
+            "False": 677
+          }
+        },
+        "fcf_ebitda_ratio_x": {
+          "dtype": "float",
+          "null_pct": 13.4
+        },
+        "fcf_implausible_x": {
+          "dtype": "bool",
+          "null_pct": 0.0,
+          "top_values": {
+            "False": 1596,
+            "True": 145
+          }
+        },
+        "model": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "DCF": 1741
+          }
+        },
+        "fcf_used_millions": {
+          "dtype": "float",
+          "null_pct": 6.6,
+          "p10": -91.25,
+          "median": 0.0,
+          "p90": 833.8,
+          "min": -50010.0,
+          "max": 39940.0
+        },
+        "fcf_source": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "normalized_3y": 1729,
+            "reports_r12_fallback": 12
+          }
+        },
+        "quarterly_fcf_millions_y": {
+          "dtype": "float",
+          "null_pct": 38.9
+        },
+        "quarterly_period_end_y": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "2025-12-31": 852,
+            "": 677,
+            "2025-09-30": 94,
+            "2025-06-30": 78,
+            "2025-10-31": 11,
+            "2025-11-30": 7,
+            "2024-06-30": 4,
+            "2024-12-31": 3
+          }
+        },
+        "quarterly_age_days_y": {
+          "dtype": "float",
+          "null_pct": 38.9
+        },
+        "quarterly_data_ok_y": {
+          "dtype": "bool",
+          "null_pct": 0.0,
+          "top_values": {
+            "True": 969,
+            "False": 772
+          }
+        },
+        "intrinsic_ev": {
+          "dtype": "float",
+          "null_pct": 44.3
+        },
+        "intrinsic_equity": {
+          "dtype": "float",
+          "null_pct": 44.3,
+          "p10": -2015000000.0,
+          "median": 168900000.0,
+          "p90": 29240000000.0,
+          "min": -994300000000.0,
+          "max": 521400000000.0
+        },
+        "net_debt_used": {
+          "dtype": "float",
+          "null_pct": 0.0,
+          "p10": -32000000.0,
+          "median": 0.0,
+          "p90": 43000000.0,
+          "min": -100000000.0,
+          "max": 966000000.0
+        },
+        "wacc_used": {
+          "dtype": "float",
+          "null_pct": 0.0,
+          "p10": 0.06,
+          "median": 0.06196,
+          "p90": 0.1047,
+          "min": 0.06,
+          "max": 0.165
+        },
+        "coe_used": {
+          "dtype": "float",
+          "null_pct": 0.0,
+          "p10": 0.06,
+          "median": 0.061,
+          "p90": 0.1082,
+          "min": 0.06,
+          "max": 0.165
+        },
+        "reason": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "": 969,
+            "missing_quarterly_fcf": 677,
+            "stale_quarterly_fcf": 95
+          }
+        },
+        "fcf_implausible_y": {
+          "dtype": "bool",
+          "null_pct": 0.0,
+          "top_values": {
+            "False": 1596,
+            "True": 145
+          }
+        },
+        "fcf_ebitda_ratio_y": {
+          "dtype": "float",
+          "null_pct": 13.4
+        }
+      },
+      "sample_tickers": [
+        "2020",
+        "2CUREX",
+        "4C",
+        "5PG",
+        "MAERSK A",
+        "MAERSK B",
+        "AAC",
+        "AAK",
+        "AAB",
+        "AALLON",
+        "AASB",
+        "ABAS"
+      ],
+      "ticker_count": 1736,
+      "date_min": "2024-01-31",
+      "date_max": "2026-03-11"
+    },
+    "data/processed/instrument_metadata.parquet": {
+      "path": "G:\\min disk\\new deecon\\data\\processed\\instrument_metadata.parquet",
+      "size_mb": 0.08,
+      "rows": 1717,
+      "columns": {
+        "ins_id": {
+          "dtype": "int",
+          "null_pct": 0.0
+        },
+        "ticker": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "LUMI": 2,
+            "NTG": 2,
+            "TIETO": 2,
+            "GIGA": 2,
+            "ADDT B": 1,
+            "ALFA": 1,
+            "ANOT": 1,
+            "ASSA B": 1
+          }
+        },
+        "yahoo_ticker": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "AAK.ST": 1,
+            "ABB.ST": 1,
+            "ACTI.ST": 1,
+            "ANOD-B.ST": 1,
+            "ADDT-B.ST": 1,
+            "ALFA.ST": 1,
+            "ANOT.ST": 1,
+            "ASSA-B.ST": 1
+          }
+        },
+        "company": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "Nordea Bank": 3,
+            "OMX Small Cap": 3,
+            "Sampo": 3,
+            "OMX Large Cap": 3,
+            "OMX Mid Cap": 3,
+            "TietoEVRY": 3,
+            "Stora Enso R": 2,
+            "Sotkamo Silver": 2
+          }
+        },
+        "country_id": {
+          "dtype": "int",
+          "null_pct": 0.0
+        },
+        "country": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "Sverige": 1043,
+            "Norge": 301,
+            "Finland": 207,
+            "Danmark": 166
+          }
+        },
+        "market_id": {
+          "dtype": "int",
+          "null_pct": 0.0
+        },
+        "market": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "First North": 419,
+            "Large Cap": 244,
+            "Mid Cap": 212,
+            "Small Cap": 211,
+            "Oslo Bors": 197,
+            "Spotlight": 135,
+            "Index": 106,
+            "NGM": 99
+          }
+        },
+        "sector_id": {
+          "dtype": "float",
+          "null_pct": 6.2
+        },
+        "sector_se": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "Industri": 334,
+            "Finans & Fastighet": 316,
+            "Informationsteknik": 246,
+            "Hälsovård": 226,
+            "Sällanköpsvaror": 191,
+            "": 106,
+            "Dagligvaror": 86,
+            "Material": 82
+          }
+        },
+        "sector_en": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "Industrials": 334,
+            "Finance & Real Estate": 316,
+            "Information Technology": 246,
+            "Healthcare": 226,
+            "Consumer Discretionary": 191,
+            "": 106,
+            "Consumer Staples": 86,
+            "Materials": 82
+          }
+        },
+        "branch_id": {
+          "dtype": "float",
+          "null_pct": 6.2
+        },
+        "branch_se": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "Fastighetsbolag": 113,
+            "Affärs- & IT-System": 111,
+            "": 106,
+            "Investmentbolag": 90,
+            "Medicinsk Utrustning": 80,
+            "Biotech": 66,
+            "Läkemedel": 62,
+            "Banker": 59
+          }
+        },
+        "damodaran_sector": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "Industrials": 299,
+            "Consumer Discretionary": 189,
+            "Healthcare": 163,
+            "Software": 139,
+            "Financial Services": 123,
+            "Real Estate": 115,
+            "Technology": 107,
+            "Default": 106
+          }
+        }
+      },
+      "sample_tickers": [
+        "AAK",
+        "ABB",
+        "ACTI",
+        "ANOD B",
+        "ADDT B",
+        "ALFA",
+        "ANOT",
+        "ASSA B",
+        "AZN",
+        "ATCO A",
+        "ATRLJ B",
+        "ALIV SDB"
+      ],
+      "ticker_count": 1713
+    },
+    "data/processed/prices.parquet": {
+      "path": "G:\\min disk\\new deecon\\data\\processed\\prices.parquet",
+      "size_mb": 16.34,
+      "rows": 821743,
+      "columns": {
+        "ticker": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "^OSEAX": 551,
+            "^OMXS": 550,
+            "WSTEP.OL": 549,
+            "WEST.OL": 549,
+            "ABTEC.OL": 549,
+            "2020.OL": 549,
+            "WAWI.OL": 549,
+            "AKSO.OL": 549
+          }
+        },
+        "date": {
+          "dtype": "datetime",
+          "null_pct": 0.0,
+          "min_date": "2024-01-02",
+          "max_date": "2026-03-13"
+        },
+        "adj_close": {
+          "dtype": "float",
+          "null_pct": 0.0,
+          "p10": 0.711,
+          "median": 16.3,
+          "p90": 222.9,
+          "min": -4.388,
+          "max": 17360.0
+        },
+        "volume": {
+          "dtype": "float",
+          "null_pct": 0.1
+        },
+        "ma21": {
+          "dtype": "float",
+          "null_pct": 3.8
+        },
+        "ma200": {
+          "dtype": "float",
+          "null_pct": 37.6,
+          "p10": 0.8346,
+          "median": 16.36,
+          "p90": 227.4,
+          "min": -2.819,
+          "max": 13650.0
+        },
+        "mad": {
+          "dtype": "float",
+          "null_pct": 37.6,
+          "p10": -0.3092,
+          "median": -0.01752,
+          "p90": 0.2174,
+          "min": -123.2,
+          "max": 106.8
+        },
+        "above_ma200": {
+          "dtype": "bool",
+          "null_pct": 0.0,
+          "top_values": {
+            "False": 588839,
+            "True": 232904
+          }
+        }
+      },
+      "sample_tickers": [
+        "2020.OL",
+        "2CUREX.ST",
+        "4C.ST",
+        "5PG.OL",
+        "8TRA.ST",
+        "AAB.CO",
+        "AAC.ST",
+        "AAK.ST",
+        "AALLON.HE",
+        "AASB.OL",
+        "ABAS.ST",
+        "ABB.ST"
+      ],
+      "ticker_count": 1581,
+      "date_min": "2024-01-02",
+      "date_max": "2026-03-13"
+    },
+    "data/golden/prices_wft_combined.parquet": {
+      "path": "G:\\min disk\\new deecon\\data\\golden\\prices_wft_combined.parquet",
+      "size_mb": 42.76,
+      "rows": 4982035,
+      "columns": {
+        "ticker": {
+          "dtype": "str",
+          "null_pct": 0.0,
+          "top_values": {
+            "ORRON.ST": 5039,
+            "GTAB-B.ST": 5037,
+            "GGEO.ST": 5037,
+            "LINDEX.HE": 5036,
+            "TYRES.HE": 5036,
+            "SAMPO.HE": 5036,
+            "SANOMA.HE": 5036,
+            "OUT1V.HE": 5036
+          }
+        },
+        "date": {
+          "dtype": "datetime",
+          "null_pct": 0.0,
+          "min_date": "2006-02-23",
+          "max_date": "2026-02-17"
+        },
+        "adj_close": {
+          "dtype": "float",
+          "null_pct": 0.0,
+          "p10": 2.34,
+          "median": 35.55,
+          "p90": 648.0,
+          "min": 0.0,
+          "max": 63670000000.0
+        },
+        "volume": {
+          "dtype": "int",
+          "null_pct": 0.0
+        }
+      },
+      "sample_tickers": [
+        "2020.OL",
+        "2CUREX.ST",
+        "4C.ST",
+        "5PG.OL",
+        "8TRA.ST",
+        "AAB.CO",
+        "AAC.ST",
+        "AAK.ST",
+        "AALLON.HE",
+        "AASB.OL",
+        "ABAS.ST",
+        "ABB.ST"
+      ],
+      "ticker_count": 1700,
+      "date_min": "2006-02-23",
+      "date_max": "2026-02-17"
+    }
+  }
+}
