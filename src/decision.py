@@ -2965,6 +2965,44 @@ def _apply_index_technical_filter(df: pd.DataFrame, prices_df: pd.DataFrame, aso
     return out
 
 
+def _build_funnel_report(df: pd.DataFrame) -> pd.DataFrame:
+    """Count how many companies pass each decision gate in order.
+
+    Returns a tidy DataFrame with columns:
+      stage, count_in, count_pass, count_fail, pct_pass
+    """
+    def _b(col: str, default: bool = True) -> pd.Series:
+        if col in df.columns:
+            return df[col].fillna(False).astype(bool)
+        return pd.Series(default, index=df.index)
+
+    n = len(df)
+    mos_pass = df["mos"].notna() & (df["mos"] >= df["mos_req"]) if "mos" in df.columns and "mos_req" in df.columns else pd.Series(False, index=df.index)
+
+    stages: list[tuple[str, pd.Series]] = [
+        ("1_universe",        pd.Series(True, index=df.index)),
+        ("2_not_dq_blocked",  ~_b("data_quality_fail", False)),
+        ("3_candidate_data",  _b("candidate_data_ok", True)),
+        ("4_quality_gate",    _b("quality_gate_ok",   True)),
+        ("5_value_creation",  _b("value_creation_ok", True)),
+        ("6_mos_gate",        mos_pass),
+        ("7_fundamental",     _b("fundamental_ok",    False)),
+        ("8_technical",       _b("technical_ok",      False)),
+        ("9_eligible",        _b("eligible",          False)),
+    ]
+
+    rows = []
+    for stage, mask in stages:
+        cnt = int(mask.sum())
+        rows.append({
+            "stage":      stage,
+            "count_pass": cnt,
+            "count_fail": n - cnt,
+            "pct_pass":   round(cnt / n * 100, 1) if n > 0 else 0.0,
+        })
+    return pd.DataFrame(rows)
+
+
 def run(ctx, log) -> int:
     paths = resolve_paths(ctx.cfg, ctx.project_root)
     processed = paths["processed_dir"]
@@ -3189,11 +3227,19 @@ def run(ctx, log) -> int:
     if require_above_ma200:
         stock_ma200_ok = stock_has_price_ma & stock_above_ma200
 
-    stock_mad_ok = mad_s.notna() & (mad_s >= mad_min)
-
     df["stock_ma200_ok"] = stock_ma200_ok
-    df["stock_mad_ok"] = stock_mad_ok
     df = _apply_index_technical_filter(df, prices_df=prices_df, asof=ctx.asof, dec_cfg=dec_cfg, mad_min=mad_min)
+
+    # Dynamic MAD: when index is in bear regime, apply a stricter per-stock MAD floor
+    _bear_idx_mad   = float(dec_cfg.get("bear_index_mad_threshold", -0.05))
+    _bear_stock_mad = float(dec_cfg.get("bear_stock_mad_min",        0.00))
+    idx_mad_col = pd.to_numeric(df.get("index_mad"), errors="coerce")
+    in_bear = idx_mad_col.notna() & (idx_mad_col < _bear_idx_mad)
+    effective_mad_floor = np.where(in_bear, _bear_stock_mad, mad_min)
+    stock_mad_ok = mad_s.notna() & (mad_s >= effective_mad_floor)
+    df["stock_mad_ok"] = stock_mad_ok
+    df["mad_regime"] = np.where(in_bear, "bear", "normal")
+
     df["tech_signal_stock_trend"] = df["stock_ma200_ok"].astype(bool)
     df["tech_signal_index_trend"] = df["index_ma200_ok"].astype(bool)
     df["tech_signal_mad"] = df["stock_mad_ok"].astype(bool)
@@ -3233,6 +3279,22 @@ def run(ctx, log) -> int:
         df["graham_min_score_ok"] = pd.to_numeric(df["graham_score"], errors="coerce").fillna(0.0) >= float(graham_min_score)
     else:
         df["graham_min_score_ok"] = True
+
+    # Dynamic MoS: reduce requirement for companies in the top quality quartile
+    _mos_discount     = float(dec_cfg.get("mos_quality_discount",            0.10))
+    _mos_quality_pct  = float(dec_cfg.get("mos_quality_discount_percentile", 0.75))
+    _mos_dyn_floor    = float(dec_cfg.get("mos_dynamic_floor",               0.25))
+    if _mos_discount > 0 and "quality_score" in df.columns:
+        _q75 = float(df["quality_score"].quantile(_mos_quality_pct))
+        _high_q = df["quality_score"].notna() & (df["quality_score"] > _q75)
+        df["mos_req"] = np.where(
+            _high_q,
+            np.maximum(_mos_dyn_floor, df["mos_req"].values - _mos_discount),
+            df["mos_req"].values,
+        )
+        df["mos_dynamic_discount"] = np.where(_high_q, _mos_discount, 0.0)
+    else:
+        df["mos_dynamic_discount"] = 0.0
 
     value_gate = _value_creation_gate(df, dec_cfg)
     quality_gate = _quality_gate(df, dec_cfg)
@@ -3419,6 +3481,20 @@ def run(ctx, log) -> int:
     df["eligible"] = df["technical_ok"] & df["fundamental_ok"]
     df["value_qc_unresolved_alert_count"] = 0
     df["value_qc_unresolved_metrics"] = ""
+
+    # Funnel report — gate-by-gate dropout analysis
+    try:
+        funnel_df = _build_funnel_report(df)
+        _atomic_write_csv(ctx.run_dir / "funnel_report.csv", funnel_df)
+        log.info(
+            "decision: funnel — universe=%d  eligible=%d  (%.1f%%)",
+            len(df),
+            int(funnel_df.loc[funnel_df["stage"] == "9_eligible", "count_pass"].iloc[0]) if not funnel_df.empty else 0,
+            float(funnel_df.loc[funnel_df["stage"] == "9_eligible", "pct_pass"].iloc[0]) if not funnel_df.empty else 0.0,
+        )
+    except Exception as _funnel_err:
+        log.warning("decision: funnel_report.csv feilet (ikke-kritisk): %s", _funnel_err)
+
     _write_ma200_sanity_report(ctx.run_dir, ctx.asof, df)
 
     # decision_reasons.json — maskinlesbar per-ticker beslutningslogg
@@ -3485,7 +3561,8 @@ def run(ctx, log) -> int:
         "stock_ma200_ok", "stock_mad_ok", "ma200_ok",
         "relevant_index_symbol", "relevant_index_key", "index_price_date", "index_price_age_days", "index_price_stale", "index_price", "index_ma200", "index_mad", "index_above_ma200",
         "index_data_ok", "index_ma200_ok", "index_mad_ok", "index_tech_ok",
-        "mad", "ma21", "ma200", "above_ma200", "quality_score"
+        "mad", "ma21", "ma200", "above_ma200", "quality_score",
+        "mos_dynamic_discount", "mad_regime",
     ] + strategy_screen_cols if c in df.columns]
     _atomic_write_csv(ctx.run_dir / "screen_basic.csv", df[screen_cols])
 

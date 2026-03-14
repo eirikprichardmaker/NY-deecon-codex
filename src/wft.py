@@ -944,12 +944,55 @@ def _apply_filters(
     d = month_df.copy()
     d = _ensure_wft_dq_columns(d)
 
+    # ── 1. Quality score (computed first — used by dynamic MoS) ──────────────
+    _ROIC_CAP = 2.0
+    _FCF_CAP  = 1.0
+    _GPA_CAP  = 1.0
+    factor_z: dict[str, pd.Series] = {}
+    factor_w: dict[str, float] = {"roic": 0.50, "fcf_yield": 0.30, "gp_a": 0.20}
+
+    roic_z = _zscore(d["roic"].clip(upper=_ROIC_CAP))
+    if roic_z.notna().any():
+        factor_z["roic"] = roic_z
+
+    fcf_z = _zscore(d["fcf_yield"].clip(upper=_FCF_CAP))
+    if fcf_z.notna().any():
+        factor_z["fcf_yield"] = fcf_z
+
+    gpa_raw = _to_num(d.get("gp_a", pd.Series(np.nan, index=d.index)))
+    gpa_z = _zscore(gpa_raw.clip(lower=-0.5, upper=_GPA_CAP))
+    if gpa_z.notna().any():
+        factor_z["gp_a"] = gpa_z
+
+    if factor_z:
+        total_w = sum(factor_w[k] for k in factor_z)
+        d["quality_score"] = sum(
+            factor_z[k].fillna(0.0) * (factor_w[k] / total_w)
+            for k in factor_z
+        )
+    else:
+        d["quality_score"] = np.nan
+
+    # ── 2. MoS requirement — base + high-risk uplift + quality discount ───────
     base_mos = float(params.mos_threshold)
     mos_req = np.where(d["high_risk_flag"].fillna(False), np.maximum(0.40, base_mos), base_mos)
+
+    # Dynamic MoS: top-quartile quality companies get a 10pp discount (floor 0.25)
+    _MOS_DISCOUNT     = 0.10
+    _MOS_DYNAMIC_FLOOR = 0.25
+    _MOS_QUALITY_PCT   = 0.75
+    q_score = d["quality_score"]
+    if q_score.notna().any():
+        q75 = float(q_score.quantile(_MOS_QUALITY_PCT))
+        high_quality = q_score.notna() & (q_score > q75)
+        mos_req = np.where(
+            high_quality,
+            np.maximum(_MOS_DYNAMIC_FLOOR, mos_req - _MOS_DISCOUNT),
+            mos_req,
+        )
     d["mos_req"] = mos_req
 
     weak_fail_min = 2 if params.weakness_rule_variant == "baseline" else 1
-
     d["mos_ok"] = d["mos"].notna() & (d["mos"] >= d["mos_req"])
     d["value_creation_ok"] = d["value_creation_ok_base"].fillna(False).astype(bool)
     d["quality_ok"] = pd.to_numeric(d["quality_weak_count"], errors="coerce") < weak_fail_min
@@ -960,12 +1003,14 @@ def _apply_filters(
         d["quality_ok"]
     )
 
+    # ── 3. Technical signals ──────────────────────────────────────────────────
     stock_price = _to_num(d.get("adj_close", pd.Series(np.nan, index=d.index)))
     stock_ma200 = _to_num(d.get("ma200", pd.Series(np.nan, index=d.index)))
-    stock_mad = _to_num(d.get("mad", pd.Series(np.nan, index=d.index)))
+    stock_mad   = _to_num(d.get("mad",    pd.Series(np.nan, index=d.index)))
     index_price = _to_num(d.get("index_price", pd.Series(np.nan, index=d.index)))
     index_ma200 = _to_num(d.get("index_ma200", pd.Series(np.nan, index=d.index)))
-    index_mad = _to_num(d.get("index_mad", pd.Series(np.nan, index=d.index)))
+    index_mad   = _to_num(d.get("index_mad",   pd.Series(np.nan, index=d.index)))
+
     if "relevant_index_key" in d.columns:
         idx_key = d["relevant_index_key"].astype(str).str.strip()
         benchmark_mapping_ok = idx_key.ne("")
@@ -977,7 +1022,14 @@ def _apply_filters(
     d["index_data_ok"] = index_price.notna() & index_ma200.notna()
     d["stock_above_ma200"] = stock_price > stock_ma200
     d["index_above_ma200"] = index_price > index_ma200
-    d["stock_mad_ok"] = stock_mad.notna() & stock_mad.ge(float(params.mad_min))
+
+    # Dynamic MAD: in bear regime (index_mad < -0.05) require stock_mad ≥ 0.00
+    _BEAR_IDX_MAD   = -0.05
+    _BEAR_STOCK_MAD =  0.00
+    in_bear = index_mad.notna() & (index_mad < _BEAR_IDX_MAD)
+    effective_mad_floor = np.where(in_bear, _BEAR_STOCK_MAD, float(params.mad_min))
+    d["mad_regime"] = np.where(in_bear, "bear", "normal")
+    d["stock_mad_ok"] = stock_mad.notna() & (stock_mad >= effective_mad_floor)
     d["index_mad_ok"] = index_mad.notna() & index_mad.ge(float(params.mad_min))
 
     d["tech_signal_stock_trend"] = d["stock_data_ok"].astype(bool) & d["stock_above_ma200"].astype(bool)
@@ -1006,38 +1058,6 @@ def _apply_filters(
     )
 
     d["eligible"] = d["fundamental_ok"] & d["technical_ok"] & (~d["dq_blocked"].astype(bool))
-
-    # Multi-factor quality_score: ROIC (50%) + FCF yield (30%) + GP/A (20%)
-    # Caps align with decision.py constants. Missing sub-factors are dropped
-    # and remaining weights renormalised (same logic as _baseline_quality_score).
-    _ROIC_CAP = 2.0
-    _FCF_CAP  = 1.0
-    _GPA_CAP  = 1.0
-
-    factor_z: dict[str, pd.Series] = {}
-    factor_w: dict[str, float] = {"roic": 0.50, "fcf_yield": 0.30, "gp_a": 0.20}
-
-    roic_z = _zscore(d["roic"].clip(upper=_ROIC_CAP))
-    if roic_z.notna().any():
-        factor_z["roic"] = roic_z
-
-    fcf_z = _zscore(d["fcf_yield"].clip(upper=_FCF_CAP))
-    if fcf_z.notna().any():
-        factor_z["fcf_yield"] = fcf_z
-
-    gpa_raw = _to_num(d.get("gp_a", pd.Series(np.nan, index=d.index)))
-    gpa_z = _zscore(gpa_raw.clip(lower=-0.5, upper=_GPA_CAP))
-    if gpa_z.notna().any():
-        factor_z["gp_a"] = gpa_z
-
-    if factor_z:
-        total_w = sum(factor_w[k] for k in factor_z)
-        d["quality_score"] = sum(
-            factor_z[k].fillna(0.0) * (factor_w[k] / total_w)
-            for k in factor_z
-        )
-    else:
-        d["quality_score"] = np.nan
 
     return d
 

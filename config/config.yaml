@@ -37,6 +37,13 @@ decision:
     medium: 0.40      # EPV — zero-growth model, needs extra margin
     low: 0.50         # Multiples — sector median, needs large margin
   mad_min: -0.02      # WFT-optimal (var -0.05)
+  # Dynamic MoS: top-quartile quality companies get a discount on MoS requirement
+  mos_quality_discount: 0.10             # pp reduction for quality > P75
+  mos_quality_discount_percentile: 0.75  # quality percentile threshold
+  mos_dynamic_floor: 0.25               # never reduce MoS below this
+  # Dynamic MAD: bear regime tightens the individual stock MAD floor
+  bear_index_mad_threshold: -0.05       # index_mad below this → bear regime
+  bear_stock_mad_min: 0.00              # minimum stock MAD in bear regime
   min_hold_months: 3  # hold position for at least N months before switching
   max_price_age_days: 7
   min_fresh_price_coverage: 0.50
