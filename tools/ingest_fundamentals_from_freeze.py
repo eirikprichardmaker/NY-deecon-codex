@@ -218,15 +218,27 @@ def build_fundamentals_from_freeze(
     print(f"KPI year/quarter freeze: {borsdata_freeze_dir.name}  ({n_year} batch-filer)")
 
     # Finn nyeste proplus_freeze for r12
+    # Fallback: bruk borsdata/ hvis borsdata_proplus_freeze/ mangler r12-data
     kpi_history_dir_r12: Optional[Path] = None
     if freeze_proplus_freeze.exists():
         try:
             r12_freeze_dir = _find_freeze_root(freeze_proplus_freeze, asof)
-            kpi_history_dir_r12 = r12_freeze_dir / "raw" / "kpi_history"
-            n_r12 = len(list(kpi_history_dir_r12.glob("*.json.gz"))) if kpi_history_dir_r12.exists() else 0
-            print(f"KPI r12 freeze: {r12_freeze_dir.name}  ({n_r12} batch-filer)")
+            candidate = r12_freeze_dir / "raw" / "kpi_history"
+            n_r12 = len(list(candidate.glob("kpi_*__r12_*.json.gz"))) if candidate.exists() else 0
+            if n_r12 > 0:
+                kpi_history_dir_r12 = candidate
+                print(f"KPI r12 freeze: {r12_freeze_dir.name}  ({n_r12} batch-filer)")
+            else:
+                print(f"KPI r12 freeze: {r12_freeze_dir.name} har 0 r12-filer — prover fallback til borsdata/")
         except FileNotFoundError:
-            print("KPI r12 freeze: ikke funnet")
+            print("KPI r12 freeze: ikke funnet — prover fallback til borsdata/")
+
+    # Fallback: les r12 fra borsdata/-freezen hvis proplus_freeze mangler
+    if kpi_history_dir_r12 is None:
+        n_r12_fallback = len(list(kpi_history_dir_year.glob("kpi_*__r12_*.json.gz"))) if kpi_history_dir_year.exists() else 0
+        if n_r12_fallback > 0:
+            kpi_history_dir_r12 = kpi_history_dir_year
+            print(f"KPI r12 fallback: bruker borsdata/{borsdata_freeze_dir.name}  ({n_r12_fallback} r12-filer)")
 
     want_year = mode in ("year", "both")
     want_quarter = mode in ("quarter", "both")

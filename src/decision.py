@@ -1386,6 +1386,37 @@ def _media_headlines_frame(media_scan: dict, max_rows: int = 10) -> pd.DataFrame
     return pd.DataFrame(rows, columns=["headline", "source", "date", "classification", "assessment"])
 
 
+def _load_position_state(state_path: Path) -> dict:
+    """Load persisted position state. Returns empty dict if missing or corrupt."""
+    try:
+        if state_path.exists():
+            return json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+
+def _save_position_state(state_path: Path, ticker: str, entry_date: str, quality_score: float, mos: float) -> None:
+    """Persist current position to state.json."""
+    state = {
+        "ticker": ticker,
+        "entry_date": entry_date,
+        "quality_score": float(quality_score) if quality_score is not None else None,
+        "mos": float(mos) if mos is not None else None,
+    }
+    _atomic_write_text(state_path, json.dumps(state, indent=2, ensure_ascii=False))
+
+
+def _months_held(entry_date_str: str, asof_str: str) -> int:
+    """Return the number of complete months between entry_date and asof."""
+    try:
+        entry = datetime.fromisoformat(str(entry_date_str)[:10])
+        asof = datetime.fromisoformat(str(asof_str)[:10])
+        return max(0, (asof.year - entry.year) * 12 + (asof.month - entry.month))
+    except Exception:
+        return 0
+
+
 def _atomic_write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -2358,18 +2389,34 @@ def _evaluate_numeric_rule(values: pd.Series, rule) -> tuple[pd.Series, pd.Serie
     return ok, available
 
 
+_ROIC_CAP = 2.0   # 200% hard cap before z-scoring — prevents data anomalies from dominating
+_FCF_CAP  = 1.0   # 100% FCF yield cap — prevents one-time events from dominating
+_MOS_CAP  = 5.0   # 500% MoS cap for value factor — extreme outliers (data errors) excluded
+
+
+# Default Strategy A factor weights (empirical from WFT optimization)
+_STRATEGY_A_WEIGHTS_DEFAULT = {
+    "quality":  0.27,
+    "value":    0.46,
+    "lowrisk":  0.19,
+    "balance":  0.08,
+}
+
+
 def _baseline_quality_score(df: pd.DataFrame) -> pd.Series:
     comps: list[pd.Series] = []
     wts: list[float] = []
     if "roic" in df.columns and pd.to_numeric(df["roic"], errors="coerce").notna().any():
-        comps.append(zscore(pd.to_numeric(df["roic"], errors="coerce")))
+        roic_dec = _to_decimal_rate(pd.to_numeric(df["roic"], errors="coerce"))
+        comps.append(zscore(roic_dec.clip(upper=_ROIC_CAP)))
         wts.append(0.60)
     elif "roic_current" in df.columns and pd.to_numeric(df["roic_current"], errors="coerce").notna().any():
-        comps.append(zscore(pd.to_numeric(df["roic_current"], errors="coerce")))
+        roic_dec = _to_decimal_rate(pd.to_numeric(df["roic_current"], errors="coerce"))
+        comps.append(zscore(roic_dec.clip(upper=_ROIC_CAP)))
         wts.append(0.60)
 
     if "fcf_yield" in df.columns and pd.to_numeric(df["fcf_yield"], errors="coerce").notna().any():
-        comps.append(zscore(pd.to_numeric(df["fcf_yield"], errors="coerce")))
+        comps.append(zscore(pd.to_numeric(df["fcf_yield"], errors="coerce").clip(upper=_FCF_CAP)))
         wts.append(0.40)
 
     if not comps:
@@ -2377,6 +2424,64 @@ def _baseline_quality_score(df: pd.DataFrame) -> pd.Series:
     w = np.array(wts, dtype=float)
     w = w / w.sum()
     return sum(w[i] * comps[i] for i in range(len(comps)))
+
+
+def _strategy_a_composite_score(df: pd.DataFrame, weights: dict | None = None) -> pd.Series:
+    """
+    Strategy A composite score: weighted z-score across 4 factor groups.
+
+    Factors (default WFT-empirical weights):
+      quality  (0.27): ROIC + FCF yield
+      value    (0.46): Margin of Safety
+      lowrisk  (0.19): -ND/EBITDA (lower leverage = better)
+      balance  (0.08): -liabilities_to_equity (lower = better)
+
+    Missing factors are dropped and remaining weights are renormalised.
+    """
+    w = dict(_STRATEGY_A_WEIGHTS_DEFAULT)
+    if weights:
+        for k, v in weights.items():
+            if k in w:
+                w[k] = float(v)
+
+    factor_scores: dict[str, pd.Series] = {}
+
+    # --- quality ---
+    q = _baseline_quality_score(df)  # already handles decimal conversion + capping
+    if q.notna().any():
+        factor_scores["quality"] = q
+
+    # --- value: Margin of Safety (higher = more undervalued); capped to prevent outliers ---
+    mos = pd.to_numeric(df.get("mos", pd.Series(np.nan, index=df.index)), errors="coerce")
+    if mos.notna().any():
+        factor_scores["value"] = zscore(mos.clip(upper=_MOS_CAP))
+
+    # --- lowrisk: inverted ND/EBITDA (lower debt load = lower risk) ---
+    nd = _as_num_series(df, ["nd_ebitda", "n_debt_ebitda_current", "netdebt_ebitda_latest"])
+    if nd.notna().any():
+        # Cap extreme values; net cash companies (nd < 0) get best score
+        nd_capped = nd.clip(lower=-3.0, upper=10.0)
+        factor_scores["lowrisk"] = zscore(-nd_capped)
+
+    # --- balance: inverted liabilities-to-equity (lower = more solvent) ---
+    lev = _as_num_series(df, ["t3_liabilities_to_equity"])
+    if lev.notna().any():
+        lev_capped = lev.clip(lower=0.0, upper=20.0)
+        factor_scores["balance"] = zscore(-lev_capped)
+
+    if not factor_scores:
+        return pd.Series(0.0, index=df.index, dtype=float)
+
+    # Renormalise weights to available factors
+    total_w = sum(w[k] for k in factor_scores)
+    if total_w <= 0:
+        return pd.Series(0.0, index=df.index, dtype=float)
+
+    composite = pd.Series(0.0, index=df.index, dtype=float)
+    for k, s in factor_scores.items():
+        composite = composite.add(s.fillna(0.0) * (w[k] / total_w))
+
+    return composite
 
 
 def _dividend_quality_score(df: pd.DataFrame) -> pd.DataFrame:
@@ -2530,10 +2635,11 @@ def _graham_strategy_score(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _build_quality_block(df: pd.DataFrame, dec_cfg: dict) -> pd.DataFrame:
+def _build_quality_block(df: pd.DataFrame, dec_cfg: dict, full_cfg: dict | None = None) -> pd.DataFrame:
     strategy_raw = str(dec_cfg.get("quality_strategy", "baseline")).strip().lower()
     use_dividend = strategy_raw in {"dividend", "dividend_quality"}
     use_graham = strategy_raw in {"graham", "graham_strategy"}
+    use_strategy_a = strategy_raw in {"strategy_a", "wft_strategy_a"}
 
     out = pd.DataFrame(index=df.index)
     if use_dividend:
@@ -2548,6 +2654,10 @@ def _build_quality_block(df: pd.DataFrame, dec_cfg: dict) -> pd.DataFrame:
             out[c] = graham[c]
         out["quality_score"] = pd.to_numeric(out["graham_score"], errors="coerce").fillna(0.0)
         out["quality_strategy"] = "graham_strategy"
+    elif use_strategy_a:
+        weights = ((full_cfg or {}).get("wft_opt_strategy_a") or {}).get("weights_prior") or None
+        out["quality_score"] = _strategy_a_composite_score(df, weights=weights)
+        out["quality_strategy"] = "strategy_a"
     else:
         out["quality_score"] = _baseline_quality_score(df)
         out["quality_strategy"] = "baseline"
@@ -3033,7 +3143,7 @@ def run(ctx, log) -> int:
     else:
         df["tech_ok"] = tech_data_ready & df["tech_signal_index_trend"].astype(bool) & df["tech_signal_count"].ge(2)
 
-    quality_block = _build_quality_block(df, dec_cfg)
+    quality_block = _build_quality_block(df, dec_cfg, full_cfg=ctx.cfg)
     for c in quality_block.columns:
         df[c] = quality_block[c]
 
@@ -3451,9 +3561,52 @@ def run(ctx, log) -> int:
         _atomic_write_text(out_md, "\n".join(md))
         log.info(f"decision: wrote {out_csv}")
         log.info(f"decision: wrote {out_md}")
+        # Clear position state on CASH — no holding required when going to cash
+        state_path_cash = Path(paths.get("data_dir", "data")) / "position_state.json"
+        _save_position_state(state_path_cash, ticker="CASH", entry_date=ctx.asof, quality_score=None, mos=None)
         return 0
 
+    # --- min_hold_months: avoid switching too early ---
+    min_hold_months = int(dec_cfg.get("min_hold_months", 0))
+    state_path = Path(paths.get("data_dir", "data")) / "position_state.json"
+
+    position_state = _load_position_state(state_path)
+    current_ticker = position_state.get("ticker", "")
+    entry_date = position_state.get("entry_date", "")
+    held_months = _months_held(entry_date, ctx.asof) if (current_ticker and entry_date) else 0
+
+    new_pick_ticker = str(eligible.iloc[0].get("ticker", ""))
+    if (
+        min_hold_months > 0
+        and current_ticker
+        and current_ticker != new_pick_ticker
+        and held_months < min_hold_months
+    ):
+        # Try to stay with current position if it's still eligible
+        cur_eligible = eligible[eligible["ticker"] == current_ticker]
+        if not cur_eligible.empty:
+            log.info(
+                "decision: min_hold_months=%d, held=%d month(s) — keeping %s over %s",
+                min_hold_months, held_months, current_ticker, new_pick_ticker,
+            )
+            eligible = pd.concat([cur_eligible, eligible[eligible["ticker"] != current_ticker]], ignore_index=False)
+        else:
+            log.info(
+                "decision: min_hold_months=%d, held=%d month(s) — %s no longer eligible, switching to %s",
+                min_hold_months, held_months, current_ticker, new_pick_ticker,
+            )
+
     pick = eligible.iloc[0].copy()
+    pick_ticker = str(pick.get("ticker", ""))
+    new_entry_date = ctx.asof if pick_ticker != current_ticker else (entry_date or ctx.asof)
+    _save_position_state(
+        state_path,
+        ticker=pick_ticker,
+        entry_date=new_entry_date,
+        quality_score=pick.get("quality_score"),
+        mos=pick.get("mos"),
+    )
+
     candidate_qc = _analyze_candidate_value_qc(pick, value_qc_specs)
     _atomic_write_csv(ctx.run_dir / "candidate_value_qc.csv", candidate_qc)
     pick_alerts = int(candidate_qc["is_alert"].astype(bool).sum()) if not candidate_qc.empty else 0

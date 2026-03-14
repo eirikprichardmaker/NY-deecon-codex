@@ -37,10 +37,12 @@ def build_evidence_pack(
     Tom liste returneres (ikke feil) dersom ingen rapporter finnes.
     """
     base = downloads_dir or _DEFAULT_DOWNLOADS_DIR
-    ticker_dir = base / ticker
+    # IR-mapper bruker ticker uten børssuffix (f.eks. "TALK" ikke "TALK.OL")
+    base_ticker = ticker.split(".")[0] if "." in ticker else ticker
+    ticker_dir = base / base_ticker
 
     if not ticker_dir.exists():
-        logger.debug(f"evidence_builder [{ticker}]: ingen rapportmappe ({ticker_dir})")
+        logger.debug(f"evidence_builder [{ticker}]: ingen rapportmappe ({ticker_dir}) [base_ticker={base_ticker}]")
         return []
 
     # Finn alle tekstfiler og PDF-er, sorter nyest dato-mappe først

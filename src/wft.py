@@ -451,6 +451,9 @@ def _load_static_universe(master_path: Path) -> pd.DataFrame:
     mos = intrinsic / mcap - 1.0
 
     roic = _to_decimal_rate(_to_num(m.get("roic", m.get("roic_current", pd.Series(np.nan, index=m.index)))))
+    # Nullify implausibly high ROIC (> 200%) — these are data errors, not exceptional businesses.
+    # Example: TIRO.ST has ROIC stored as 1371.7 (%) which converts to 13.717 after _to_decimal_rate.
+    roic = roic.where(roic <= 2.0, other=np.nan)
     wacc = _to_decimal_rate(_to_num(m.get("wacc_used", m.get("wacc", pd.Series(np.nan, index=m.index)))))
     roe = _to_decimal_rate(_to_num(m.get("roe", m.get("roe_current", pd.Series(np.nan, index=m.index)))))
     coe = _to_decimal_rate(_to_num(m.get("coe_used", m.get("coe", pd.Series(np.nan, index=m.index)))))
@@ -459,6 +462,9 @@ def _load_static_universe(master_path: Path) -> pd.DataFrame:
     beta = _to_num(m.get("beta", pd.Series(np.nan, index=m.index)))
     ev_ebit = _to_num(m.get("ev_ebit", m.get("ev_ebit_current", pd.Series(np.nan, index=m.index))))
     fcf_yield = _to_num(m.get("fcf_yield", pd.Series(np.nan, index=m.index)))
+    # Nullify implausibly high FCF yield (> 50%) — one-time events inflate quality_score.
+    # Example: AKSO.OL has FCF yield = 73.3% from a one-time cash event.
+    fcf_yield = fcf_yield.where(fcf_yield <= 0.50, other=np.nan)
 
     high_risk_flag = (beta.fillna(0) >= 1.5) | (nd_ebitda.fillna(0) >= 3.5)
 
@@ -866,8 +872,12 @@ def _apply_filters(month_df: pd.DataFrame, params: WFTParams) -> pd.DataFrame:
 
     d["eligible"] = d["fundamental_ok"] & d["technical_ok"] & (~d["dq_blocked"].astype(bool))
 
-    roic_z = _zscore(d["roic"])
-    fcf_z = _zscore(d["fcf_yield"])
+    # Winsorize ROIC and FCF yield at 99th percentile before z-scoring.
+    # Prevents data anomalies (e.g. ROIC=1371%) from dominating quality_score.
+    _ROIC_CAP = 2.0   # 200% ROIC hard cap — extreme but plausible for asset-light businesses
+    _FCF_CAP  = 1.0   # 100% FCF yield cap
+    roic_z = _zscore(d["roic"].clip(upper=_ROIC_CAP))
+    fcf_z = _zscore(d["fcf_yield"].clip(upper=_FCF_CAP))
     if roic_z.notna().any() and fcf_z.notna().any():
         d["quality_score"] = 0.6 * roic_z + 0.4 * fcf_z
     elif roic_z.notna().any():

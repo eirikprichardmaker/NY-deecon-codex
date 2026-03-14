@@ -10,7 +10,7 @@ agents:
   temperature: 0.0  # Determinisme
 
   business_quality:
-    enabled: false          # Slås på i fase 4
+    enabled: true         # Slås på i fase 4
     veto_on_weak: true
     min_evidence_tokens: 200
 
