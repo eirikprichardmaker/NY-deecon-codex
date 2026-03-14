@@ -17,16 +17,19 @@ ir_reports:
 
 wft_opt_strategy_a:
   weights_prior:
-    quality: 0.4
-    value: 0.3
-    lowrisk: 0.2
-    balance: 0.1
+    quality: 0.27   # empirisk fra WFT-optimering (var 0.40)
+    value: 0.46     # empirisk fra WFT-optimering (var 0.30) — sterkeste signal
+    lowrisk: 0.19   # empirisk fra WFT-optimering (var 0.20)
+    balance: 0.08   # empirisk fra WFT-optimering (var 0.10)
   weights_bounds: [0.0, 0.7]
   weights_reg_lambda: 0.5
 
 decision:
-  quality_strategy: baseline
+  quality_strategy: strategy_a
   dividend_min_score: 0
+  mos_min: 0.35       # WFT-optimal (var implisitt 0.30)
+  mad_min: -0.02      # WFT-optimal (var -0.05)
+  min_hold_months: 3  # hold position for at least N months before switching
   max_price_age_days: 7
   min_fresh_price_coverage: 0.50
   candidate_required_fields:
@@ -90,3 +93,46 @@ valuation:
   require_quarterly_reports: true
   max_quarterly_report_age_days: 220
   use_normalized_fcf: true
+
+cost_of_capital:
+  # Risk-free rate mode: 'country' uses per-country govt bond yields; 'nordic_single' uses one rate
+  rf_mode: country
+  nordic_single_rf: 0.035
+  country_rf:
+    Norway:  0.040   # 10y Norwegian govt bond
+    Sweden:  0.025   # 10y Swedish govt bond
+    Denmark: 0.030   # 10y Danish govt bond
+    Finland: 0.030   # 10y Finnish/euro bond
+
+  erp: 0.050         # Nordic equity risk premium
+
+  # Country-specific corporate tax rates
+  country_tax:
+    Norway:  0.22
+    Sweden:  0.206
+    Denmark: 0.22
+    Finland: 0.20
+  tax_rate_default: 0.22
+
+  # Beta computation from monthly log-returns vs country index
+  beta_lookback_months: 36   # preferred lookback
+  beta_warn_months: 24       # use with WARN if history 24–35m
+  beta_fail_months: 12       # fall back to T3/T4 if history < 24m; FAIL if < 12m
+  beta_clamp_low:  0.3
+  beta_clamp_high: 2.5
+
+  # WACC output bounds
+  wacc_min: 0.060
+  wacc_max: 0.180
+  wacc_fallback: 0.090
+
+  # Cost of debt: spread above risk-free rate, bucketed by ND/EBITDA
+  cod_spreads:
+    net_cash:         0.010   # ND < 0 — net cash company
+    nd_ebitda_0_1:    0.015   # solid interest coverage
+    nd_ebitda_1_2:    0.020
+    nd_ebitda_2_3:    0.025
+    nd_ebitda_3_4:    0.035
+    nd_ebitda_4_6:    0.050   # high leverage — WARN
+    nd_ebitda_gt6:    0.075   # extreme leverage
+    no_data:          0.040   # unknown leverage — conservative default + WARN
