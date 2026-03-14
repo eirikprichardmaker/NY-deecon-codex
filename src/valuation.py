@@ -2,10 +2,11 @@
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Tuple, Optional
+from typing import Any, Dict, List, Tuple, Optional
 
 import numpy as np
 import pandas as pd
@@ -511,6 +512,273 @@ def _merge_fundamentals_summary(
         df[c] = merged[c].values
     log.info(f"valuation: merged fundamentals_summary fra {summary_path.parent.name} "
              f"({', '.join(new_cols)})")
+
+
+# ============================================================
+# Public row-based API (used by tests and external callers)
+# ============================================================
+
+class ValuationMethod(str, Enum):
+    DCF      = "dcf"
+    EPV      = "epv"
+    MULTIPLES = "multiples"
+    UNVALUED = "unvalued"
+
+
+class ConfidenceTier(str, Enum):
+    HIGH   = "high"
+    MEDIUM = "medium"
+    LOW    = "low"
+    NONE   = "none"
+
+
+MOS_FLOOR_BY_TIER: dict[str, float] = {
+    ConfidenceTier.HIGH:   0.30,
+    ConfidenceTier.MEDIUM: 0.40,
+    ConfidenceTier.LOW:    0.50,
+    ConfidenceTier.NONE:   float("inf"),
+}
+
+
+@dataclass
+class ValuationResult:
+    ticker: str
+    method: ValuationMethod
+    confidence: ConfidenceTier
+    intrinsic_value_per_share: Optional[float]
+    mos: Optional[float]
+    mos_floor: float
+    inputs_used: dict = field(default_factory=dict)
+    reasons: List[str] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
+
+
+def dcf_valuation(row: "pd.Series", wacc: float, config: dict) -> Optional[ValuationResult]:
+    """DCF på per-aksje-basis. Returnerer None hvis FCF <= 0 (signal: prøv EPV)."""
+    ticker = str(row.get("ticker", "UNKNOWN"))
+    fcf    = row.get("fcf_m_median_3y")
+    nd     = float(row.get("net_debt", 0) or 0)
+    shares = row.get("shares_outstanding")
+    price  = row.get("price")
+    tg     = min(float(config.get("terminal_growth", 0.02)), 0.02)
+    years  = int(config.get("projection_years", 5))
+
+    if fcf is None or not np.isfinite(float(fcf)) or float(fcf) <= 0:
+        return None  # chain: prøv EPV
+
+    fcf = float(fcf)
+    if not shares or float(shares) <= 0 or not price or float(price) <= 0:
+        return ValuationResult(
+            ticker=ticker, method=ValuationMethod.DCF, confidence=ConfidenceTier.NONE,
+            intrinsic_value_per_share=None, mos=None, mos_floor=float("inf"),
+            reasons=["DCF: mangler shares_outstanding eller price"],
+        )
+
+    shares = float(shares); price = float(price)
+    pv_fcf = sum(fcf / (1 + wacc) ** t for t in range(1, years + 1))
+    tv     = fcf * (1 + tg) / (wacc - tg)
+    pv_tv  = tv / (1 + wacc) ** years
+    iv_eq  = pv_fcf + pv_tv - nd
+    iv_ps  = iv_eq / shares
+
+    if iv_ps <= 0:
+        return ValuationResult(
+            ticker=ticker, method=ValuationMethod.DCF, confidence=ConfidenceTier.NONE,
+            intrinsic_value_per_share=None, mos=None, mos_floor=float("inf"),
+            reasons=["DCF: negativ intrinsic value"],
+            inputs_used={"fcf_m_median_3y": fcf, "wacc": wacc, "net_debt": nd, "terminal_growth": tg},
+        )
+
+    mos = (iv_ps - price) / iv_ps
+    return ValuationResult(
+        ticker=ticker, method=ValuationMethod.DCF, confidence=ConfidenceTier.HIGH,
+        intrinsic_value_per_share=round(iv_ps, 2), mos=round(mos, 4),
+        mos_floor=MOS_FLOOR_BY_TIER[ConfidenceTier.HIGH],
+        inputs_used={"fcf_m_median_3y": fcf, "wacc": wacc, "net_debt": nd,
+                     "shares_outstanding": shares, "terminal_growth": tg, "price": price},
+        reasons=[f"DCF: IV={iv_ps:.2f}, MoS={mos:.1%}"],
+    )
+
+
+def epv_valuation(row: "pd.Series", wacc: float, config: dict) -> Optional[ValuationResult]:
+    """EPV (Earnings Power Value). Returnerer None hvis EBIT <= 0."""
+    ticker = str(row.get("ticker", "UNKNOWN"))
+    ebit   = row.get("ebit_m_median_3y") or row.get("ebit")
+    da     = row.get("depreciation_amortization", 0) or 0
+    capex  = row.get("capex", 0) or 0
+    nd     = float(row.get("net_debt", 0) or 0)
+    shares = row.get("shares_outstanding")
+    price  = row.get("price")
+    tax    = float(row.get("effective_tax_rate", 0.25) or 0.25)
+
+    if ebit is None or not np.isfinite(float(ebit)) or float(ebit) <= 0:
+        return None  # chain: prøv Multiples
+
+    ebit = float(ebit)
+    if not shares or float(shares) <= 0 or not price or float(price) <= 0:
+        return ValuationResult(
+            ticker=ticker, method=ValuationMethod.EPV, confidence=ConfidenceTier.NONE,
+            intrinsic_value_per_share=None, mos=None, mos_floor=float("inf"),
+            reasons=["EPV: mangler shares_outstanding eller price"],
+        )
+
+    shares = float(shares); price = float(price)
+    maint  = abs(float(da)) if float(da) != 0 else abs(float(capex)) * 0.6
+    nopat  = ebit * (1.0 - tax) - maint
+
+    if nopat <= 0:
+        return ValuationResult(
+            ticker=ticker, method=ValuationMethod.EPV, confidence=ConfidenceTier.NONE,
+            intrinsic_value_per_share=None, mos=None, mos_floor=float("inf"),
+            reasons=[f"EPV: NOPAT <= 0 (EBIT={ebit:.0f}, maint_capex={maint:.0f})"],
+            inputs_used={"ebit": ebit, "tax_rate": tax, "maintenance_capex": maint},
+        )
+
+    iv_eq = (nopat / wacc) - nd
+    iv_ps = iv_eq / shares
+
+    if iv_ps <= 0:
+        return ValuationResult(
+            ticker=ticker, method=ValuationMethod.EPV, confidence=ConfidenceTier.NONE,
+            intrinsic_value_per_share=None, mos=None, mos_floor=float("inf"),
+            reasons=["EPV: negativ equity value etter netto gjeld"],
+            inputs_used={"nopat": nopat, "wacc": wacc, "net_debt": nd},
+        )
+
+    mos = (iv_ps - price) / iv_ps
+    return ValuationResult(
+        ticker=ticker, method=ValuationMethod.EPV, confidence=ConfidenceTier.MEDIUM,
+        intrinsic_value_per_share=round(iv_ps, 2), mos=round(mos, 4),
+        mos_floor=MOS_FLOOR_BY_TIER[ConfidenceTier.MEDIUM],
+        inputs_used={"ebit": ebit, "tax_rate": tax, "maintenance_capex": maint,
+                     "nopat": nopat, "wacc": wacc, "net_debt": nd,
+                     "shares_outstanding": shares, "price": price},
+        reasons=[f"EPV (fallback): IV={iv_ps:.2f}, MoS={mos:.1%}"],
+        warnings=["EPV antar ingen vekst — konservativt for vekstselskaper"],
+    )
+
+
+def multiples_valuation(row: "pd.Series", sector_medians: "pd.DataFrame",
+                        config: dict) -> ValuationResult:
+    """Multiples-basert verdsettelse (siste fallback). Returnerer alltid et ValuationResult."""
+    ticker     = str(row.get("ticker", "UNKNOWN"))
+    sector     = row.get("sector") or row.get("borsdata_sector")
+    ebit       = row.get("ebit_m_median_3y") or row.get("ebit")
+    nd         = float(row.get("net_debt", 0) or 0)
+    shares     = row.get("shares_outstanding")
+    price      = row.get("price")
+    min_peers  = int(config.get("multiples_min_peers", 5))
+    haircut    = float(config.get("multiples_haircut", 0.20))
+
+    if ebit is None or not np.isfinite(float(ebit)) or float(ebit) <= 0:
+        return ValuationResult(
+            ticker=ticker, method=ValuationMethod.UNVALUED, confidence=ConfidenceTier.NONE,
+            intrinsic_value_per_share=None, mos=None, mos_floor=float("inf"),
+            reasons=["UNVALUED: ingen positiv EBIT — hverken DCF, EPV eller multipler mulig"],
+        )
+
+    if not shares or float(shares) <= 0 or not price or float(price) <= 0:
+        return ValuationResult(
+            ticker=ticker, method=ValuationMethod.MULTIPLES, confidence=ConfidenceTier.NONE,
+            intrinsic_value_per_share=None, mos=None, mos_floor=float("inf"),
+            reasons=["Multiples: mangler shares_outstanding eller price"],
+        )
+
+    sector_row = sector_medians[sector_medians["sector"] == sector]
+    if sector_row.empty:
+        return ValuationResult(
+            ticker=ticker, method=ValuationMethod.UNVALUED, confidence=ConfidenceTier.NONE,
+            intrinsic_value_per_share=None, mos=None, mos_floor=float("inf"),
+            reasons=[f"UNVALUED: ingen sektormedian for '{sector}'"],
+        )
+
+    peer_count     = int(sector_row.iloc[0]["peer_count"])
+    median_ev_ebit = float(sector_row.iloc[0]["median_ev_ebit"])
+
+    if peer_count < min_peers or median_ev_ebit <= 0:
+        return ValuationResult(
+            ticker=ticker, method=ValuationMethod.UNVALUED, confidence=ConfidenceTier.NONE,
+            intrinsic_value_per_share=None, mos=None, mos_floor=float("inf"),
+            reasons=[f"UNVALUED: for få peers ({peer_count}<{min_peers}) eller ugyldig median"],
+        )
+
+    ebit = float(ebit); shares = float(shares); price = float(price)
+    conservative_multiple = median_ev_ebit * (1.0 - haircut)
+    iv_eq = ebit * conservative_multiple - nd
+    iv_ps = iv_eq / shares
+
+    if iv_ps <= 0:
+        return ValuationResult(
+            ticker=ticker, method=ValuationMethod.MULTIPLES, confidence=ConfidenceTier.NONE,
+            intrinsic_value_per_share=None, mos=None, mos_floor=float("inf"),
+            reasons=["Multiples: negativ equity value"],
+        )
+
+    mos = (iv_ps - price) / iv_ps
+    return ValuationResult(
+        ticker=ticker, method=ValuationMethod.MULTIPLES, confidence=ConfidenceTier.LOW,
+        intrinsic_value_per_share=round(iv_ps, 2), mos=round(mos, 4),
+        mos_floor=MOS_FLOOR_BY_TIER[ConfidenceTier.LOW],
+        inputs_used={"ebit": ebit, "median_ev_ebit": median_ev_ebit, "haircut": haircut,
+                     "conservative_multiple": conservative_multiple,
+                     "net_debt": nd, "peer_count": peer_count,
+                     "shares_outstanding": shares, "price": price},
+        reasons=[f"Multiples (fallback 2): IV={iv_ps:.2f}, MoS={mos:.1%}",
+                 f"Sektormedian EV/EBIT={median_ev_ebit:.1f} med {haircut:.0%} haircut → {conservative_multiple:.1f}x"],
+        warnings=["Multiples-basert: lav presisjon, krever MoS >= 50%",
+                  f"Basert på {peer_count} peers i '{sector}'"],
+    )
+
+
+def valuation_chain(row: "pd.Series", wacc: float,
+                    sector_medians: "pd.DataFrame", config: dict) -> ValuationResult:
+    """Orkestrator: DCF → EPV → Multiples → UNVALUED."""
+    ticker   = str(row.get("ticker", "UNKNOWN"))
+    attempts: List[str] = []
+
+    dcf = dcf_valuation(row, wacc, config)
+    if dcf is not None and dcf.intrinsic_value_per_share is not None:
+        return dcf
+    attempts.append(f"DCF feilet: {dcf.reasons[0] if dcf else 'negativ/manglende FCF'}")
+
+    epv = epv_valuation(row, wacc, config)
+    if epv is not None and epv.intrinsic_value_per_share is not None:
+        epv.reasons = attempts + epv.reasons
+        return epv
+    attempts.append(f"EPV feilet: {epv.reasons[0] if epv else 'negativ/manglende EBIT'}")
+
+    mult = multiples_valuation(row, sector_medians, config)
+    if mult.intrinsic_value_per_share is not None:
+        mult.reasons = attempts + mult.reasons
+        return mult
+    attempts.append(f"Multiples feilet: {mult.reasons[0]}")
+
+    return ValuationResult(
+        ticker=ticker, method=ValuationMethod.UNVALUED, confidence=ConfidenceTier.NONE,
+        intrinsic_value_per_share=None, mos=None, mos_floor=float("inf"),
+        reasons=attempts + ["Alle verdsettelsesmetoder feilet -> UNVALUED"],
+    )
+
+
+def compute_sector_medians(df: "pd.DataFrame",
+                           ev_ebit_min: float = 1.0,
+                           ev_ebit_max: float = 50.0) -> "pd.DataFrame":
+    """
+    Beregner sektormedian EV/EBIT fra en DataFrame med kolonner: sector, ev, ebit.
+    Brukes av multiples_valuation og tester.
+    """
+    valid = df[
+        (pd.to_numeric(df["ev"],   errors="coerce") > 0) &
+        (pd.to_numeric(df["ebit"], errors="coerce") > 0) &
+        df["sector"].notna()
+    ].copy()
+    valid["ev_ebit"] = pd.to_numeric(valid["ev"], errors="coerce") / pd.to_numeric(valid["ebit"], errors="coerce")
+    valid = valid[(valid["ev_ebit"] >= ev_ebit_min) & (valid["ev_ebit"] <= ev_ebit_max)]
+    return (
+        valid.groupby("sector")
+        .agg(median_ev_ebit=("ev_ebit", "median"), peer_count=("ev_ebit", "count"))
+        .reset_index()
+    )
 
 
 def run(ctx, log) -> int:
