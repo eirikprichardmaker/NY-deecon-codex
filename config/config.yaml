@@ -28,6 +28,10 @@ decision:
   quality_strategy: strategy_a
   dividend_min_score: 0
   mos_min: 0.35       # WFT-optimal (var implisitt 0.30)
+  mos_floor_by_confidence:
+    high: 0.35        # DCF — standard threshold
+    medium: 0.40      # EPV — zero-growth model, needs extra margin
+    low: 0.50         # Multiples — sector median, needs large margin
   mad_min: -0.02      # WFT-optimal (var -0.05)
   min_hold_months: 3  # hold position for at least N months before switching
   max_price_age_days: 7
@@ -93,6 +97,15 @@ valuation:
   require_quarterly_reports: true
   max_quarterly_report_age_days: 220
   use_normalized_fcf: true
+  fallback_chain: [dcf, epv, multiples]
+  epv:
+    enabled: true
+    default_tax_rate: 0.22          # Nordic average; overridden per-country in cost_of_capital
+  multiples:
+    enabled: true
+    min_peers: 5                    # minimum peers in sector to trust median
+    haircut: 0.20                   # 20% discount on sector median EV/EBIT
+    ev_ebit_range: [1, 50]          # filter extreme multiples before computing median
 
 cost_of_capital:
   # Risk-free rate mode: 'country' uses per-country govt bond yields; 'nordic_single' uses one rate

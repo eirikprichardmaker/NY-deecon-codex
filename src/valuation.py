@@ -132,6 +132,85 @@ def _dcf_value(
     return pv_sum + pv_tv
 
 
+# Margin-of-safety floors per valuation confidence tier (used in decision.py)
+_MOS_FLOOR_BY_CONFIDENCE: dict[str, float] = {
+    "high":   0.30,
+    "medium": 0.40,
+    "low":    0.50,
+    "none":   float("inf"),
+}
+
+# Reasons that indicate DCF failed due to FCF issues → EPV/Multiples may help
+_EPV_TRIGGER_REASONS: frozenset[str] = frozenset({"missing_fcf", "dcf_failed"})
+
+
+def _epv_value(
+    ebit_m: float,
+    tax: float,
+    maintenance_capex_m: float,
+    wacc: float,
+) -> float:
+    """
+    Earnings Power Value (enterprise value in millions, zero-growth).
+    EPV = NOPAT / WACC,  NOPAT = EBIT × (1 - tax) - maintenance_capex
+    Returns NaN if inputs are invalid or NOPAT <= 0.
+    """
+    if not (np.isfinite(ebit_m) and ebit_m > 0):
+        return np.nan
+    if not (np.isfinite(wacc) and wacc > 0):
+        return np.nan
+    maint = float(maintenance_capex_m) if np.isfinite(float(maintenance_capex_m)) else 0.0
+    nopat = ebit_m * (1.0 - float(tax)) - maint
+    if nopat <= 0:
+        return np.nan
+    return nopat / wacc
+
+
+def _compute_sector_medians(
+    df: "pd.DataFrame",
+    sector_col: str,
+    ebit_col: str,
+    net_debt_col: Optional[str],
+    mcap_col: str,
+    ev_ebit_min: float = 1.0,
+    ev_ebit_max: float = 50.0,
+) -> "pd.DataFrame":
+    """
+    Beregner sektormedian EV/EBIT fra universet.
+    market_cap antas i valutaenheter (NOK/SEK etc.) → deles på 1e6.
+    net_debt antas allerede i millioner (som resten av valuation-logikken).
+    """
+    if sector_col not in df.columns or ebit_col not in df.columns or mcap_col not in df.columns:
+        return pd.DataFrame(columns=["sector", "median_ev_ebit", "peer_count"])
+
+    mcap_m = _to_num(df[mcap_col]) / 1e6
+    nd_m = (
+        _to_num(df[net_debt_col])
+        if net_debt_col and net_debt_col in df.columns
+        else pd.Series(0.0, index=df.index)
+    )
+    ebit_m = _to_num(df[ebit_col])
+
+    tmp = pd.DataFrame({
+        "sector": df[sector_col].values,
+        "ev_m":   (mcap_m + nd_m).values,
+        "ebit_m": ebit_m.values,
+    })
+    valid = tmp[
+        tmp["sector"].notna() &
+        (tmp["ev_m"] > 0) &
+        (tmp["ebit_m"] > 0)
+    ].copy()
+    valid["ev_ebit"] = valid["ev_m"] / valid["ebit_m"]
+    valid = valid[(valid["ev_ebit"] >= ev_ebit_min) & (valid["ev_ebit"] <= ev_ebit_max)]
+
+    return (
+        valid.groupby("sector")
+        .agg(median_ev_ebit=("ev_ebit", "median"), peer_count=("ev_ebit", "count"))
+        .reset_index()
+    )
+
+
 def _resolve_paths(ctx) -> Dict[str, Path]:
     """
     Try project resolve_paths; otherwise fallback to local defaults.
@@ -657,13 +736,53 @@ def run(ctx, log) -> int:
     else:
         net_debt_m = pd.Series(0.0, index=df.index)
 
+    # Fallback valuation config
+    epv_enabled = bool(_cfg_get(ctx.cfg, "valuation.epv.enabled", True))
+    multiples_enabled = bool(_cfg_get(ctx.cfg, "valuation.multiples.enabled", True))
+    epv_tax = float(_cfg_get(ctx.cfg, "valuation.epv.default_tax_rate", 0.22))
+    mult_min_peers = int(_cfg_get(ctx.cfg, "valuation.multiples.min_peers", 5))
+    mult_haircut = float(_cfg_get(ctx.cfg, "valuation.multiples.haircut", 0.20))
+    mult_ev_range = _cfg_get(ctx.cfg, "valuation.multiples.ev_ebit_range", [1, 50])
+    mult_ev_ebit_min, mult_ev_ebit_max = float(mult_ev_range[0]), float(mult_ev_range[1])
+
+    ebit_col_epv = _pick_first_col(df, ["ebit_m_latest", "ebit_m_median_3y", "ebit_m", "ebit_millions", "ebit"])
+    da_col_epv = _pick_first_col(df, [
+        "da_m_latest", "da_m", "depreciation_amortization_m_latest",
+        "depreciation_amortization_millions", "da_millions",
+        "depreciation_amortization", "da",
+    ])
+    sector_col_mult = _pick_first_col(df, ["damodaran_sector", "sector_en"])
+    mcap_col_for_ev = _pick_first_col(df, ["market_cap", "market_cap_current"])
+
+    # Precompute sector medians for Multiples fallback
+    sector_med_map: dict[str, tuple[float, int]] = {}
+    if multiples_enabled and sector_col_mult and ebit_col_epv and mcap_col_for_ev:
+        sector_medians_df = _compute_sector_medians(
+            df,
+            sector_col=sector_col_mult,
+            ebit_col=ebit_col_epv,
+            net_debt_col=net_debt_col,
+            mcap_col=mcap_col_for_ev,
+            ev_ebit_min=mult_ev_ebit_min,
+            ev_ebit_max=mult_ev_ebit_max,
+        )
+        sector_med_map = {
+            row["sector"]: (float(row["median_ev_ebit"]), int(row["peer_count"]))
+            for _, row in sector_medians_df.iterrows()
+        }
+        log.info(f"valuation: sektormedians for multiples-fallback: {len(sector_med_map)} sektorer")
+
     # DCF EV (millions)
-    intrinsic_ev_m = []
-    model = []
+    intrinsic_ev_list: list[float] = []
+    model_list: list[str] = []
+    val_method_list: list[str] = []
+    val_confidence_list: list[str] = []
     for i in range(len(df)):
         if reason.iat[i] is not None:
-            intrinsic_ev_m.append(np.nan)
-            model.append("DCF")
+            intrinsic_ev_list.append(np.nan)
+            model_list.append("DCF")
+            val_method_list.append("unvalued")
+            val_confidence_list.append("none")
             continue
         ev_m = _dcf_value(
             fcf0_m=float(fcf_m.iat[i]),
@@ -674,13 +793,74 @@ def run(ctx, log) -> int:
             fcf_mult=params.fcf_mult,
         )
         if not np.isfinite(ev_m):
-            intrinsic_ev_m.append(np.nan)
+            intrinsic_ev_list.append(np.nan)
             reason.iat[i] = "dcf_failed"
+            val_method_list.append("unvalued")
+            val_confidence_list.append("none")
         else:
-            intrinsic_ev_m.append(ev_m)
-        model.append("DCF")
+            intrinsic_ev_list.append(ev_m)
+            val_method_list.append("dcf")
+            val_confidence_list.append("high")
+        model_list.append("DCF")
 
-    intrinsic_ev_m = pd.Series(intrinsic_ev_m, index=df.index, dtype="float64")
+    intrinsic_ev_m = pd.Series(intrinsic_ev_list, index=df.index, dtype="float64")
+    val_model = pd.Series(model_list, index=df.index, dtype="object")
+    val_method = pd.Series(val_method_list, index=df.index, dtype="object")
+    val_confidence = pd.Series(val_confidence_list, index=df.index, dtype="object")
+
+    # --- EPV fallback pass ---
+    if epv_enabled and ebit_col_epv is not None:
+        ebit_s = _to_num(df[ebit_col_epv])
+        da_s = _to_num(df[da_col_epv]).abs() if da_col_epv else pd.Series(0.0, index=df.index)
+        n_epv = 0
+        epv_eligible = intrinsic_ev_m.isna() & reason.isin(_EPV_TRIGGER_REASONS)
+        for i in np.where(epv_eligible)[0]:
+            ebit = float(ebit_s.iat[i])
+            da   = float(da_s.iat[i]) if np.isfinite(float(da_s.iat[i])) else 0.0
+            w    = float(wacc.iat[i])
+            ev_m = _epv_value(ebit, epv_tax, da, w)
+            if np.isfinite(ev_m):
+                intrinsic_ev_m.iat[i] = ev_m
+                reason.iat[i] = None
+                val_model.iat[i] = "EPV"
+                val_method.iat[i] = "epv"
+                val_confidence.iat[i] = "medium"
+                n_epv += 1
+        if n_epv:
+            log.info(f"valuation: EPV-fallback brukt for {n_epv} selskaper")
+
+    # --- Multiples fallback pass ---
+    if multiples_enabled and sector_col_mult and ebit_col_epv and sector_med_map:
+        ebit_s2 = _to_num(df[ebit_col_epv])
+        sector_s = df[sector_col_mult]
+        n_mult = 0
+        mult_eligible = intrinsic_ev_m.isna() & reason.isin(_EPV_TRIGGER_REASONS)
+        for i in np.where(mult_eligible)[0]:
+            sector = str(sector_s.iat[i]) if pd.notna(sector_s.iat[i]) else ""
+            if not sector or sector not in sector_med_map:
+                continue
+            med_ev_ebit, peer_count = sector_med_map[sector]
+            if peer_count < mult_min_peers:
+                continue
+            ebit = float(ebit_s2.iat[i])
+            if not (np.isfinite(ebit) and ebit > 0):
+                continue
+            ev_m = ebit * med_ev_ebit * (1.0 - mult_haircut)
+            if ev_m <= 0:
+                continue
+            intrinsic_ev_m.iat[i] = ev_m
+            reason.iat[i] = None
+            val_model.iat[i] = "Multiples"
+            val_method.iat[i] = "multiples"
+            val_confidence.iat[i] = "low"
+            n_mult += 1
+        if n_mult:
+            log.info(f"valuation: Multiples-fallback brukt for {n_mult} selskaper (sektormedian EV/EBIT)")
+
+    # Coverage summary
+    method_counts = val_method.value_counts()
+    log.info(f"valuation: dekning — " + ", ".join(f"{k}:{v}" for k, v in method_counts.items()))
+
     intrinsic_equity_m = intrinsic_ev_m - net_debt_m
 
     # Convert to currency units (not millions) for downstream decision logic
@@ -692,7 +872,10 @@ def run(ctx, log) -> int:
     valuation_df = pd.DataFrame({
         "yahoo_ticker": df["yahoo_ticker"],
         "ticker": df[ticker_col] if ticker_col else df["yahoo_ticker"],
-        "model": model,
+        "model": val_model,
+        "valuation_method": val_method,
+        "valuation_confidence": val_confidence,
+        "mos_floor": val_confidence.map(_MOS_FLOOR_BY_CONFIDENCE).fillna(float("inf")),
         "fcf_used_millions": fcf_m,
         "fcf_source": fcf_source,
         "quarterly_fcf_millions": q_fcf_m,

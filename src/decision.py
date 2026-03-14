@@ -3073,6 +3073,18 @@ def run(ctx, log) -> int:
     ).astype(int)
     df["mos_req"] = np.where(df["high_risk_flag"] == 1, mos_high, mos_min)
 
+    # Adjust mos_req upward based on valuation confidence tier (EPV/Multiples need more margin)
+    mos_floor_by_conf = dec_cfg.get("mos_floor_by_confidence", {})
+    if mos_floor_by_conf and "valuation_confidence" in df.columns:
+        _conf_floor_map = {
+            "high":   float(mos_floor_by_conf.get("high",   mos_min)),
+            "medium": float(mos_floor_by_conf.get("medium", 0.40)),
+            "low":    float(mos_floor_by_conf.get("low",    0.50)),
+            "none":   float("inf"),
+        }
+        conf_floor = df["valuation_confidence"].map(_conf_floor_map).fillna(mos_min)
+        df["mos_req"] = np.maximum(df["mos_req"].values, conf_floor.values)
+
     prices_path = processed / "prices.parquet"
     if prices_path.exists():
         prices_df = read_parquet(prices_path)
