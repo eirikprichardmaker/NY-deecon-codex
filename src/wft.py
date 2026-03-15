@@ -403,7 +403,9 @@ def _compute_benchmark_returns(
             missing += 1
             continue
 
-        country = position_country.get(pos, "")
+        # Multi-position labels: "T01+T02+T03" — use first component for country lookup
+        first_k = pos.split("+")[0].strip()
+        country = position_country.get(first_k, "") or position_country.get(pos, "")
         bench_sym = country_benchmarks.get(country, "")
         if not bench_sym:
             out.append(0.0)
@@ -503,6 +505,9 @@ def _load_static_universe(master_path: Path) -> pd.DataFrame:
     relevant_index_symbol = suffix.map(idx_map).fillna("")
     relevant_index_key = relevant_index_symbol.map(_norm_ticker)
 
+    is_cyclical = m.get("is_cyclical", pd.Series(False, index=m.index)).fillna(False).astype(bool)
+    sector = m.get("sector", pd.Series("", index=m.index)).fillna("").astype(str)
+
     out = pd.DataFrame(
         {
             "k": m["k"],
@@ -518,9 +523,13 @@ def _load_static_universe(master_path: Path) -> pd.DataFrame:
             "fcf_yield": fcf_yield,
             "gp_a": gp_a,
             "wacc": wacc,
+            "ev_ebit": ev_ebit,
+            "nd_ebitda": nd_ebitda,
             "relevant_index_symbol": relevant_index_symbol,
             "relevant_index_key": relevant_index_key,
             "is_bank_proxy": bank_proxy.astype(bool),
+            "is_cyclical": is_cyclical,
+            "sector": sector,
         }
     )
 
@@ -653,7 +662,13 @@ def _apply_pit_override(month_df: pd.DataFrame, pit_static: pd.DataFrame) -> pd.
     return d.merge(pit_sub, on="k", how="left")
 
 
-def _load_monthly_panel(prices_path: Path, static_universe: pd.DataFrame) -> pd.DataFrame:
+def _load_price_panel_raw(prices_path: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Load and preprocess prices; return (stk, idx) with MA/MAD computed.
+
+    stk columns: month, ticker, k, adj_close, ma21, ma200, mad, above_ma200
+    idx columns: month, relevant_index_key, index_price, index_ma21,
+                 index_ma200, index_mad, index_above_ma200
+    """
     px = pd.read_parquet(prices_path).copy()
     px.columns = [str(c).strip().lower().replace(" ", "_") for c in px.columns]
 
@@ -683,7 +698,7 @@ def _load_monthly_panel(prices_path: Path, static_universe: pd.DataFrame) -> pd.
     px["month"] = px["date"].dt.to_period("M").dt.to_timestamp("M")
 
     snap = (
-        px.sort_values(["month", "ticker", "date"]) 
+        px.sort_values(["month", "ticker", "date"])
         .groupby(["month", "ticker"], as_index=False)
         .tail(1)
         .copy()
@@ -705,16 +720,32 @@ def _load_monthly_panel(prices_path: Path, static_universe: pd.DataFrame) -> pd.
     stk = snap[~snap["ticker"].astype(str).str.startswith("^")].copy()
     stk = stk[["month", "ticker", "k", "adj_close", "ma21", "ma200", "mad", "above_ma200"]]
 
+    return stk, idx
+
+
+def _build_panel_for_static(
+    stk: pd.DataFrame,
+    idx: pd.DataFrame,
+    static_universe: pd.DataFrame,
+) -> pd.DataFrame:
+    """Join pre-processed price data with a static universe snapshot."""
     static = static_universe.copy()
     if "ticker" in static.columns:
         static = static.rename(columns={"ticker": "master_ticker"})
 
     panel = stk.merge(static, on="k", how="inner")
     panel = panel.merge(idx, on=["month", "relevant_index_key"], how="left")
-
-    panel["index_data_ok"] = panel["index_price"].notna() & panel["index_ma200"].notna() & panel["index_mad"].notna()
-
+    panel["index_data_ok"] = (
+        panel["index_price"].notna()
+        & panel["index_ma200"].notna()
+        & panel["index_mad"].notna()
+    )
     return panel.sort_values(["month", "k"]).reset_index(drop=True)
+
+
+def _load_monthly_panel(prices_path: Path, static_universe: pd.DataFrame) -> pd.DataFrame:
+    stk, idx = _load_price_panel_raw(prices_path)
+    return _build_panel_for_static(stk, idx, static_universe)
 
 
 def _ensure_wft_dq_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -992,6 +1023,24 @@ def _apply_filters(
         )
     d["mos_req"] = mos_req
 
+    # ── 2b. Cyclical guards ───────────────────────────────────────────────────
+    # Cyclical companies (Materials, Oil & Gas, Shipping, Seafood) need:
+    #   - MoS >= 40% (stricter than standard 35%)
+    #   - EV/EBIT >= 6.0 (cheap-looking cyclicals near cycle peak have low EV/EBIT)
+    _CYCLICAL_MOS_MIN     = 0.40
+    _CYCLICAL_EV_EBIT_MIN = 6.0
+    is_cyclical = d.get("is_cyclical", pd.Series(False, index=d.index)).fillna(False).astype(bool)
+    if is_cyclical.any():
+        d["mos_req"] = np.where(
+            is_cyclical,
+            np.maximum(_CYCLICAL_MOS_MIN, d["mos_req"]),
+            d["mos_req"],
+        )
+    ev_ebit = _to_num(d.get("ev_ebit", pd.Series(np.nan, index=d.index)))
+    # Cyclical passes EV/EBIT check if: not cyclical, OR ev_ebit is null (no data → don't block),
+    # OR ev_ebit >= floor
+    d["cyclical_ev_ebit_ok"] = (~is_cyclical) | ev_ebit.isna() | (ev_ebit >= _CYCLICAL_EV_EBIT_MIN)
+
     weak_fail_min = 2 if params.weakness_rule_variant == "baseline" else 1
     d["mos_ok"] = d["mos"].notna() & (d["mos"] >= d["mos_req"])
     d["value_creation_ok"] = d["value_creation_ok_base"].fillna(False).astype(bool)
@@ -1000,7 +1049,8 @@ def _apply_filters(
     d["fundamental_ok"] = (
         d["mos_ok"] &
         d["value_creation_ok"] &
-        d["quality_ok"]
+        d["quality_ok"] &
+        d["cyclical_ev_ebit_ok"]
     )
 
     # ── 3. Technical signals ──────────────────────────────────────────────────
@@ -1119,19 +1169,25 @@ def _cash_decision_reasons(d: pd.DataFrame) -> str:
     return _collect_decision_reasons(pd.Series(["|".join(reasons)]))
 
 
-def _pick_ticker_with_reason(
+def _pick_portfolio_with_weights(
     month_df: pd.DataFrame,
     params: WFTParams,
+    max_positions: int = 1,
     pit_static: "pd.DataFrame | None" = None,
-) -> tuple[str, str]:
+) -> tuple[list[tuple[str, float]], str]:
+    """Return (positions, cash_reason) where positions is a list of (ticker_k, weight).
+
+    Each weight is the MoS-proportional share of the portfolio (sums to 1.0).
+    Returns [("CASH", 1.0)] with a reason string when no candidates pass.
+    """
     d = _apply_filters(month_df, params, pit_static=pit_static)
     elig = d[d["eligible"]].copy()
     if elig.empty:
-        return "CASH", _cash_decision_reasons(d)
+        return [("CASH", 1.0)], _cash_decision_reasons(d)
 
     elig = elig[elig["quality_score"].notna()].copy()
     if elig.empty:
-        return "CASH", _collect_decision_reasons(pd.Series(["kvalitetsscore|ingen kandidat"]))
+        return [("CASH", 1.0)], _collect_decision_reasons(pd.Series(["kvalitetsscore|ingen kandidat"]))
 
     elig = elig.sort_values(
         by=["quality_score", "mos", "market_cap", "ticker"],
@@ -1139,7 +1195,28 @@ def _pick_ticker_with_reason(
         na_position="last",
         kind="mergesort",
     )
-    return str(elig.iloc[0]["k"]), ""
+    picks = elig.head(max(1, max_positions))
+    mos_vals = pd.to_numeric(picks["mos"], errors="coerce").fillna(0.0).clip(lower=0.0)
+    total_mos = float(mos_vals.sum())
+    n = len(picks)
+    positions: list[tuple[str, float]] = []
+    for i, (_, row) in enumerate(picks.iterrows()):
+        w = (float(mos_vals.iloc[i]) / total_mos) if total_mos > 0 else (1.0 / n)
+        positions.append((str(row["k"]), w))
+    return positions, ""
+
+
+def _pick_ticker_with_reason(
+    month_df: pd.DataFrame,
+    params: WFTParams,
+    pit_static: "pd.DataFrame | None" = None,
+) -> tuple[str, str]:
+    positions, cash_reason = _pick_portfolio_with_weights(
+        month_df, params, max_positions=1, pit_static=pit_static
+    )
+    if positions[0][0] == "CASH":
+        return "CASH", cash_reason
+    return positions[0][0], ""
 
 
 def _pick_ticker(month_df: pd.DataFrame, params: WFTParams) -> str:
@@ -1151,6 +1228,7 @@ def _simulate_window(
     window_df: pd.DataFrame,
     params: WFTParams,
     pit_cache: "dict | None" = None,
+    max_positions: int = 1,
 ) -> pd.DataFrame:
     months = sorted(window_df["month"].dropna().unique().tolist())
     if len(months) < 2:
@@ -1164,32 +1242,41 @@ def _simulate_window(
         nxt = window_df[window_df["month"] == n]
 
         pit_static = pit_cache.get(pd.Timestamp(m)) if pit_cache is not None else None
-        pos, decision_reasons = _pick_ticker_with_reason(cur, params, pit_static=pit_static)
-        if pos == "CASH":
+        positions, cash_reason = _pick_portfolio_with_weights(
+            cur, params, max_positions=max_positions, pit_static=pit_static
+        )
+
+        if positions[0][0] == "CASH":
+            pos_label = "CASH"
             ret = 0.0
+            decision_reasons = cash_reason
         else:
-            c = cur[cur["k"] == pos]
-            x = nxt[nxt["k"] == pos]
-            if c.empty or x.empty:
-                ret = 0.0
-                pos = "CASH"
-                decision_reasons = _collect_decision_reasons(pd.Series(["datamangler|ingen kandidat"]))
-            else:
+            valid: list[tuple[str, float, float]] = []
+            for ticker_k, weight in positions:
+                c = cur[cur["k"] == ticker_k]
+                x = nxt[nxt["k"] == ticker_k]
+                if c.empty or x.empty:
+                    continue
                 p0 = float(c.iloc[0]["adj_close"])
                 p1 = float(x.iloc[0]["adj_close"])
                 if np.isfinite(p0) and p0 > 0 and np.isfinite(p1):
-                    ret = float((p1 / p0) - 1.0)
-                else:
-                    ret = 0.0
-                    pos = "CASH"
-                    decision_reasons = _collect_decision_reasons(pd.Series(["datamangler|ingen kandidat"]))
+                    valid.append((ticker_k, weight, float((p1 / p0) - 1.0)))
+            if not valid:
+                pos_label = "CASH"
+                ret = 0.0
+                decision_reasons = _collect_decision_reasons(pd.Series(["datamangler|ingen kandidat"]))
+            else:
+                total_w = sum(w for _, w, _ in valid)
+                ret = sum(w * r for _, w, r in valid) / total_w
+                pos_label = "+".join(k for k, _, _ in valid)
+                decision_reasons = ""
 
         rows.append(
             {
                 "month": pd.Timestamp(m),
-                "position": pos,
+                "position": pos_label,
                 "ret": ret,
-                "decision_reasons": decision_reasons if pos == "CASH" else "",
+                "decision_reasons": decision_reasons if pos_label == "CASH" else "",
             }
         )
 
@@ -1257,13 +1344,14 @@ def tune_params(
     seed: int = 42,
     overfit_guard_eps: float = 0.02,
     pit_cache: "dict | None" = None,
+    max_positions: int = 1,
 ) -> tuple[WFTParams, pd.DataFrame]:
     if not grid:
         raise ValueError("grid empty")
 
     rows = []
     for p in grid:
-        trades = _simulate_window(train_df, p, pit_cache=pit_cache)
+        trades = _simulate_window(train_df, p, pit_cache=pit_cache, max_positions=max_positions)
         m = _window_metrics(trades)
         rows.append(
             {
@@ -1313,11 +1401,12 @@ def run_fold(
     baseline: WFTParams,
     seed: int,
     pit_cache: "dict | None" = None,
+    max_positions: int = 1,
 ) -> tuple[WFTParams, dict, dict, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    chosen, diag = tune_params(train_df, grid, baseline=baseline, seed=seed, pit_cache=pit_cache)
+    chosen, diag = tune_params(train_df, grid, baseline=baseline, seed=seed, pit_cache=pit_cache, max_positions=max_positions)
 
-    tuned_trades = _simulate_window(test_df, chosen, pit_cache=pit_cache)
-    base_trades = _simulate_window(test_df, baseline, pit_cache=pit_cache)
+    tuned_trades = _simulate_window(test_df, chosen, pit_cache=pit_cache, max_positions=max_positions)
+    base_trades = _simulate_window(test_df, baseline, pit_cache=pit_cache, max_positions=max_positions)
 
     tuned_metrics = _window_metrics(tuned_trades)
     base_metrics = _window_metrics(base_trades)
@@ -1406,6 +1495,7 @@ def run_wft(
     asof: str | None = None,
     master_path: Path | None = None,
     prices_path: Path | None = None,
+    snapshots_dir: "Path | None" = None,
 ) -> tuple[Path, Path, Path]:
     cfg = load_config(config_path)
     paths = resolve_paths(cfg, project_root)
@@ -1415,14 +1505,44 @@ def run_wft(
     if prices_path is None:
         prices_path = paths["processed_dir"] / "prices.parquet"
 
-    static = _load_static_universe(master_path)
-    panel = _load_monthly_panel(prices_path, static)
+    # ── Option B: per-fold PIT snapshots ──────────────────────────────────────
+    # Pre-load price raw data and snapshot statics when snapshots_dir is given.
+    # Per fold the year-appropriate static is used; eliminates look-ahead bias.
+    snapshot_statics: dict[int, pd.DataFrame] = {}
+    stk_raw: "pd.DataFrame | None" = None
+    idx_raw: "pd.DataFrame | None" = None
+    if snapshots_dir is not None:
+        snapshots_dir = Path(snapshots_dir)
+        print(f"Option B: loading price panel raw from {prices_path} ...")
+        stk_raw, idx_raw = _load_price_panel_raw(prices_path)
+        for snap_file in sorted(snapshots_dir.glob("*/master_valued.parquet")):
+            try:
+                year = int(snap_file.parent.name)
+                snapshot_statics[year] = _load_static_universe(snap_file)
+            except Exception:
+                pass
+        print(f"Option B: loaded {len(snapshot_statics)} yearly snapshots: {sorted(snapshot_statics)}")
+        # Use the most recent available snapshot as global static for fold building
+        if snapshot_statics:
+            latest_year = max(snapshot_statics)
+            global_static = snapshot_statics[latest_year]
+            global_panel = _build_panel_for_static(stk_raw, idx_raw, global_static)
+        else:
+            global_static = _load_static_universe(master_path)
+            global_panel = _build_panel_for_static(stk_raw, idx_raw, global_static)
+    else:
+        global_static = _load_static_universe(master_path)
+        global_panel = _load_monthly_panel(prices_path, global_static)
+
+    static = global_static
+    panel = global_panel
     panel = _attach_country_code(panel)
     if asof:
         cutoff_month = pd.to_datetime(asof).to_period("M").to_timestamp("M")
         panel = panel[pd.to_datetime(panel["month"], errors="coerce") <= cutoff_month].copy()
     decision_cfg = dict((cfg.get("decision", {}) or {}))
     wft_cfg = dict((cfg.get("wft", {}) or {}))
+    max_positions = int(decision_cfg.get("max_positions", 1))
     dq_asof = _derive_wft_asof(panel, asof=asof)
     static, panel, static_dq_audit, panel_dq_audit = _apply_wft_data_quality(
         static_universe=static,
@@ -1490,8 +1610,56 @@ def run_wft(
     perf_rows: list[dict] = []
 
     for i, fold in enumerate(folds):
-        train_df = panel[(panel["month"] >= fold["train_start"]) & (panel["month"] <= fold["train_end"])].copy()
-        test_df = panel[(panel["month"] >= fold["test_start"]) & (panel["month"] <= fold["test_end"])].copy()
+        fold_year = int(fold["test_year"])
+
+        if snapshot_statics and stk_raw is not None and idx_raw is not None:
+            # Option B: build fold panel from year-appropriate snapshot
+            available = sorted(y for y in snapshot_statics if y <= fold_year)
+            snap_year = available[-1] if available else None
+            if snap_year is not None:
+                fold_static = snapshot_statics[snap_year]
+                fold_panel = _build_panel_for_static(stk_raw, idx_raw, fold_static)
+                fold_panel = _attach_country_code(fold_panel)
+                fold_static_dq, fold_panel_dq, _, _ = _apply_wft_data_quality(
+                    static_universe=fold_static,
+                    panel=fold_panel,
+                    decision_cfg=decision_cfg,
+                    asof=dq_asof,
+                )
+                train_df = fold_panel_dq[
+                    (fold_panel_dq["month"] >= fold["train_start"])
+                    & (fold_panel_dq["month"] <= fold["train_end"])
+                ].copy()
+                test_df = fold_panel_dq[
+                    (fold_panel_dq["month"] >= fold["test_start"])
+                    & (fold_panel_dq["month"] <= fold["test_end"])
+                ].copy()
+                fold_position_country = _build_position_country_lookup(fold_panel_dq)
+                fold_pit_cache = None  # snapshot is already PIT
+                print(f"  Fold {fold_year}: snapshot year={snap_year}, "
+                      f"train rows={len(train_df)}, test rows={len(test_df)}")
+            else:
+                train_df = panel[
+                    (panel["month"] >= fold["train_start"])
+                    & (panel["month"] <= fold["train_end"])
+                ].copy()
+                test_df = panel[
+                    (panel["month"] >= fold["test_start"])
+                    & (panel["month"] <= fold["test_end"])
+                ].copy()
+                fold_position_country = position_country
+                fold_pit_cache = pit_cache
+        else:
+            train_df = panel[
+                (panel["month"] >= fold["train_start"])
+                & (panel["month"] <= fold["train_end"])
+            ].copy()
+            test_df = panel[
+                (panel["month"] >= fold["test_start"])
+                & (panel["month"] <= fold["test_end"])
+            ].copy()
+            fold_position_country = position_country
+            fold_pit_cache = pit_cache
 
         chosen, tuned_metrics, base_metrics, tuned_trades, base_trades, diag = run_fold(
             train_df=train_df,
@@ -1499,7 +1667,8 @@ def run_wft(
             grid=grid,
             baseline=baseline,
             seed=seed + i,
-            pit_cache=pit_cache,
+            pit_cache=fold_pit_cache,
+            max_positions=max_positions,
         )
 
         for mode, p, metrics, trades in [
@@ -1508,7 +1677,7 @@ def run_wft(
         ]:
             benchmark_ret, bench_symbols, bench_missing = _compute_benchmark_returns(
                 trades,
-                position_country=position_country,
+                position_country=fold_position_country,
                 country_benchmarks=country_benchmarks,
                 index_returns=index_returns,
             )
@@ -1610,6 +1779,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--asof", default=None, help="Use data snapshot up to YYYY-MM-DD (inclusive month-end)")
     p.add_argument("--master-path", default=None)
     p.add_argument("--prices-path", default=None)
+    p.add_argument("--snapshots-dir", default=None, help="Dir with YYYY/master_valued.parquet snapshots (Option B)")
     return p.parse_args()
 
 
@@ -1670,6 +1840,7 @@ def main() -> int:
 
     master_path = Path(args.master_path).resolve() if args.master_path else None
     prices_path = Path(args.prices_path).resolve() if args.prices_path else None
+    snapshots_dir = Path(args.snapshots_dir).resolve() if args.snapshots_dir else None
 
     wft_results_path, wft_summary_path, tuned_cfg_path = run_wft(
         project_root=root,
@@ -1687,6 +1858,7 @@ def main() -> int:
         asof=str(args.asof) if args.asof else None,
         master_path=master_path,
         prices_path=prices_path,
+        snapshots_dir=snapshots_dir,
     )
 
     print(f"OK: {wft_results_path}")

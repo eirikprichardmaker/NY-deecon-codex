@@ -1396,7 +1396,14 @@ def _load_position_state(state_path: Path) -> dict:
     return {}
 
 
-def _save_position_state(state_path: Path, ticker: str, entry_date: str, quality_score: float, mos: float) -> None:
+def _save_position_state(
+    state_path: Path,
+    ticker: str,
+    entry_date: str,
+    quality_score: float,
+    mos: float,
+    positions: "list | None" = None,
+) -> None:
     """Persist current position to state.json."""
     state = {
         "ticker": ticker,
@@ -1404,7 +1411,34 @@ def _save_position_state(state_path: Path, ticker: str, entry_date: str, quality
         "quality_score": float(quality_score) if quality_score is not None else None,
         "mos": float(mos) if mos is not None else None,
     }
+    if positions is not None:
+        state["positions"] = positions
     _atomic_write_text(state_path, json.dumps(state, indent=2, ensure_ascii=False))
+
+
+def _mos_weighted_allocations(eligible_df: pd.DataFrame, max_positions: int) -> list[dict]:
+    """Return MoS-weighted allocation list for the top-N eligible candidates.
+
+    Weight for each position = mos_i / sum(mos_j for top N).
+    Falls back to equal weighting if total MoS is zero or negative.
+    """
+    picks = eligible_df.head(max(1, max_positions))
+    mos_col = picks["mos"] if "mos" in picks.columns else pd.Series(dtype=float, index=picks.index)
+    mos_vals = pd.to_numeric(mos_col, errors="coerce").fillna(0.0).clip(lower=0.0)
+    total_mos = float(mos_vals.sum())
+    n = len(picks)
+    allocs: list[dict] = []
+    for i, (_, row) in enumerate(picks.iterrows()):
+        mos_i = float(mos_vals.iloc[i])
+        weight = (mos_i / total_mos) if total_mos > 0 else (1.0 / n)
+        qs = row.get("quality_score")
+        allocs.append({
+            "ticker": str(row.get("ticker", "")),
+            "mos": mos_i,
+            "weight": weight,
+            "quality_score": float(qs) if pd.notna(qs) else None,
+        })
+    return allocs
 
 
 def _months_held(entry_date_str: str, asof_str: str) -> int:
@@ -2793,6 +2827,70 @@ def _value_creation_gate(df: pd.DataFrame, dec_cfg: dict) -> pd.DataFrame:
     return out
 
 
+def get_fcf_window(damodaran_sector: str, config: dict) -> int:
+    """Return the FCF normalisation window (years) for a given sector.
+
+    Cyclical sectors use ``cyclicality.fcf_window_years`` (default 5).
+    All others use ``cyclicality.default_fcf_window_years`` (default 3).
+    """
+    cyc_cfg = config.get("cyclicality", {})
+    cyclical_sectors: list[str] = cyc_cfg.get("cyclical_damodaran_sectors", [])
+    if str(damodaran_sector).strip() in cyclical_sectors:
+        return int(cyc_cfg.get("fcf_window_years", 5))
+    return int(cyc_cfg.get("default_fcf_window_years", 3))
+
+
+def check_cyclical_guards(row: "dict | pd.Series", config: dict) -> list[dict]:
+    """Return a list of failed cyclical guard dicts for ``row``.
+
+    Each dict has keys: ``guard``, ``value``, ``threshold``, ``reason``.
+    An empty list means the row passes all cyclical guards.
+
+    Guards applied only when ``row["is_cyclical"]`` is truthy:
+    - ``mos_min``: MoS >= ``cyclicality.mos_threshold`` (default 0.40)
+    - ``ev_ebit_floor``: EV/EBIT >= ``cyclicality.ev_ebit_floor`` (default 6.0)
+      (skipped when EV/EBIT is null — no data is not a disqualifier)
+    """
+    cyc_cfg = config.get("cyclicality", {})
+
+    def _get(key, default):
+        v = row[key] if hasattr(row, "__getitem__") else getattr(row, key, default)
+        try:
+            if v is None or (isinstance(v, float) and np.isnan(v)):
+                return default
+        except TypeError:
+            pass
+        return v
+
+    is_cyclical = bool(_get("is_cyclical", False))
+    if not is_cyclical:
+        return []
+
+    failures: list[dict] = []
+
+    mos_threshold = float(cyc_cfg.get("mos_threshold", 0.40))
+    mos = _get("mos", None)
+    if mos is None or float(mos) < mos_threshold:
+        failures.append({
+            "guard": "mos_min",
+            "value": mos,
+            "threshold": mos_threshold,
+            "reason": f"cyclical MoS {mos:.1%} < {mos_threshold:.0%}" if mos is not None else "cyclical MoS missing",
+        })
+
+    ev_ebit_floor = float(cyc_cfg.get("ev_ebit_floor", 6.0))
+    ev_ebit = _get("ev_ebit", None)
+    if ev_ebit is not None and float(ev_ebit) < ev_ebit_floor:
+        failures.append({
+            "guard": "ev_ebit_floor",
+            "value": ev_ebit,
+            "threshold": ev_ebit_floor,
+            "reason": f"cyclical EV/EBIT {ev_ebit:.1f} < {ev_ebit_floor:.0f}",
+        })
+
+    return failures
+
+
 def _suffix_from_symbol(x) -> str:
     if x is None or (isinstance(x, float) and np.isnan(x)):
         return ""
@@ -3746,6 +3844,9 @@ def run(ctx, log) -> int:
                 min_hold_months, held_months, current_ticker, new_pick_ticker,
             )
 
+    max_positions = int(dec_cfg.get("max_positions", 1))
+    allocations = _mos_weighted_allocations(eligible, max_positions)
+
     pick = eligible.iloc[0].copy()
     pick_ticker = str(pick.get("ticker", ""))
     new_entry_date = ctx.asof if pick_ticker != current_ticker else (entry_date or ctx.asof)
@@ -3755,7 +3856,19 @@ def run(ctx, log) -> int:
         entry_date=new_entry_date,
         quality_score=pick.get("quality_score"),
         mos=pick.get("mos"),
+        positions=allocations,
     )
+    try:
+        _atomic_write_text(
+            ctx.run_dir / "portfolio.json",
+            json.dumps(
+                {"asof": ctx.asof, "run_id": ctx.run_id, "max_positions": max_positions, "allocations": allocations},
+                indent=2,
+                ensure_ascii=False,
+            ),
+        )
+    except Exception as _pf_err:
+        log.warning("decision: portfolio.json feilet (ikke-kritisk): %s", _pf_err)
 
     candidate_qc = _analyze_candidate_value_qc(pick, value_qc_specs)
     _atomic_write_csv(ctx.run_dir / "candidate_value_qc.csv", candidate_qc)
@@ -3837,7 +3950,14 @@ def run(ctx, log) -> int:
     md = []
     md.append(f"# Decision ({ctx.asof})")
     md.append("")
-    md.append(f"**Anbefaling:** Kandidat = `{pick['ticker']}` (beste blant de som bestod filter).")
+    if max_positions > 1 and len(allocations) > 1:
+        md.append(f"**Anbefaling:** Portefolje med {len(allocations)} posisjoner (MoS-vektet):")
+        md.append("")
+        alloc_df = pd.DataFrame(allocations)[["ticker", "mos", "weight", "quality_score"]]
+        alloc_df.columns = ["Ticker", "MoS", "Vekt", "Quality score"]
+        md.append(_md_table(alloc_df, max_rows=10))
+    else:
+        md.append(f"**Anbefaling:** Kandidat = `{pick['ticker']}` (beste blant de som bestod filter).")
     md.append("")
     md.append("## Oversikt")
     md.append("- Top candidates (egen side): [top_candidates.md](top_candidates.md)")

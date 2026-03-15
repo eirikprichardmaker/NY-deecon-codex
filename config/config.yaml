@@ -44,6 +44,7 @@ decision:
   # Dynamic MAD: bear regime tightens the individual stock MAD floor
   bear_index_mad_threshold: -0.05       # index_mad below this → bear regime
   bear_stock_mad_min: 0.00              # minimum stock MAD in bear regime
+  max_positions: 3    # STEG 5: max simultaneous positions (MoS-weighted allocation)
   min_hold_months: 3  # hold position for at least N months before switching
   max_price_age_days: 7
   min_fresh_price_coverage: 0.50
@@ -102,6 +103,22 @@ financials_enrichment:
   enabled: true
   tiers_config: config/financials_field_tiers.yaml
   include_reports_y_bridge: true
+
+cyclicality:
+  # Damodaran sector labels that trigger cyclical guards.
+  # Source: instrument_metadata.parquet / damodaran_sector column.
+  cyclical_damodaran_sectors:
+    - Materials    # steel, metals, mining, chemicals (e.g. SSAB, Yara, Boliden)
+    - Oil & Gas    # energy exploration & production (e.g. Equinor, Aker BP)
+    - Shipping     # dry bulk, tankers, car carriers
+    - Seafood      # salmon, white fish (e.g. SalMar, Mowi)
+  # FCF normalization window for cyclicals (years) — longer to dilute peak-cycle earnings
+  fcf_window_years: 5          # vs default 3yr for non-cyclicals
+  default_fcf_window_years: 3
+  # EV/EBIT floor: cheap-looking cyclicals near cycle peak have low EV/EBIT
+  ev_ebit_floor: 6.0           # require EV/EBIT >= 6 for cyclicals
+  # Stricter MoS gate — cyclicals need more buffer against mean reversion
+  mos_threshold: 0.40          # 40% MoS required (vs standard 30%)
 
 valuation:
   prefer_quarterly_reports: true
