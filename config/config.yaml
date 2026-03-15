@@ -70,6 +70,17 @@ decision:
     outlier_min_samples: 10
     outlier_mad_threshold: 6.0
     stale_fundamentals_days: 450
+    # DQ-EVEBIT-GLOBAL: EV/EBIT floor for all non-bank companies (not just cyclicals).
+    # Motivation: boom-inflated FCF gives high MoS even when EV/EBIT is low (DEDI 2024: EV/EBIT=5.96, MoS=94%).
+    ev_ebit_floor_global: 6.0
+    # DQ-MCAP-MIN: minimum market cap in local currency absolute units.
+    # NOTE: market_cap in snapshot is stored in local currency (EUR for Finnish, SEK for Swedish, NOK for Norwegian).
+    # These thresholds are EUR-calibrated — for SEK/NOK stocks they represent a much lower EUR-equivalent floor.
+    mcap_min_hard: 50_000_000      # FAIL below this (< 50M EUR; < ~575M SEK equivalent)
+    mcap_min_warn: 100_000_000     # WARN between hard and this (50–100M EUR)
+    # DQ-MOS-SUSPECT: flag suspiciously high MoS when EV/EBIT is also low (likely boom-FCF artifact).
+    mos_suspect_threshold: 0.80    # MoS > 80% triggers check
+    mos_suspect_evebit_min: 8.0    # require EV/EBIT >= 8 when MoS > 80%
   media_red_flags:
     enabled: true
     days_back: 30

@@ -2300,6 +2300,101 @@ def _run_data_quality_checks(df: pd.DataFrame, dec_cfg: dict, asof: str) -> tupl
                              rule_id="DQ_MOS_NAN_WITH_INPUTS", severity="FAIL", field="mos", value=row.get("mos", np.nan),
                              group_key=str(group_s.loc[i]), group_n=0, source_fields=source_fields, detail="mos_nan_when_intrinsic_and_price_exist")
 
+    # ── DQ-EVEBIT-GLOBAL ─────────────────────────────────────────────────────
+    # Block non-bank companies with EV/EBIT below global floor (default 6.0).
+    # Motivation: boom-inflated FCF can give high MoS even at low EV/EBIT, masking
+    # mean-reversion risk (e.g. DEDI.ST 2024: EV/EBIT=5.96, MoS=94%, actual -48.5%).
+    # Assumption: is_bank_proxy=True covers banks/insurance where EV/EBIT is not meaningful.
+    # Negative EV/EBIT (negative EBIT) → WARN only; not a disqualifier by itself.
+    ev_ebit_floor_global = float(dq_cfg.get("ev_ebit_floor_global", 6.0))
+    ev_ebit_col = _pick_existing_col(df, ["ev_ebit", "ev_ebit_current"])
+    bank_col = _pick_existing_col(df, ["is_bank_proxy", "is_bank"])
+    for i, row in df.iterrows():
+        ticker = str(row.get("ticker", row.get("yahoo_ticker", "")))
+        ins_id = row.get("ins_id", "")
+        row_date = row.get("date", "")
+        sector_val = str(row.get(group_col, "")) if group_col else ""
+        is_bank = bool(_to_bool(row.get(bank_col, False))) if bank_col else False
+        if is_bank:
+            continue
+        ev_val = _to_float(row.get(ev_ebit_col, np.nan)) if ev_ebit_col else float("nan")
+        if not np.isfinite(ev_val):
+            continue  # missing EV/EBIT — not a disqualifier (no data ≠ bad data)
+        if ev_val < 0:
+            _append_dq_event(
+                audit_rows, row_index=i, asof=asof, date=row_date, ticker=ticker, ins_id=ins_id, sector=sector_val,
+                rule_id="DQ-EVEBIT-GLOBAL", severity="WARN", field=ev_ebit_col or "ev_ebit", value=ev_val,
+                group_key=str(group_s.loc[i]), group_n=0, source_fields=source_fields,
+                detail=f"ev_ebit={ev_val:.2f} — negative EBIT; monitor but not blocking",
+            )
+        elif ev_val < ev_ebit_floor_global:
+            _append_dq_event(
+                audit_rows, row_index=i, asof=asof, date=row_date, ticker=ticker, ins_id=ins_id, sector=sector_val,
+                rule_id="DQ-EVEBIT-GLOBAL", severity="FAIL", field=ev_ebit_col or "ev_ebit", value=ev_val,
+                group_key=str(group_s.loc[i]), group_n=0, source_fields=source_fields,
+                detail=f"ev_ebit={ev_val:.2f} < floor={ev_ebit_floor_global:.1f} — likely boom-inflated FCF or peak-cycle pricing",
+            )
+
+    # ── DQ-MCAP-MIN ──────────────────────────────────────────────────────────
+    # FAIL below hard floor; WARN in the 50–100M range.
+    # Motivation: micro-caps have unreliable fundamentals, thin liquidity, and large
+    # swings on single bad quarters. CONSTI.HE (89M EUR) exemplified this in 2024.
+    # Assumption: market_cap is in absolute local-currency units (EUR for HEX/OMXC25,
+    # SEK/NOK/DKK for other exchanges). Thresholds are EUR-calibrated; for SEK/NOK
+    # stocks the same numeric thresholds represent a much lower EUR-equivalent floor.
+    mcap_min_hard = float(dq_cfg.get("mcap_min_hard", 50_000_000))
+    mcap_min_warn = float(dq_cfg.get("mcap_min_warn", 100_000_000))
+    mcap_col = _pick_existing_col(df, ["market_cap", "market_cap_current"])
+    if mcap_col:
+        for i, row in df.iterrows():
+            ticker = str(row.get("ticker", row.get("yahoo_ticker", "")))
+            ins_id = row.get("ins_id", "")
+            row_date = row.get("date", "")
+            sector_val = str(row.get(group_col, "")) if group_col else ""
+            mcap_val = _to_float(row.get(mcap_col, np.nan))
+            if not np.isfinite(mcap_val) or mcap_val <= 0:
+                continue
+            if mcap_val < mcap_min_hard:
+                _append_dq_event(
+                    audit_rows, row_index=i, asof=asof, date=row_date, ticker=ticker, ins_id=ins_id, sector=sector_val,
+                    rule_id="DQ-MCAP-MIN", severity="FAIL", field=mcap_col, value=mcap_val,
+                    group_key=str(group_s.loc[i]), group_n=0, source_fields=source_fields,
+                    detail=f"market_cap={mcap_val:,.0f} < hard_floor={mcap_min_hard:,.0f} — micro-cap exclusion",
+                )
+            elif mcap_val < mcap_min_warn:
+                _append_dq_event(
+                    audit_rows, row_index=i, asof=asof, date=row_date, ticker=ticker, ins_id=ins_id, sector=sector_val,
+                    rule_id="DQ-MCAP-MIN", severity="WARN", field=mcap_col, value=mcap_val,
+                    group_key=str(group_s.loc[i]), group_n=0, source_fields=source_fields,
+                    detail=f"market_cap={mcap_val:,.0f} in warn zone [{mcap_min_hard:,.0f}, {mcap_min_warn:,.0f})",
+                )
+
+    # ── DQ-MOS-SUSPECT ────────────────────────────────────────────────────────
+    # WARN when MoS is very high AND EV/EBIT is below a confidence threshold.
+    # High MoS (>80%) with low EV/EBIT (<8) is the signature of boom-inflated FCF
+    # being fed into a perpetuity DCF: the model sees large upside but the market
+    # is pricing the company cheaply on earnings — suggesting FCF is not sustainable.
+    # This is a WARN (not FAIL) so it surfaces in the audit without hard-blocking.
+    mos_suspect_threshold = float(dq_cfg.get("mos_suspect_threshold", 0.80))
+    mos_suspect_evebit_min = float(dq_cfg.get("mos_suspect_evebit_min", 8.0))
+    ev_ebit_col2 = _pick_existing_col(df, ["ev_ebit", "ev_ebit_current"])
+    for i, row in df.iterrows():
+        ticker = str(row.get("ticker", row.get("yahoo_ticker", "")))
+        ins_id = row.get("ins_id", "")
+        row_date = row.get("date", "")
+        sector_val = str(row.get(group_col, "")) if group_col else ""
+        mos_val = _to_float(row.get("mos", np.nan))
+        ev_val2 = _to_float(row.get(ev_ebit_col2, np.nan)) if ev_ebit_col2 else float("nan")
+        if not np.isfinite(mos_val) or not np.isfinite(ev_val2):
+            continue
+        if mos_val > mos_suspect_threshold and ev_val2 < mos_suspect_evebit_min:
+            _append_dq_event(
+                audit_rows, row_index=i, asof=asof, date=row_date, ticker=ticker, ins_id=ins_id, sector=sector_val,
+                rule_id="DQ-MOS-SUSPECT", severity="WARN", field="mos", value=mos_val,
+                group_key=str(group_s.loc[i]), group_n=0, source_fields=source_fields,
+                detail=f"mos={mos_val:.1%} > {mos_suspect_threshold:.0%} but ev_ebit={ev_val2:.2f} < {mos_suspect_evebit_min:.0f} — boom-FCF artifact suspected",
+            )
+
     # stale fundamentals warning
     rep_col = _pick_existing_col(df, ["report_period", "report_date", "fundamental_date", "period_end_date"])
     asof_ts = pd.to_datetime(asof, errors="coerce")
