@@ -100,7 +100,7 @@ def test_tuning_uses_train_only(monkeypatch):
     p_alt = wft.WFTParams(mos_threshold=0.45, mad_min=-0.05, weakness_rule_variant="baseline")
     grid = [p_baseline, p_alt]
 
-    def _fake_simulate(window_df: pd.DataFrame, params: wft.WFTParams) -> pd.DataFrame:
+    def _fake_simulate(window_df: pd.DataFrame, params: wft.WFTParams, **kwargs) -> pd.DataFrame:
         split = str(window_df.iloc[0]["split"])
         if split == "train":
             ret = 0.05 if params.mos_threshold == 0.30 else -0.02
@@ -141,7 +141,7 @@ def test_determinism_seed(monkeypatch):
     p2 = wft.WFTParams(mos_threshold=0.40, mad_min=0.00, weakness_rule_variant="stricter")
     grid = [p0, p1, p2]
 
-    def _fake_simulate(window_df: pd.DataFrame, params: wft.WFTParams) -> pd.DataFrame:
+    def _fake_simulate(window_df: pd.DataFrame, params: wft.WFTParams, **kwargs) -> pd.DataFrame:
         split = str(window_df.iloc[0]["split"])
         base = 0.02 if split == "train" else 0.01
         alpha = (0.50 - float(params.mos_threshold)) * 0.05

@@ -19,7 +19,7 @@ def _base_row(ticker: str = "AAA.OL") -> dict:
         "sector": "Industrials",
         "date": "2026-02-16",
         "intrinsic_value": 100.0,
-        "market_cap": 50.0,
+        "market_cap": 500_000_000.0,  # above 100M warn threshold
         "mos": 1.0,
         "mos_req": 0.2,
         "quality_score": 0.3,

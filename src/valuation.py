@@ -457,6 +457,10 @@ def _merge_fundamentals_summary(
     # Finn nyeste summary <= asof
     summary_path: Optional[Path] = None
     raw_base = raw_dir.parent if raw_dir.name == asof else raw_dir
+    if not raw_base.exists():
+        if use_normalized_fcf:
+            log.warning("valuation: raw_dir does not exist, skipping fundamentals_summary merge.")
+        return
     for candidate_dir in sorted(raw_base.iterdir(), reverse=True):
         if not candidate_dir.is_dir():
             continue
@@ -942,6 +946,36 @@ def run(ctx, log) -> int:
         "quarterly_fcf_stale_count": int(q_stale.sum()),
         "fcf_source_reports_r12_count": int((fcf_source == "reports_r12").sum()),
     }
+
+    # ── ESEF supplement (optional TTM facts) ─────────────────────────────────
+    use_esef_facts = bool(_cfg_get(ctx.cfg, "valuation.use_esef_facts", False))
+    if use_esef_facts:
+        from src.esef_loader import load_facts as _esef_load_facts  # lazy import
+        esef_facts_dir = project_root / "data" / "esef_facts"
+        esef_fcf = pd.Series(np.nan, index=df.index, dtype="float64")
+        ticker_col_esef = _pick_first_col(df, ["ticker"])
+        if ticker_col_esef and esef_facts_dir.exists():
+            for idx, base_ticker in df[ticker_col_esef].items():
+                facts = _esef_load_facts(str(base_ticker), asof_s, facts_dir=esef_facts_dir)
+                if facts:
+                    fcf_fact = facts.get("free_cash_flow") or facts.get("cash_flow_from_operations")
+                    if fcf_fact and fcf_fact.get("trust") == "high":
+                        esef_fcf.at[idx] = float(fcf_fact["value"])
+        esef_has = esef_fcf.notna()
+        n_esef = int(esef_has.sum())
+        # Supplement: fill missing FCF from ESEF; never replace existing data
+        esef_fill = esef_has & fcf_m.isna()
+        fcf_m = fcf_m.where(~esef_fill, esef_fcf)
+        fcf_source = fcf_source.where(~esef_fill, "esef_quarterly")
+        valuation_input_audit["esef_facts"] = {
+            "enabled": True,
+            "esef_fcf_found": n_esef,
+            "esef_fcf_used_as_fill": int(esef_fill.sum()),
+        }
+        log.info("valuation: ESEF supplement — %d tickers with FCF, %d used as fill", n_esef, int(esef_fill.sum()))
+    else:
+        valuation_input_audit["esef_facts"] = {"enabled": False}
+
     # FCF/EBITDA sanity check — flag if FCF > 3× EBITDA (likely currency mismatch or stale data)
     ebitda_col = _pick_first_col(df, ["ebitda_m_latest", "ebitda_m", "ebitda_millions", "ebitda"])
     if ebitda_col:
