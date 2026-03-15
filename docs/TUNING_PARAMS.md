@@ -53,6 +53,42 @@ the FCF level is not sustainable at steady state.
 
 ---
 
+## WFT Backtesting — Known Cases
+
+### 2018 Option D Regression vs Option C: AIK-B.ST
+
+**Observation**: Option C 2018 = +23.2%, Option D 2018 = +6.5% (delta −16.7pp). Root cause:
+Option C's #1 pick (by quality_score) was **AIK-B.ST** (Consumer Discretionary, Swedish),
+which returned +36.1% in 2018. Option D blocked it via two independent DQ rules.
+
+| Field | Value |
+|-------|-------|
+| Ticker | AIK-B.ST |
+| Sector | Consumer Discretionary |
+| quality_score (Dec-2017) | 2.59 (rank #1 among eligible) |
+| ROIC | 85.6% |
+| FCF yield | 20.1% |
+| EV/EBIT | 0.261 (near-zero EBIT) |
+| market_cap | 41.7M (local SEK — below 50M hard floor) |
+| 2018 actual return | +36.1% |
+| DQ rules triggered | DQ-EVEBIT-GLOBAL (FAIL), DQ-MCAP-MIN (FAIL) |
+
+**Classification**: **CORRECT BLOCK**. Both rules fired independently and correctly:
+1. DQ-MCAP-MIN: 41.7M is below the 50M hard floor — micro-cap with thin liquidity.
+2. DQ-EVEBIT-GLOBAL: EV/EBIT=0.26 is near zero — high ROIC + FCF but negligible EBIT
+   suggests earnings quality mismatch (e.g. large non-recurring cash flows).
+
+The +36.1% return is a fortunate outcome in a high-risk micro-cap; it does not invalidate
+the rule. Expected-value reasoning: one in three such positions may win big while two lose.
+No threshold adjustment required.
+
+**Note on benchmark mismatch (Option C vs D 2018)**: AIK-B.ST is Swedish (^OMXS). Blocking
+it caused ^OMXS to disappear from Option D's benchmark symbols (^HEX,^OMXS,^OSEAX → ^HEX,^OSEAX).
+The WFT uses a position-dependent benchmark (tracks country index of actual holdings), so
+benchmark CAGRs are not directly comparable across options with different DQ rules.
+
+---
+
 ## WFT Tuner — Known Risks
 
 ### `mad_min` Overfit Risk
